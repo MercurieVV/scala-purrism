@@ -1,0 +1,41 @@
+import mill._, scalalib._
+
+object app extends ScalaModule {
+  def scalaVersion = "3.8.4"
+  def scalacOptions = Seq(
+    "-Ysemanticdb",
+    "-P:wartremover:traverser:org.wartremover.warts.Unsafe",
+    "-Wunused:imports",
+    "-Werror"
+  )
+  def mvnDeps = Seq(
+    // [dependencies-start]
+    mvn"org.typelevel::cats-core:2.13.0"
+    // [dependencies-end]
+  )
+
+  // Stainless is not a resolvable scalac-plugin Maven coordinate (verified: no
+  // ch.epfl.lara:stainless-* artifact is published to Maven Central under any
+  // version/name). Other projects run it as a standalone CLI over an
+  // unmanaged stainless-library.jar instead of a compiler plugin dependency.
+  def scalacPluginMvnDeps = Seq()
+
+  object test extends ScalaTests {
+    def testFramework = "munit.Framework"
+    def mvnDeps = Seq(
+      // [test-dependencies-start]
+      mvn"org.scalameta::munit:1.3.4"
+      // [test-dependencies-end]
+    )
+  }
+}
+
+object docs extends ScalaModule {
+  def scalaVersion = "3.3.4"
+  def mvnDeps = Seq(mvn"org.scalameta::mdoc:2.9.0")
+}
+
+def prePush() = Task.Command {
+  app.compile()
+  app.test.testForked()()
+}
