@@ -42,7 +42,7 @@ object app extends ScalaModule {
 }
 
 object docs extends ScalaModule {
-  def scalaVersion = "3.3.4"
+  def scalaVersion = "3.3.8"
   def mvnDeps = Seq(mvn"org.scalameta::mdoc:${Versions.mdoc}")
 }
 
