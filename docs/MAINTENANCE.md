@@ -4,6 +4,8 @@
 
 This project has a valid `.scala-steward.conf`.
 
+The `.mill-version` file is required so Scala Steward detects Mill 1.x and uses the current `--import` plugin path instead of the legacy `-p` flag.
+
 Scala Steward expects `repos.md` entries in hosted forge form:
 
 ```text
