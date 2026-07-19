@@ -64,6 +64,62 @@ final class GoldenFixtureSuite extends munit.FunSuite {
     assertEquals(TypelevelPurrism.kleisliRewrite(method), None)
   }
 
+  test("kleisli rewrite composes direct Kleisli apply calls") {
+    val method = firstMethod(
+      """def loadProfile(id: String): F[Profile] =
+        |  fetch(id).flatMap(user => profile(user))""".stripMargin
+    )
+
+    assertEquals(
+      TypelevelPurrism.kleisliRewrite(method, Set("fetch", "profile")),
+      Some(
+        """def loadProfile: Kleisli[F, String, Profile] =
+          |  fetch.andThen(profile)""".stripMargin
+      )
+    )
+  }
+
+  test("kleisli rewrite composes explicit Kleisli run calls") {
+    val method = firstMethod(
+      """def loadProfile(id: String): F[Profile] =
+        |  fetch.run(id).flatMap(user => profile.run(user))""".stripMargin
+    )
+
+    assertEquals(
+      TypelevelPurrism.kleisliRewrite(method),
+      Some(
+        """def loadProfile: Kleisli[F, String, Profile] =
+          |  fetch.andThen(profile)""".stripMargin
+      )
+    )
+  }
+
+  test("kleisli rewrite composes inside an existing Kleisli") {
+    val method = firstMethod(
+      """def loadProfile: Kleisli[F, String, Profile] =
+        |  Kleisli.apply { id =>
+        |    fetch(id).flatMap(user => profile(user))
+        |  }""".stripMargin
+    )
+
+    assertEquals(
+      TypelevelPurrism.kleisliRewrite(method, Set("fetch", "profile")),
+      Some(
+        """def loadProfile: Kleisli[F, String, Profile] =
+          |  fetch.andThen(profile)""".stripMargin
+      )
+    )
+  }
+
+  test("kleisli rewrite skips direct calls that are not known Kleislies") {
+    val method = firstMethod(
+      """def loadProfile(id: String): F[Profile] =
+        |  client.get(id).flatMap(user => profile.save(user))""".stripMargin
+    )
+
+    assertEquals(TypelevelPurrism.kleisliCompositionRewrite(method), None)
+  }
+
   private def resourcePath(name: String): Path =
     Path.of(getClass.getClassLoader.getResource(name).toURI)
 
