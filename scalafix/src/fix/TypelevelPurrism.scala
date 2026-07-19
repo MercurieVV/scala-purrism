@@ -83,7 +83,11 @@ final class PreferKleisli extends SemanticRule("PreferKleisli") {
 
     rewrites.map { case (defn, rewritten) =>
       kleisliPatch(defn, rewritten)
-    }.asPatch
+    }.asPatch +
+      PreferKleisli.sequencedLocalCompositionPatches(
+        doc.tree,
+        knownKleislies
+      )
   }
 
   private def kleisliPatch(
@@ -122,6 +126,12 @@ object PreferKleisli {
 
   def tupledCallPatches(tree: Tree, defn: Defn.Def): Patch =
     TypelevelPurrism.tupledCallPatches(tree, defn)
+
+  def sequencedLocalCompositionPatches(
+      tree: Tree,
+      knownKleislies: Set[String] = Set.empty
+  ): Patch =
+    TypelevelPurrism.sequencedLocalCompositionPatches(tree, knownKleislies)
 }
 
 private[fix] object TypelevelPurrism {
@@ -1042,6 +1052,26 @@ private[fix] object TypelevelPurrism {
 
   private final case class SplitKleisliCall(callee: String, argument: Term)
 
+  private final case class KleisliInput(alias: String, names: List[String])
+
+  private final case class KleisliBody(input: KleisliInput, body: Term)
+
+  def sequencedLocalCompositionPatches(
+      tree: Tree,
+      knownKleislies: Set[String] = Set.empty
+  ): Patch =
+    tree
+      .collect { case applyTerm: Term.Apply =>
+        kleisliBody(applyTerm).toList.flatMap { case KleisliBody(input, body) =>
+          body.collect { case term: Term =>
+            sequencedLocalComposition(term, input, knownKleislies)
+              .map(Patch.replaceTree(term, _))
+          }.flatten
+        }
+      }
+      .flatten
+      .asPatch
+
   private def compositionBody(
       body: Term,
       knownKleislies: Set[String]
@@ -1065,6 +1095,85 @@ private[fix] object TypelevelPurrism {
             knownKleislies
           )
         } yield rewrite
+      case _ =>
+        None
+    }
+
+  private def kleisliBody(applyTerm: Term.Apply): Option[KleisliBody] =
+    for {
+      function <- kleisliApplyPartialFunction(applyTerm)
+      input <- singleInputCase(function)
+    } yield input
+
+  private def singleInputCase(
+      function: Term.PartialFunction
+  ): Option[KleisliBody] =
+    partialFunctionCases(function) match {
+      case List(Case(pattern, None, body)) =>
+        inputPattern(pattern).map(KleisliBody(_, body))
+      case _ =>
+        None
+    }
+
+  private def partialFunctionCases(
+      function: Term.PartialFunction
+  ): List[Case] =
+    function.cases
+
+  private def inputPattern(pattern: Pat): Option[KleisliInput] =
+    pattern match {
+      case Pat.Bind(Pat.Var(Term.Name(alias)), Pat.Tuple(values)) =>
+        tuplePatternNames(values).map(KleisliInput(alias, _))
+      case _ =>
+        None
+    }
+
+  private def tuplePatternNames(values: List[Pat]): Option[List[String]] =
+    values.foldRight(Option(List.empty[String])) {
+      case (Pat.Var(Term.Name(name)), Some(names)) => Some(name :: names)
+      case (_, _)                                  => None
+    }
+
+  private def sequencedLocalComposition(
+      tree: Tree,
+      input: KleisliInput,
+      knownKleislies: Set[String]
+  ): Option[String] =
+    tree match {
+      case Term.ApplyInfix.After_4_6_0(
+            left,
+            Term.Name("*>"),
+            Type.ArgClause(Nil),
+            Term.ArgClause(List(right), None)
+          ) =>
+        for {
+          first <- finalKleisliCall(left, knownKleislies)
+          second <- finalKleisliCall(right, knownKleislies)
+          if isSameArgument(second.argument, input.alias)
+          projectionNames <- tupleTermNames(first.argument)
+          if projectionNames.forall(input.names.contains)
+        } yield {
+          val projectionSet = projectionNames.toSet
+          val localPattern =
+            input.names
+              .map(name => if (projectionSet.contains(name)) name else "_")
+              .mkString("(", ", ", ")")
+
+          s"""(${first.callee}.local { case $localPattern =>
+             |  ${first.argument.syntax}
+             |} *> ${second.callee})(${input.alias})""".stripMargin
+        }
+      case _ =>
+        None
+    }
+
+  private def tupleTermNames(term: Term): Option[List[String]] =
+    term match {
+      case Term.Tuple(values) =>
+        values.foldRight(Option(List.empty[String])) {
+          case (Term.Name(name), Some(names)) => Some(name :: names)
+          case (_, _)                         => None
+        }
       case _ =>
         None
     }
@@ -1219,6 +1328,18 @@ private[fix] object TypelevelPurrism {
       function <- singleFunctionArgument(applyTerm)
     } yield function
 
+  private def kleisliApplyPartialFunction(
+      applyTerm: Term.Apply
+  ): Option[Term.PartialFunction] =
+    for {
+      callee <- selectQualifier(applyTerm.fun, "apply")
+      _ <- callee match {
+        case Term.Name("Kleisli") => Some(())
+        case _                    => None
+      }
+      function <- singlePartialFunctionArgument(applyTerm)
+    } yield function
+
   private def singleFunctionArgument(
       applyTerm: Term.Apply
   ): Option[Term.Function] =
@@ -1243,6 +1364,14 @@ private[fix] object TypelevelPurrism {
         Some(select.qual)
       case _ =>
         None
+    }
+
+  private def singlePartialFunctionArgument(
+      applyTerm: Term.Apply
+  ): Option[Term.PartialFunction] =
+    applyTerm.argClause.values match {
+      case List(function: Term.PartialFunction) => Some(function)
+      case _                                    => None
     }
 
   private def indent(value: String, spaces: Int): String = {
