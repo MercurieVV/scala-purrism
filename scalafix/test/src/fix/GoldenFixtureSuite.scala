@@ -36,6 +36,8 @@ final class GoldenFixtureSuite extends munit.FunSuite {
       )
 
     assert(services.toSet.contains("fix.TypelevelPurrism"))
+    assert(services.toSet.contains("fix.TypeclassWeakening"))
+    assert(services.toSet.contains("fix.PreferKleisli"))
   }
 
   test("kleisli rewrite converts a simple unary effect method") {
@@ -45,7 +47,7 @@ final class GoldenFixtureSuite extends munit.FunSuite {
     )
 
     assertEquals(
-      TypelevelPurrism.kleisliRewrite(method),
+      PreferKleisli.kleisliRewrite(method),
       Some(
         """def fetch: Kleisli[F, String, User] =
           |  Kleisli.apply { id =>
@@ -61,7 +63,7 @@ final class GoldenFixtureSuite extends munit.FunSuite {
         |  client.get(id)""".stripMargin
     )
 
-    assertEquals(TypelevelPurrism.kleisliRewrite(method), None)
+    assertEquals(PreferKleisli.kleisliRewrite(method), None)
   }
 
   test("kleisli rewrite skips non-F unary return types") {
@@ -70,7 +72,7 @@ final class GoldenFixtureSuite extends munit.FunSuite {
         |  Option.empty[User]""".stripMargin
     )
 
-    assertEquals(TypelevelPurrism.kleisliRewrite(method), None)
+    assertEquals(PreferKleisli.kleisliRewrite(method), None)
   }
 
   test("kleisli rewrite composes direct Kleisli apply calls") {
@@ -80,7 +82,7 @@ final class GoldenFixtureSuite extends munit.FunSuite {
     )
 
     assertEquals(
-      TypelevelPurrism.kleisliRewrite(method, Set("fetch", "profile")),
+      PreferKleisli.kleisliRewrite(method, Set("fetch", "profile")),
       Some(
         """def loadProfile: Kleisli[F, String, Profile] =
           |  fetch.andThen(profile)""".stripMargin
@@ -95,7 +97,7 @@ final class GoldenFixtureSuite extends munit.FunSuite {
     )
 
     assertEquals(
-      TypelevelPurrism.kleisliRewrite(method),
+      PreferKleisli.kleisliRewrite(method),
       Some(
         """def loadProfile: Kleisli[F, String, Profile] =
           |  fetch.andThen(profile)""".stripMargin
@@ -112,7 +114,7 @@ final class GoldenFixtureSuite extends munit.FunSuite {
     )
 
     assertEquals(
-      TypelevelPurrism.kleisliRewrite(method, Set("fetch", "profile")),
+      PreferKleisli.kleisliRewrite(method, Set("fetch", "profile")),
       Some(
         """def loadProfile: Kleisli[F, String, Profile] =
           |  fetch.andThen(profile)""".stripMargin
@@ -130,7 +132,7 @@ final class GoldenFixtureSuite extends munit.FunSuite {
     )
 
     assertEquals(
-      TypelevelPurrism.kleisliRewrite(method),
+      PreferKleisli.kleisliRewrite(method),
       Some(
         """def loadProfile: Kleisli[F, String, Profile] =
           |  profile.local { id =>
@@ -147,7 +149,7 @@ final class GoldenFixtureSuite extends munit.FunSuite {
         |  client.get(id).flatMap(user => profile.save(user))""".stripMargin
     )
 
-    assertEquals(TypelevelPurrism.kleisliCompositionRewrite(method), None)
+    assertEquals(PreferKleisli.kleisliCompositionRewrite(method), None)
   }
 
   test("context-bound weakening replaces Sync with Monad for monadic usage") {
@@ -159,7 +161,7 @@ final class GoldenFixtureSuite extends munit.FunSuite {
     )
 
     assertEquals(
-      TypelevelPurrism
+      TypeclassWeakening
         .contextBoundWeakenings(cls)
         .map(weakening =>
           (
@@ -180,7 +182,81 @@ final class GoldenFixtureSuite extends munit.FunSuite {
         |}""".stripMargin
     )
 
-    assertEquals(TypelevelPurrism.contextBoundWeakenings(cls), Nil)
+    assertEquals(TypeclassWeakening.contextBoundWeakenings(cls), Nil)
+  }
+
+  test("context-bound weakening keeps Sync when called helper needs Sync") {
+    val source = parseSource(
+      """final class UserService[F[_]: Sync] {
+        |  def load(seed: F[User]): F[Profile] =
+        |    seed.flatMap(user => loadWithSync(user.id))
+        |
+        |  private def loadWithSync[F[_]: Sync](id: String): F[Profile] =
+        |    Sync[F].delay(Profile(id))
+        |}""".stripMargin
+    )
+
+    assertEquals(TypeclassWeakening.contextBoundWeakenings(source), Nil)
+  }
+
+  test("context-bound weakening weakens through monad-only helpers") {
+    val source = parseSource(
+      """final class UserService[F[_]: Sync] {
+        |  def load(seed: F[Profile]): F[Profile] =
+        |    seed.flatMap(profile => normalize(profile.pure[F]))
+        |
+        |  private def normalize[F[_]: Sync](profile: F[Profile]): F[Profile] =
+        |    profile.map(identity)
+        |}""".stripMargin
+    )
+
+    assertEquals(
+      TypeclassWeakening
+        .contextBoundWeakenings(source)
+        .map(weakening =>
+          (
+            weakening.originalName,
+            weakening.original.syntax,
+            weakening.replacement
+          )
+        ),
+      List(("Sync", "Sync", "Monad"), ("Sync", "Sync", "Monad"))
+    )
+  }
+
+  test(
+    "context-bound weakening keeps Sync for external effect-polymorphic calls"
+  ) {
+    val source = parseSource(
+      """object Main {
+        |  private def effectiveIssue[F[_]: Sync](
+        |      root: String,
+        |      issue: Issue
+        |  ): F[Issue] =
+        |    TaskMetadataStore
+        |      .commentBased[F]
+        |      .read(root, issue)
+        |      .map(merged => issue.copy(body = merged))
+        |}""".stripMargin
+    )
+
+    assertEquals(TypeclassWeakening.contextBoundWeakenings(source), Nil)
+  }
+
+  test(
+    "context-bound weakening keeps Sync through unknown external helper calls"
+  ) {
+    val source = parseSource(
+      """object Main {
+        |  private def waitForUserInput[F[_]: Sync](seed: F[String]): F[Unit] =
+        |    seed.flatMap(message => progress[F](message))
+        |
+        |  private def progress[F[_]: Sync](message: String): F[Unit] =
+        |    TaskLogger.script(message)
+        |}""".stripMargin
+    )
+
+    assertEquals(TypeclassWeakening.contextBoundWeakenings(source), Nil)
   }
 
   private def resourcePath(name: String): Path =
@@ -218,10 +294,10 @@ final class GoldenFixtureSuite extends munit.FunSuite {
       .get
 
   private def firstClass(source: String): Defn.Class =
+    parseSource(source).stats.collectFirst { case cls: Defn.Class => cls }.get
+
+  private def parseSource(source: String): Source =
     source
       .parse[Source]
-      .get
-      .stats
-      .collectFirst { case cls: Defn.Class => cls }
       .get
 }
