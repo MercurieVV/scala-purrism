@@ -1,4 +1,5 @@
-import mill._, scalalib._
+import mill._, scalalib._, javalib._
+import mill.javalib.publish._
 
 object Versions {
   def scala3 = "3.8.4"
@@ -11,8 +12,34 @@ object Versions {
   def scalaSemantic = "0.3.10"
 }
 
-object app extends ScalaModule {
+object Project {
+  def organization = "io.github.mercurievv"
+  def repositoryOwner = "MercurieVV"
+  def repositoryName = "scala-purrism"
+  def publishVersion = "0.1.0-SNAPSHOT"
+}
+
+object scalafix extends ScalaModule with SonatypeCentralPublishModule {
   def scalaVersion = Versions.scala3
+  def artifactName = "scala-purrism-scalafix"
+  def publishVersion = Project.publishVersion
+  def pomSettings = PomSettings(
+    description =
+      "Scalafix semantic rules for refactoring Typelevel Scala code toward pure, polymorphic Cats and Cats Effect style.",
+    organization = Project.organization,
+    url = s"https://github.com/${Project.repositoryOwner}/${Project.repositoryName}",
+    licenses = Seq(License.`Apache-2.0`),
+    versionControl =
+      VersionControl.github(Project.repositoryOwner, Project.repositoryName),
+    developers = Seq(
+      Developer(
+        id = "MercurieVV",
+        name = "MercurieVV",
+        url = "https://github.com/MercurieVV"
+      )
+    )
+  )
+
   def scalacOptions = Seq(
     "-Ysemanticdb",
     "-Wunused:imports",
@@ -51,6 +78,6 @@ object docs extends ScalaModule {
 }
 
 def prePush() = Task.Command {
-  app.compile()
-  app.test.testForked()()
+  scalafix.compile()
+  scalafix.test.testForked()()
 }

@@ -5,13 +5,13 @@ Golden fixtures are the contract for this project.
 For each scenario, add one Scala source file under:
 
 ```text
-app/test/resources/golden/typelevel/base
+scalafix/test/resources/golden/typelevel/base
 ```
 
 and a same-named expected file under:
 
 ```text
-app/test/resources/golden/typelevel/expected
+scalafix/test/resources/golden/typelevel/expected
 ```
 
 The `base` file is the code before Scalafix runs. The `expected` file is the exact code after all project rules have been applied.

@@ -66,7 +66,7 @@ object GitPreCommit:
             .call(cwd = repoRoot, check = false)
             .exitCode
         case "scala-cli" =>
-          val targets = Seq("app/src", "app/test/src").filter(p =>
+          val targets = Seq("scalafix/src", "scalafix/test/src").filter(p =>
             os.exists(repoRoot / os.RelPath(p))
           )
           if targets.nonEmpty then
@@ -75,7 +75,7 @@ object GitPreCommit:
               .exitCode
           else 0
         case "mill" =>
-          os.proc("mill", "app.test")
+          os.proc("mill", "scalafix.test")
             .call(cwd = repoRoot, check = false)
             .exitCode
 
@@ -86,7 +86,7 @@ object GitPreCommit:
           case "sbt"       => println("  sbt scalafixAll")
           case "scala-cli" => println("  scala-cli --power fix .")
           case "mill" =>
-            println("  mill app.test")
+            println("  mill scalafix.test")
         sys.exit(1)
 
     println("✓ All pre-commit checks passed successfully!")

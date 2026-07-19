@@ -2,10 +2,10 @@
 
 ## Scalafix Rules
 
-- Implement rules as Scalafix semantic rules under `app/src/fix`.
+- Implement rules as Scalafix semantic rules under `scalafix/src/fix`.
 - Prefer semantic information over syntax-only matching when a rewrite depends on symbols or inferred types.
 - Rules must be deterministic, idempotent, and safe to run repeatedly.
-- Every automatic rewrite must have a golden fixture in `app/test/resources/golden`.
+- Every automatic rewrite must have a golden fixture in `scalafix/test/resources/golden`.
 - Checks that cannot be safely rewritten should report diagnostics instead of producing partial edits.
 
 ## Typelevel Style

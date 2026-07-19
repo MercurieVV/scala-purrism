@@ -1,0 +1,36 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_COLOR: "1"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: sonatype
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Mill
+        run: |
+          curl -L https://repo1.maven.org/maven2/com/lihaoyi/mill-dist/1.1.7/mill-dist-1.1.7-mill.sh -o mill
+          chmod +x mill
+
+      - name: Validate
+        run: ./mill scalafix.compile scalafix.test docs.compile
+
+      - name: Publish to Sonatype Central
+        run: ./mill mill.javalib.SonatypeCentralPublishModule/
+        env:
+          MILL_PGP_PASSPHRASE: ${{ secrets.MILL_PGP_PASSPHRASE }}
+          MILL_PGP_SECRET_BASE64: ${{ secrets.MILL_PGP_SECRET_BASE64 }}
+          MILL_SONATYPE_PASSWORD: ${{ secrets.MILL_SONATYPE_PASSWORD }}
+          MILL_SONATYPE_USERNAME: ${{ secrets.MILL_SONATYPE_USERNAME }}

@@ -1,13 +1,15 @@
 # Project
 
-`scalafix-purrism` is a Scalafix semantic-rule project for automatically refactoring and checking Typelevel Scala code, with a focus on Cats and Cats Effect.
+`scala-purrism` is a Scala tooling project for automatically refactoring and checking Typelevel Scala code, with a focus on Cats and Cats Effect.
+
+The `scalafix` module contains the Scalafix semantic rules. Additional modules can be added under the same project as the rule set grows beyond Scalafix.
 
 The rule set should move code toward pure, polymorphic Typelevel style. Typical targets include replacing unnecessary concrete `IO` APIs with abstract `F[_]` APIs, introducing Cats typeclass constraints, and preserving behavior while making effects explicit and testable.
 
 The source of truth is the golden fixture set:
 
-- `app/test/resources/golden/typelevel/base`: original input classes.
-- `app/test/resources/golden/typelevel/expected`: expected classes after refactoring.
+- `scalafix/test/resources/golden/typelevel/base`: original input classes.
+- `scalafix/test/resources/golden/typelevel/expected`: expected classes after refactoring.
 
 Every rule change must be justified by adding or updating a matching base/expected golden pair. The implementation must follow the fixtures, not separate prose-only expectations.
 
@@ -24,7 +26,7 @@ Every rule change must be justified by adding or updating a matching base/expect
 Useful commands:
 
 ```bash
-rtk mill app.compile
-rtk mill app.test
+rtk mill scalafix.compile
+rtk mill scalafix.test
 rtk mill docs.compile
 ```

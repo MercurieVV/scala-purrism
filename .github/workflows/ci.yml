@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+      - main
+
+permissions:
+  contents: read
+
+env:
+  FORCE_COLOR: "1"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Mill
+        run: |
+          curl -L https://repo1.maven.org/maven2/com/lihaoyi/mill-dist/1.1.7/mill-dist-1.1.7-mill.sh -o mill
+          chmod +x mill
+
+      - name: Compile Scalafix module
+        run: ./mill scalafix.compile
+
+      - name: Test Scalafix module
+        run: ./mill scalafix.test
+
+      - name: Compile docs
+        run: ./mill docs.compile
+
+      - name: Validate publish metadata
+        run: ./mill scalafix.publishM2Local

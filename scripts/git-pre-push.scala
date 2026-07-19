@@ -33,7 +33,7 @@ object GitPrePush:
         os.proc(cmd).call(cwd = repoRoot, check = false).exitCode
 
       case "mill" =>
-        os.proc("mill", "app.test").call(cwd = repoRoot, check = false).exitCode
+        os.proc("mill", "scalafix.test").call(cwd = repoRoot, check = false).exitCode
 
       case "scala-cli" =>
         os.proc("scala-cli", "test", ".")

@@ -8,6 +8,7 @@ This documentation is compiled and type-checked using **mdoc**.
 - [Engineering Rules](RULES.md)
 - [Golden Fixtures](GOLDEN_FIXTURES.md)
 - [Maintenance](MAINTENANCE.md)
+- [Publishing](PUBLISHING.md)
 
 ## Scala 3 Code Example
 
