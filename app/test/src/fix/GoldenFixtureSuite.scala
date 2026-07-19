@@ -141,6 +141,39 @@ final class GoldenFixtureSuite extends munit.FunSuite {
     assertEquals(TypelevelPurrism.kleisliCompositionRewrite(method), None)
   }
 
+  test("context-bound weakening replaces Sync with Monad for monadic usage") {
+    val cls = firstClass(
+      """final class UserService[F[_]: Sync] {
+        |  def load(seed: F[User]): F[Profile] =
+        |    seed.flatMap(user => profile(user))
+        |}""".stripMargin
+    )
+
+    assertEquals(
+      TypelevelPurrism
+        .contextBoundWeakenings(cls)
+        .map(weakening =>
+          (
+            weakening.originalName,
+            weakening.original.syntax,
+            weakening.replacement
+          )
+        ),
+      List(("Sync", "Sync", "Monad"))
+    )
+  }
+
+  test("context-bound weakening keeps Sync when effect operations are used") {
+    val cls = firstClass(
+      """final class UserService[F[_]: Sync] {
+        |  def load(id: String): F[User] =
+        |    Sync[F].delay(User(id))
+        |}""".stripMargin
+    )
+
+    assertEquals(TypelevelPurrism.contextBoundWeakenings(cls), Nil)
+  }
+
   private def resourcePath(name: String): Path =
     Path.of(getClass.getClassLoader.getResource(name).toURI)
 
@@ -166,5 +199,13 @@ final class GoldenFixtureSuite extends munit.FunSuite {
       .collectFirst { case cls: Defn.Class =>
         cls.templ.body.stats.collectFirst { case defn: Defn.Def => defn }.get
       }
+      .get
+
+  private def firstClass(source: String): Defn.Class =
+    source
+      .parse[Source]
+      .get
+      .stats
+      .collectFirst { case cls: Defn.Class => cls }
       .get
 }
