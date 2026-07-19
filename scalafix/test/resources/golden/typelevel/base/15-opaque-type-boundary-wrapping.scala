@@ -39,8 +39,13 @@ final class BranchWorkflow[F[_]]:
 final case class AppInput(taskNumber: Option[Int])
 final case class RunContext(taskNumber: Option[Int])
 final case class Task(number: Int)
+final case class Issue(value: Int)
+final case class TaskRun(branchName: String, baseBranch: Option[String])
 
 final class TaskWorkflow:
+  private val TaskWaitMillis =
+    5L
+
   def parseTaskNumber(args: List[String]): Option[Int] =
     args.headOption.flatMap(_.toIntOption)
 
@@ -51,3 +56,30 @@ final class TaskWorkflow:
     loop(started + timeoutMillis)
 
   def loop(deadlineMillis: Long): Unit = ()
+
+  def primitiveLong(value: Long): Unit = ()
+
+  def passPrimitive(started: Long, timeoutMillis: Long): Unit =
+    primitiveLong(timeoutMillis)
+
+  def issue(taskId: Int): Issue =
+    Issue(taskId)
+
+  def claim(taskNumber: Int): Unit = ()
+
+  def claimTask(task: Task): Unit =
+    claim(task.number)
+
+  def claimF[F[_]](taskNumber: Int): Unit = ()
+
+  def claimTaskF[F[_]](task: Task): Unit =
+    claimF[F](task.number)
+
+  def waitConstant(started: Long): Unit =
+    loop(started + TaskWaitMillis)
+
+  def run(taskNumber: Int): TaskRun =
+    TaskRun(
+      branchName = s"task-$taskNumber",
+      baseBranch = Option(taskNumber).map(parentId => s"task-$parentId")
+    )

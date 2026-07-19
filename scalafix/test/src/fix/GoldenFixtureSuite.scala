@@ -750,7 +750,7 @@ final class GoldenFixtureSuite extends munit.FunSuite {
     assertEquals(
       shapes
         .find(_.name == "ensureBranch")
-        .map(_.paramChains.map(_.map(_.typeName))),
+        .map(_.params.map(_.opaqueChain.map(_.typeName))),
       Some(List(None, Some("BranchName")))
     )
   }

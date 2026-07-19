@@ -216,14 +216,6 @@ object OpaqueTypePropagation {
         val opaqueToPrimitiveCollectionPatches: List[Patch] =
           opaqueToPrimitiveCollectionPatchesFor(doc.tree, chains)
 
-        val namedArgumentWrapPatches: List[Patch] = chains.flatMap { chain =>
-          doc.tree.collect {
-            case Term.Assign(Term.Name(argName), value)
-                if isChainTargetName(argName, chain) =>
-              wrapBoundaryExpressionPatch(value, chain)
-          }
-        }
-
         val valCollectionWrapPatches: List[Patch] = chains.flatMap { chain =>
           doc.tree.collect {
             case Defn.Val(_, List(Pat.Var(Term.Name(name))), Some(_), value)
@@ -255,6 +247,12 @@ object OpaqueTypePropagation {
           kleisliInputTypePatches(doc.tree, chains)
         val kleisliLocalTypePatchList: List[Patch] =
           kleisliLocalTypePatches(doc.tree, chains)
+        val opaqueConstructorArithmeticPatchList: List[Patch] =
+          opaqueConstructorArithmeticPatches(
+            doc.tree,
+            contextChains,
+            inferredOpaqueNames
+          )
 
         val unwrapUsagePatches: List[Patch] = chains.flatMap { chain =>
           doc.tree.collect {
@@ -289,11 +287,14 @@ object OpaqueTypePropagation {
                 case _                                         => false
               }
               if (isPrimitiveApi) {
-                apply.argClause.values.collect {
-                  case nameTerm: Term.Name
-                      if chain.nodes.exists(n => n.name == nameTerm.value) =>
-                    Patch.replaceTree(nameTerm, s"${nameTerm.value}.value")
-                }
+                apply.argClause.values.flatMap(arg =>
+                  unwrapPrimitiveArgument(
+                    arg,
+                    List(chain),
+                    inferredOpaqueNames,
+                    Some(chain.primitiveType)
+                  )
+                )
               } else
                 optionPredicateEqualityPatches(apply, chain) ++
                   getOrElseDefaultWrapPatches(apply, chain)
@@ -308,7 +309,11 @@ object OpaqueTypePropagation {
               } else if (op == ">=" || op == "<=" || op == ">" || op == "<") {
                 val leftPatch = apply.lhs match {
                   case nameTerm: Term.Name
-                      if chain.nodes.exists(n => n.name == nameTerm.value) =>
+                      if isOpaqueOperatorOperand(
+                        nameTerm,
+                        chain,
+                        inferredOpaqueNames
+                      ) =>
                     List(
                       Patch.replaceTree(nameTerm, s"${nameTerm.value}.value")
                     )
@@ -316,7 +321,11 @@ object OpaqueTypePropagation {
                 }
                 val rightPatch = apply.argClause match {
                   case Term.ArgClause(List(nameTerm: Term.Name), _)
-                      if chain.nodes.exists(n => n.name == nameTerm.value) =>
+                      if isOpaqueOperatorOperand(
+                        nameTerm,
+                        chain,
+                        inferredOpaqueNames
+                      ) =>
                     List(
                       Patch.replaceTree(nameTerm, s"${nameTerm.value}.value")
                     )
@@ -330,7 +339,7 @@ object OpaqueTypePropagation {
           }.flatten
         }
 
-        headerPatch + companionEqPatches.asPatch + paramPatches.asPatch + returnPatches.asPatch + returnBodyMapPatches.asPatch + namedArgumentWrapPatches.asPatch + valCollectionWrapPatches.asPatch + inferredValWrapPatches.asPatch + genericReturnTypeArgPatches.asPatch + localCallBoundaryPatchList.asPatch + kleisliInputTypePatchList.asPatch + kleisliLocalTypePatchList.asPatch + commandCollectionUnwrapPatches.asPatch + opaqueToPrimitiveCollectionPatches.asPatch + unwrapUsagePatches.asPatch
+        headerPatch + companionEqPatches.asPatch + paramPatches.asPatch + returnPatches.asPatch + returnBodyMapPatches.asPatch + valCollectionWrapPatches.asPatch + inferredValWrapPatches.asPatch + genericReturnTypeArgPatches.asPatch + localCallBoundaryPatchList.asPatch + kleisliInputTypePatchList.asPatch + kleisliLocalTypePatchList.asPatch + opaqueConstructorArithmeticPatchList.asPatch + commandCollectionUnwrapPatches.asPatch + opaqueToPrimitiveCollectionPatches.asPatch + unwrapUsagePatches.asPatch
       }
     }
 
@@ -446,7 +455,14 @@ object OpaqueTypePropagation {
 
   final case class LocalCallShape(
       name: String,
-      paramChains: List[Option[PropagationChain]]
+      params: List[LocalCallParam]
+  )
+
+  final case class LocalCallParam(
+      name: String,
+      opaqueChain: Option[PropagationChain],
+      primitiveType: Option[String],
+      repeated: Boolean
   )
 
   @nowarn("cat=deprecation")
@@ -643,7 +659,17 @@ object OpaqueTypePropagation {
   ): List[Patch] = {
     val shapes = localCallShapes(shapeTree.getOrElse(tree), chains)
       .groupBy(_.name)
-      .map { case (name, shapes) => name -> shapes.head }
+      .map { case (name, shapes) =>
+        name -> shapes.distinctBy(shape =>
+          shape.params.map(param =>
+            (
+              param.opaqueChain.map(_.typeName),
+              param.primitiveType,
+              param.repeated
+            )
+          )
+        )
+      }
       .toMap
 
     tree.collect { case apply: Term.Apply =>
@@ -653,12 +679,23 @@ object OpaqueTypePropagation {
             unwrapPrimitiveCommandArgument(_, chains, inferredOpaqueNames)
           )
         case name =>
-          shapes.get(name).toList.flatMap { shape =>
-            shape.paramChains
-              .zip(apply.argClause.values)
+          shapes.getOrElse(name, Nil).flatMap { shape =>
+            alignCallParams(shape.params, apply.argClause.values)
               .flatMap {
-                case (Some(chain), arg) =>
-                  wrapCallArgument(arg, chain, inferredOpaqueNames)
+                case (LocalCallParam(paramName, Some(chain), _, _), arg) =>
+                  wrapCallArgument(
+                    arg,
+                    chain,
+                    inferredOpaqueNames,
+                    Some(paramName)
+                  )
+                case (LocalCallParam(_, None, Some(primitiveType), _), arg) =>
+                  unwrapPrimitiveArgument(
+                    arg,
+                    chains,
+                    inferredOpaqueNames,
+                    Some(primitiveType)
+                  )
                 case _ => Nil
               }
           }
@@ -674,13 +711,10 @@ object OpaqueTypePropagation {
     val defShapes = tree.collect { case defn: Defn.Def =>
       LocalCallShape(
         name = defn.name.value,
-        paramChains = defn.paramClauseGroups
+        params = defn.paramClauseGroups
           .flatMap(_.paramClauses)
           .flatMap(_.values)
-          .map(param =>
-            param.decltpe
-              .flatMap(tpe => chainForParam(param.name.value, tpe, chains))
-          )
+          .map(param => localCallParam(param.name.value, param.decltpe, chains))
           .toList
       )
     }
@@ -688,18 +722,39 @@ object OpaqueTypePropagation {
     val classShapes = tree.collect { case cls: Defn.Class =>
       LocalCallShape(
         name = cls.name.value,
-        paramChains = cls.ctor.paramClauses
+        params = cls.ctor.paramClauses
           .flatMap(_.values)
-          .map(param =>
-            param.decltpe
-              .flatMap(tpe => chainForParam(param.name.value, tpe, chains))
-          )
+          .map(param => localCallParam(param.name.value, param.decltpe, chains))
           .toList
       )
     }
 
     defShapes ++ classShapes
   }
+
+  private def localCallParam(
+      paramName: String,
+      maybeType: Option[Type],
+      chains: List[PropagationChain]
+  ): LocalCallParam =
+    LocalCallParam(
+      name = paramName,
+      opaqueChain =
+        maybeType.flatMap(tpe => chainForParam(paramName, tpe, chains)),
+      primitiveType = maybeType.flatMap(unwrapPrimitiveType(_)),
+      repeated = maybeType.exists(isRepeatedType)
+    )
+
+  private def alignCallParams(
+      params: List[LocalCallParam],
+      args: List[Term]
+  ): List[(LocalCallParam, Term)] =
+    if (params.lastOption.exists(_.repeated)) {
+      val fixed = params.dropRight(1)
+      val repeated = params.last
+      fixed.zip(args.take(fixed.length)) ++
+        args.drop(fixed.length).map(repeated -> _)
+    } else params.zip(args)
 
   private def chainForParam(
       paramName: String,
@@ -708,6 +763,7 @@ object OpaqueTypePropagation {
   ): Option[PropagationChain] =
     chains.find { chain =>
       chain.nodes.exists(_.name == paramName) ||
+      typeNamesContain(tpe, chain.typeName) ||
       (containsPrimitive(tpe, chain.primitiveType) &&
         termNameMatchesChain(paramName, chain))
     }
@@ -715,14 +771,25 @@ object OpaqueTypePropagation {
   private def wrapCallArgument(
       arg: Term,
       chain: PropagationChain,
-      inferredOpaqueNames: Set[String] = Set.empty
+      inferredOpaqueNames: Set[String] = Set.empty,
+      expectedParamName: Option[String] = None
   ): List[Patch] =
     arg match {
-      case Term.Assign(Term.Name(argName), _)
+      case Term.Assign(Term.Name(argName), value)
           if isChainTargetName(argName, chain) =>
-        Nil
+        wrapCallArgument(
+          value,
+          chain,
+          inferredOpaqueNames,
+          Some(argName)
+        )
       case Term.Assign(_, value) =>
-        wrapCallArgument(value, chain, inferredOpaqueNames)
+        wrapCallArgument(value, chain, inferredOpaqueNames, expectedParamName)
+      case mapCall @ Term.Apply.After_4_6_0(
+            Term.Select(_, Term.Name("map")),
+            Term.ArgClause(List(function), _)
+          ) if argumentMatchesChain(mapCall, chain, expectedParamName) =>
+        wrapMapResultPatches(mapCall, function, chain)
       case _
           if isAlreadyOpaqueArgument(arg, chain, inferredOpaqueNames) ||
             containsPlaceholder(arg) =>
@@ -732,7 +799,9 @@ object OpaqueTypePropagation {
       case Term.Select(opaqueValue, Term.Name("value"))
           if isOpaqueUsage(opaqueValue, chain) =>
         List(Patch.replaceTree(arg, opaqueValue.syntax))
-      case _ if shouldWrapExpression(arg, chain.typeName) =>
+      case _
+          if shouldWrapExpression(arg, chain.typeName) &&
+            argumentMatchesChain(arg, chain, expectedParamName) =>
         List(
           Patch.replaceTree(
             arg,
@@ -742,18 +811,62 @@ object OpaqueTypePropagation {
       case _ => Nil
     }
 
+  private def argumentMatchesChain(
+      arg: Term,
+      chain: PropagationChain,
+      expectedParamName: Option[String]
+  ): Boolean =
+    arg match {
+      case Lit.String(_) | _: Term.Interpolate =>
+        chain.primitiveType == "String"
+      case Lit.Int(_) =>
+        chain.primitiveType == "Int" || chain.primitiveType == "Long"
+      case Lit.Long(_) =>
+        chain.primitiveType == "Long"
+      case Lit.Double(_) =>
+        chain.primitiveType == "Double"
+      case Term.Name(name) =>
+        termNameMatchesChain(name, chain)
+      case select: Term.Select =>
+        isOpaqueUsage(select, chain) || selectMatchesChain(select, chain)
+      case Term.ApplyInfix(lhs, op, _, Term.ArgClause(List(rhs), _))
+          if opIsPrimitiveArithmetic(op.value) =>
+        argumentMatchesChain(lhs, chain, expectedParamName) ||
+        argumentMatchesChain(rhs, chain, expectedParamName)
+      case Term.Apply.After_4_6_0(Term.Name(name), _)
+          if name == chain.typeName =>
+        true
+      case Term.Apply.After_4_6_0(Term.Select(_, Term.Name("map")), _) =>
+        expectedParamName.exists(isChainTargetName(_, chain))
+      case _ => false
+    }
+
   private def unwrapPrimitiveCommandArgument(
       arg: Term,
       chains: List[PropagationChain],
       inferredOpaqueNames: Set[String]
   ): List[Patch] =
+    unwrapPrimitiveArgument(arg, chains, inferredOpaqueNames, None)
+
+  private def unwrapPrimitiveArgument(
+      arg: Term,
+      chains: List[PropagationChain],
+      inferredOpaqueNames: Set[String],
+      expectedPrimitiveType: Option[String]
+  ): List[Patch] =
     arg match {
       case Term.Assign(_, value) =>
-        unwrapPrimitiveCommandArgument(value, chains, inferredOpaqueNames)
+        unwrapPrimitiveArgument(
+          value,
+          chains,
+          inferredOpaqueNames,
+          expectedPrimitiveType
+        )
       case _ =>
         chains.collectFirst {
           case chain
-              if isAlreadyOpaqueArgument(arg, chain, inferredOpaqueNames) =>
+              if expectedPrimitiveType.forall(_ == chain.primitiveType) &&
+                isAlreadyOpaqueArgument(arg, chain, inferredOpaqueNames) =>
             Patch.replaceTree(arg, s"${arg.syntax}.value")
         }.toList
     }
@@ -765,6 +878,43 @@ object OpaqueTypePropagation {
 
   private def opIsPrimitiveArithmetic(op: String): Boolean =
     op == "/" || op == "*" || op == "+" || op == "-"
+
+  private def wrapMapResultPatches(
+      mapCall: Term.Apply,
+      function: Term,
+      chain: PropagationChain
+  ): List[Patch] =
+    function match {
+      case Term.Function(_, body)
+          if shouldWrapExpression(body, chain.typeName) =>
+        List(
+          Patch.replaceTree(
+            body,
+            s"${chain.typeName}(${renderConstructorArgument(body, chain)})"
+          )
+        )
+      case Term.PartialFunction(cases) =>
+        cases.flatMap { caseClause =>
+          caseClause.body match {
+            case body: Term if shouldWrapExpression(body, chain.typeName) =>
+              List(
+                Patch.replaceTree(
+                  body,
+                  s"${chain.typeName}(${renderConstructorArgument(body, chain)})"
+                )
+              )
+            case _ => Nil
+          }
+        }
+      case _ if shouldWrapExpression(mapCall, chain.typeName) =>
+        List(
+          Patch.replaceTree(
+            mapCall,
+            s"${chain.typeName}(${renderConstructorArgument(mapCall, chain)})"
+          )
+        )
+      case _ => Nil
+    }
 
   private def renderConstructorArgument(
       arg: Term,
@@ -794,24 +944,55 @@ object OpaqueTypePropagation {
       chain: PropagationChain,
       inferredOpaqueNames: Set[String]
   ): List[Patch] = {
-    if (isInsideOpaqueConstructor(apply, chain) || isDirectApplyArgument(apply))
+    if (
+      isDirectApplyArgument(apply) && !isDirectOpaqueConstructorArgument(
+        apply,
+        chain
+      )
+    )
       Nil
     else {
       val leftPatch = apply.lhs match {
         case name: Term.Name
-            if isAlreadyOpaqueArgument(name, chain, inferredOpaqueNames) =>
+            if isOpaqueOperatorOperand(name, chain, inferredOpaqueNames) =>
           List(Patch.replaceTree(name, s"${name.value}.value"))
         case _ => Nil
       }
       val rightPatch = apply.argClause match {
         case Term.ArgClause(List(name: Term.Name), _)
-            if isAlreadyOpaqueArgument(name, chain, inferredOpaqueNames) =>
+            if isOpaqueOperatorOperand(name, chain, inferredOpaqueNames) =>
           List(Patch.replaceTree(name, s"${name.value}.value"))
         case _ => Nil
       }
       leftPatch ++ rightPatch
     }
   }
+
+  private def opaqueConstructorArithmeticPatches(
+      tree: Tree,
+      chains: List[PropagationChain],
+      inferredOpaqueNames: Set[String]
+  ): List[Patch] =
+    tree.collect {
+      case Term.Apply.After_4_6_0(
+            Term.Name(typeName),
+            Term.ArgClause(List(infix: Term.ApplyInfix), _)
+          ) =>
+        chains.find(_.typeName == typeName).toList.flatMap { chain =>
+          arithmeticOpaqueUnwrapPatches(infix, chain, inferredOpaqueNames)
+        }
+    }.flatten
+
+  private def isOpaqueOperatorOperand(
+      term: Term,
+      chain: PropagationChain,
+      inferredOpaqueNames: Set[String]
+  ): Boolean =
+    isAlreadyOpaqueArgument(term, chain, inferredOpaqueNames) ||
+      (term match {
+        case Term.Name(name) => termNameMatchesChain(name, chain)
+        case _               => false
+      })
 
   private def isInsideOpaqueConstructor(
       tree: Tree,
@@ -828,6 +1009,20 @@ object OpaqueTypePropagation {
     tree.parent.exists {
       case Term.ArgClause(values, _) => values.exists(value => value eq tree)
       case _                         => false
+    }
+
+  private def isDirectOpaqueConstructorArgument(
+      tree: Tree,
+      chain: PropagationChain
+  ): Boolean =
+    tree.parent.exists {
+      case Term.ArgClause(values, _) if values.exists(value => value eq tree) =>
+        tree.parent.flatMap(_.parent).exists {
+          case Term.Apply.After_4_6_0(Term.Name(name), _) =>
+            name == chain.typeName
+          case _ => false
+        }
+      case _ => false
     }
 
   @nowarn("cat=deprecation")
@@ -1024,7 +1219,9 @@ object OpaqueTypePropagation {
     term match {
       case Term.Name(name)                 => Some(name)
       case Term.Select(_, Term.Name(name)) => Some(name)
-      case _                               => None
+      case Term.ApplyType.After_4_6_0(fun, _) =>
+        methodName(fun)
+      case _ => None
     }
 
   private def isOpaqueArgument(
@@ -1081,6 +1278,8 @@ object OpaqueTypePropagation {
   ): Set[String] =
     tpe match {
       case Type.Name(name) if typeParamNames.contains(name) => Set(name)
+      case Type.Repeated(tpe) =>
+        collectTypeParamNames(tpe, typeParamNames)
       case Type.Apply.After_4_6_0(_, argClause) =>
         argClause.values.flatMap(collectTypeParamNames(_, typeParamNames)).toSet
       case Type.Tuple(args) =>
@@ -1104,7 +1303,8 @@ object OpaqueTypePropagation {
       opaqueAliases: Map[String, String] = Map.empty
   ): Option[String] = tpe match {
     case Type.Name(name) if SupportedPrimitives.contains(name) => Some(name)
-    case Type.Name(name) => opaqueAliases.get(name)
+    case Type.Name(name)    => opaqueAliases.get(name)
+    case Type.Repeated(tpe) => unwrapPrimitiveType(tpe, opaqueAliases)
     case Type.Apply.After_4_6_0(_, argClause) =>
       argClause.values.iterator
         .flatMap(arg => unwrapPrimitiveType(arg, opaqueAliases))
@@ -1126,6 +1326,8 @@ object OpaqueTypePropagation {
     tpe match {
       case Type.Name(name) if name == primitiveType =>
         Patch.replaceTree(tpe, typeName)
+      case Type.Repeated(inner) =>
+        replacePrimitiveType(inner, primitiveType, typeName)
       case Type.Apply.After_4_6_0(_, argClause) =>
         argClause.values
           .map(replacePrimitiveType(_, primitiveType, typeName))
@@ -1155,9 +1357,25 @@ object OpaqueTypePropagation {
   ): Boolean =
     tpe match {
       case Type.Name(name) => name == primitiveType
+      case Type.Repeated(tpe) =>
+        containsPrimitive(tpe, primitiveType)
       case Type.Apply.After_4_6_0(_, argClause) =>
         argClause.values.exists(containsPrimitive(_, primitiveType))
       case Type.Tuple(args) => args.exists(containsPrimitive(_, primitiveType))
+      case _                => false
+    }
+
+  private def typeNamesContain(
+      tpe: Type,
+      typeName: String
+  ): Boolean =
+    tpe match {
+      case Type.Name(name) => name == typeName
+      case Type.Repeated(tpe) =>
+        typeNamesContain(tpe, typeName)
+      case Type.Apply.After_4_6_0(_, argClause) =>
+        argClause.values.exists(typeNamesContain(_, typeName))
+      case Type.Tuple(args) => args.exists(typeNamesContain(_, typeName))
       case _                => false
     }
 
@@ -1166,6 +1384,12 @@ object OpaqueTypePropagation {
       case Type.Apply.After_4_6_0(_, _) => true
       case Type.Tuple(_)                => true
       case _                            => false
+    }
+
+  private def isRepeatedType(tpe: Type): Boolean =
+    tpe match {
+      case Type.Repeated(_) => true
+      case _                => false
     }
 
   private def containsOpaqueConstructor(term: Term, typeName: String): Boolean =
@@ -1216,6 +1440,25 @@ object OpaqueTypePropagation {
       case Term.Select(_, Term.Name(name)) =>
         termNameMatchesChain(name, chain)
       case _ => false
+    }
+
+  private def selectMatchesChain(
+      select: Term.Select,
+      chain: PropagationChain
+  ): Boolean = {
+    val receiverPrefix = domainTermName(select.qual)
+    val selected = select.name.value
+    receiverPrefix.exists(prefix =>
+      termNameMatchesChain(prefix + pascalCase(selected), chain)
+    )
+  }
+
+  private def domainTermName(term: Term): Option[String] =
+    term match {
+      case Term.Name(name) => Some(name)
+      case Term.Select(_, Term.Name(name)) =>
+        Some(name)
+      case _ => None
     }
 
   private def termNameMatchesChain(
