@@ -9,3 +9,6 @@ Follow the shared, LLM-agnostic project docs:
 Additional Codex/runtime instruction:
 
 - Prefix shell commands with `rtk`.
+
+## Scala Code Rules
+Please follow the rules in @SCALA_SEMANTIC_RULES.md.

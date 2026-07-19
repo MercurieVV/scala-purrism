@@ -38,6 +38,7 @@ final class GoldenFixtureSuite extends munit.FunSuite {
     assert(services.toSet.contains("fix.TypelevelPurrism"))
     assert(services.toSet.contains("fix.TypeclassWeakening"))
     assert(services.toSet.contains("fix.PreferKleisli"))
+    assert(services.toSet.contains("fix.OpaqueTypePropagation"))
   }
 
   test("kleisli rewrite converts a simple unary effect method") {
@@ -117,7 +118,7 @@ final class GoldenFixtureSuite extends munit.FunSuite {
     )
   }
 
-  test("kleisli rewrite skips methods containing for expressions") {
+  test("kleisli rewrite wraps methods containing for expressions") {
     val method = firstMethod(
       """def release(root: os.Path, branchName: String): F[Unit] =
         |  for
@@ -126,7 +127,18 @@ final class GoldenFixtureSuite extends munit.FunSuite {
         |  yield ()""".stripMargin
     )
 
-    assertEquals(PreferKleisli.kleisliRewrite(method), None)
+    assertEquals(
+      PreferKleisli.kleisliRewrite(method),
+      Some(
+        """def release: Kleisli[F, (os.Path, String), Unit] =
+          |  Kleisli.apply { case (root, branchName) =>
+          |    for
+          |    _ <- progress(root)
+          |    _ <- call(branchName)
+          |  yield ()
+          |  }""".stripMargin
+      )
+    )
   }
 
   test("kleisli rewrite converts a multi-parameter blocking helper") {
@@ -371,7 +383,8 @@ final class GoldenFixtureSuite extends munit.FunSuite {
         |      root: os.Path,
         |      worktreePath: os.Path,
         |      branchName: String,
-        |      progress: String => F[Unit]
+        |      progress: String => F[Unit],
+        |      force: Boolean = true
         |  ): F[Unit] =
         |    for _ <- progress(branchName) yield ()
         |}""".stripMargin
@@ -504,6 +517,68 @@ final class GoldenFixtureSuite extends munit.FunSuite {
 
   private def read(path: Path): String =
     Files.readString(path, StandardCharsets.UTF_8)
+  test("opaque type propagation infers names correctly") {
+    assertEquals(OpaqueTypePropagation.inferOpaqueTypeName("userId"), "UserId")
+    assertEquals(
+      OpaqueTypePropagation.inferOpaqueTypeName("id", Some("User")),
+      "UserId"
+    )
+    assertEquals(
+      OpaqueTypePropagation.inferOpaqueTypeName("order_id"),
+      "OrderId"
+    )
+    assertEquals(OpaqueTypePropagation.inferOpaqueTypeName("amount"), "Amount")
+  }
+
+  test("opaque type propagation generates Scala 3 opaque type definition") {
+    val opaqueDef =
+      OpaqueTypePropagation.generateOpaqueTypeDef("UserId", "String")
+    assert(opaqueDef.contains("opaque type UserId = String"))
+    assert(opaqueDef.contains("object UserId:"))
+    assert(opaqueDef.contains("def apply(value: String): UserId = value"))
+    assert(
+      opaqueDef.contains(
+        "extension (opaqueValue: UserId) def value: String = opaqueValue"
+      )
+    )
+  }
+
+  test("opaque type propagation detects parameter propagation chains") {
+    val source = parseSource(
+      """case class User(userId: String)
+        |class UserRepository {
+        |  def findById(userId: String): Option[User] = None
+        |}""".stripMargin
+    )
+
+    val chains = OpaqueTypePropagation.findPropagationChains(source)
+    assertEquals(chains.length, 1)
+    assertEquals(chains.head.typeName, "UserId")
+    assertEquals(chains.head.primitiveType, "String")
+    assertEquals(chains.head.nodes.length, 2)
+  }
+
+  test(
+    "opaque type propagation detects parameter propagation chains across multiple classes"
+  ) {
+    val source = parseSource(
+      """case class User(userId: String)
+        |class UserRepository {
+        |  def findById(userId: String): Option[User] = None
+        |}
+        |class UserService(repo: UserRepository) {
+        |  def processUser(userId: String): Unit = {
+        |    repo.findById(userId)
+        |  }
+        |}""".stripMargin
+    )
+
+    val chains = OpaqueTypePropagation.findPropagationChains(source)
+    assertEquals(chains.length, 1)
+    assertEquals(chains.head.typeName, "UserId")
+    assertEquals(chains.head.primitiveType, "String")
+    assertEquals(chains.head.nodes.length, 3)
+  }
 
   private def readResources(name: String): List[String] =
     getClass.getClassLoader.getResources(name).asScala.toList.map { url =>

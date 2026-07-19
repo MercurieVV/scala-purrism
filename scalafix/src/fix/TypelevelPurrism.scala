@@ -489,7 +489,6 @@ private[fix] object TypelevelPurrism {
           param.default.isEmpty
       ) &&
       selfRecursionIsSafe(defn, params) &&
-      !containsForExpression(defn.body) &&
       isFResult(returnType)
 
   private def kleisliInputPattern(
@@ -515,9 +514,13 @@ private[fix] object TypelevelPurrism {
 
   private def kleisliBody(defn: Defn.Def, params: List[Term.Param]): String =
     normalizeScala3Varargs {
+      val bodyText =
+        if (defn.body.pos.text.nonEmpty) defn.body.pos.text
+        else defn.body.syntax
+
       if (params.length > 1 && callsMethod(defn.body, defn.name.value))
-        replaceExactSelfCalls(defn.body.syntax, defn.name.value, params)
-      else defn.body.syntax
+        replaceExactSelfCalls(bodyText, defn.name.value, params)
+      else bodyText
     }
 
   private def isFResult(returnType: Type.Apply): Boolean =
@@ -1030,12 +1033,6 @@ private[fix] object TypelevelPurrism {
 
   private def containsPlaceholder(tree: Tree): Boolean =
     tree.collect { case _: Term.Placeholder => true }.nonEmpty
-
-  private def containsForExpression(tree: Tree): Boolean =
-    tree.collect {
-      case _: Term.For      => true
-      case _: Term.ForYield => true
-    }.nonEmpty
 
   private def renderModifiers(mods: List[Mod]): String =
     if (mods.isEmpty) ""
