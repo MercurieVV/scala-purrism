@@ -111,6 +111,27 @@ final class GoldenFixtureSuite extends munit.FunSuite {
     )
   }
 
+  test("kleisli rewrite splits setup before a final Kleisli call") {
+    val method = firstMethod(
+      """def loadProfile: Kleisli[F, String, Profile] =
+        |  Kleisli.apply { id =>
+        |    val user = User(id)
+        |    profile.run(user)
+        |  }""".stripMargin
+    )
+
+    assertEquals(
+      TypelevelPurrism.kleisliRewrite(method),
+      Some(
+        """def loadProfile: Kleisli[F, String, Profile] =
+          |  Kleisli.apply { id =>
+          |    val user = User(id)
+          |    user
+          |  }.andThen(profile)""".stripMargin
+      )
+    )
+  }
+
   test("kleisli rewrite skips direct calls that are not known Kleislies") {
     val method = firstMethod(
       """def loadProfile(id: String): F[Profile] =

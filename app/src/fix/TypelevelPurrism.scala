@@ -64,7 +64,7 @@ private[fix] object TypelevelPurrism {
               val result = returnType.argClause.values.head
 
               s"""${modifiers}def ${defn.name.syntax}: Kleisli[${returnType.tpe.syntax}, $parameterType, ${result.syntax}] =
-               |  ${rewrite.first}.andThen(${rewrite.second})""".stripMargin
+                 |${indent(rewrite.expression, 2)}""".stripMargin
           }
         }
       case returnType: Type.Apply if isKleisliResult(returnType) =>
@@ -72,7 +72,7 @@ private[fix] object TypelevelPurrism {
           val modifiers = renderModifiers(defn.mods)
 
           s"""${modifiers}def ${defn.name.syntax}: ${returnType.syntax} =
-             |  ${rewrite.first}.andThen(${rewrite.second})""".stripMargin
+             |${indent(rewrite.expression, 2)}""".stripMargin
         }
       case _ =>
         None
@@ -133,9 +133,19 @@ private[fix] object TypelevelPurrism {
     if (mods.isEmpty) ""
     else mods.map(_.syntax).mkString("", " ", " ")
 
-  private final case class CompositionRewrite(first: String, second: String)
+  private final case class CompositionRewrite(expression: String)
+
+  private final case class SplitKleisliCall(callee: String, argument: Term)
 
   private def compositionBody(
+      body: Term,
+      knownKleislies: Set[String]
+  ): Option[CompositionRewrite] =
+    splitKleisliBody(body, knownKleislies).orElse(
+      flatMapCompositionBody(body, knownKleislies)
+    )
+
+  private def flatMapCompositionBody(
       body: Term,
       knownKleislies: Set[String]
   ): Option[CompositionRewrite] =
@@ -150,6 +160,29 @@ private[fix] object TypelevelPurrism {
             knownKleislies
           )
         } yield rewrite
+      case _ =>
+        None
+    }
+
+  private def splitKleisliBody(
+      body: Term,
+      knownKleislies: Set[String]
+  ): Option[CompositionRewrite] =
+    body match {
+      case applyTerm: Term.Apply =>
+        for {
+          function <- kleisliApplyFunction(applyTerm)
+          param <- singleFunctionParameter(function)
+          split <- splitFinalKleisliCall(function.body, knownKleislies)
+        } yield {
+          val leftBody = renderFunctionBody(split.argument)
+
+          CompositionRewrite(
+            s"""Kleisli.apply { ${param.name.syntax} =>
+               |${indent(leftBody, 2)}
+               |}.andThen(${split.callee})""".stripMargin
+          )
+        }
       case _ =>
         None
     }
@@ -171,9 +204,57 @@ private[fix] object TypelevelPurrism {
             midParam.name.syntax,
             knownKleislies
           )
-        } yield CompositionRewrite(first, second)
+        } yield CompositionRewrite(s"$first.andThen($second)")
       case _ =>
         None
+    }
+
+  private def splitFinalKleisliCall(
+      body: Term,
+      knownKleislies: Set[String]
+  ): Option[SplitKleisliCall] =
+    body match {
+      case block: Term.Block =>
+        block.stats.lastOption.flatMap {
+          case last: Term =>
+            finalKleisliCall(last, knownKleislies).map { call =>
+              call.copy(argument =
+                Term.Block(block.stats.dropRight(1) :+ call.argument)
+              )
+            }
+          case _ =>
+            None
+        }
+      case term =>
+        finalKleisliCall(term, knownKleislies)
+    }
+
+  private def finalKleisliCall(
+      term: Term,
+      knownKleislies: Set[String]
+  ): Option[SplitKleisliCall] =
+    term match {
+      case applyTerm: Term.Apply =>
+        applyTerm.argClause.values match {
+          case List(argument: Term) =>
+            kleisliCallee(applyTerm.fun, knownKleislies).map { callee =>
+              SplitKleisliCall(callee, argument)
+            }
+          case _ =>
+            None
+        }
+      case _ =>
+        None
+    }
+
+  private def renderFunctionBody(body: Term): String =
+    body match {
+      case Term.Block(List(single)) =>
+        single.syntax
+      case Term.Block(stats) =>
+        stats.map(_.syntax).mkString("\n")
+      case other =>
+        other.syntax
     }
 
   private def kleisliCall(
@@ -242,5 +323,11 @@ private[fix] object TypelevelPurrism {
       case _ =>
         None
     }
+
+  private def indent(value: String, spaces: Int): String = {
+    val prefix = " " * spaces
+
+    value.linesIterator.map(prefix + _).mkString("\n")
+  }
 
 }
