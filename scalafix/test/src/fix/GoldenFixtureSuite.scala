@@ -575,6 +575,21 @@ final class GoldenFixtureSuite extends munit.FunSuite {
     assert(plan.opaqueTypeDefinitions.nonEmpty)
   }
 
+  test("opaque type propagation filters out generic parameter names") {
+    val source = parseSource(
+      """class Helper {
+        |  def format(value: String, line: String): String = value + line
+        |  def print(value: String): Unit = ()
+        |}""".stripMargin
+    )
+
+    val chains = OpaqueTypePropagation.findPropagationChains(source)
+    assert(
+      chains.isEmpty,
+      "Generic parameter names like 'value' and 'line' should be filtered out"
+    )
+  }
+
   test("opaque type propagation infers names correctly") {
     assertEquals(OpaqueTypePropagation.inferOpaqueTypeName("userId"), "UserId")
     assertEquals(

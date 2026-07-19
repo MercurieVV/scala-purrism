@@ -24,8 +24,52 @@ object OpaqueTypePropagation {
     "UUID"
   )
 
-  private val DomainPattern =
-    "(?i).*(id|name|amount|price|token|code|key|url|email|address|number|count|width|height|millis|seconds|status|type)$".r
+  val GenericParamNames: Set[String] = Set(
+    "value",
+    "values",
+    "line",
+    "lines",
+    "str",
+    "string",
+    "s",
+    "v",
+    "x",
+    "y",
+    "z",
+    "val",
+    "var",
+    "arg",
+    "args",
+    "param",
+    "params",
+    "input",
+    "output",
+    "item",
+    "items",
+    "elem",
+    "elems",
+    "obj",
+    "object",
+    "opt",
+    "option",
+    "res",
+    "result",
+    "seq",
+    "list",
+    "array",
+    "data",
+    "body",
+    "content",
+    "text",
+    "message",
+    "a",
+    "b",
+    "c",
+    "d"
+  )
+
+  private val SpecificDomainPattern =
+    "(?i).*(id|name|amount|price|token|code|key|url|email|address|number|count|width|height|millis|seconds|status)$".r
 
   final case class ParameterNode(
       name: String,
@@ -58,8 +102,12 @@ object OpaqueTypePropagation {
             node.paramTree.decltpe match {
               case Some(tpe: Type.Name) =>
                 Patch.replaceTree(tpe, chain.typeName)
-              case Some(Type.Apply.After_4_6_0(Type.Name("Option"), argClause))
-                  if argClause.values.length == 1 =>
+              case Some(
+                    Type.Apply.After_4_6_0(
+                      Type.Name("Option"),
+                      argClause
+                    )
+                  ) if argClause.values.length == 1 =>
                 Patch.replaceTree(argClause.values.head, chain.typeName)
               case _ => Patch.empty
             }
@@ -147,6 +195,8 @@ object OpaqueTypePropagation {
       tpe <- param.decltpe
       primitiveTypeName = unwrapPrimitiveType(tpe)
       if primitiveTypeName.exists(SupportedPrimitives.contains)
+      cleanName = param.name.value.replaceAll("^_+|_+$", "")
+      if !GenericParamNames.contains(cleanName.toLowerCase)
     } yield {
       ParameterNode(
         name = param.name.value,
@@ -163,6 +213,8 @@ object OpaqueTypePropagation {
       tpe <- param.decltpe
       primitiveTypeName = unwrapPrimitiveType(tpe)
       if primitiveTypeName.exists(SupportedPrimitives.contains)
+      cleanName = param.name.value.replaceAll("^_+|_+$", "")
+      if !GenericParamNames.contains(cleanName.toLowerCase)
     } yield {
       ParameterNode(
         name = param.name.value,
@@ -190,7 +242,8 @@ object OpaqueTypePropagation {
         val callPassingsCount =
           nodes.map(n => callSitePassings.count(_ == n.name)).sum
         val totalWeight = nodes.length + callPassingsCount
-        val isDomainMatch = nodes.exists(n => DomainPattern.matches(n.name))
+        val isDomainMatch =
+          nodes.exists(n => SpecificDomainPattern.matches(n.name))
 
         if (totalWeight >= 2 || isDomainMatch) {
           val matchingReturnDefs = allMethods.filter { defn =>
@@ -225,6 +278,9 @@ object OpaqueTypePropagation {
   def rewritePlan(tree: Tree, chains: List[PropagationChain]): RewritePlan = {
     val existingTypeNames = tree.collect {
       case defn: Defn.Type if defn.name.value != "" => defn.name.value
+      case cls: Defn.Class                          => cls.name.value
+      case traitDef: Defn.Trait                     => traitDef.name.value
+      case obj: Defn.Object                         => obj.name.value
     }.toSet
 
     val newChains =
