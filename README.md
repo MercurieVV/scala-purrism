@@ -8,10 +8,11 @@ and Cats Effect style.
 Latest release:
 
 ```text
-io.github.mercurievv:scala-purrism-scalafix_3:0.4.0
+io.github.mercurievv:scala-purrism-scalafix_3:0.3.6
 ```
 
 The published rule artifact currently targets Scala 3 and Scalafix `0.14.7`.
+The unreleased development version is `0.4.0`.
 
 ### sbt
 
@@ -25,7 +26,7 @@ Add the rule dependency to `build.sbt`:
 
 ```scala
 ThisBuild / scalafixDependencies +=
-  "io.github.mercurievv" %% "scala-purrism-scalafix" % "0.4.0"
+  "io.github.mercurievv" %% "scala-purrism-scalafix" % "0.3.6"
 
 ThisBuild / scalacOptions += "-Ysemanticdb"
 ```
@@ -53,7 +54,7 @@ object app extends ScalaModule, ScalafixModule {
   def scalacOptions = Seq("-Ysemanticdb")
 
   def scalafixIvyDeps = Seq(
-    mvn"io.github.mercurievv::scala-purrism-scalafix:0.4.0"
+    mvn"io.github.mercurievv::scala-purrism-scalafix:0.3.6"
   )
 }
 ```
@@ -69,7 +70,7 @@ Run:
 Add the external rule dependency as a Scala CLI directive:
 
 ```scala
-//> using scalafix.dep io.github.mercurievv::scala-purrism-scalafix:0.4.0
+//> using scalafix.dep io.github.mercurievv::scala-purrism-scalafix:0.3.6
 ```
 
 For semantic rules, make sure Scala CLI emits SemanticDB:
