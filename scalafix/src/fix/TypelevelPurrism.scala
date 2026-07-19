@@ -150,8 +150,32 @@ private[fix] object TypelevelPurrism {
       defn: Defn.Def,
       knownKleislies: Set[String] = Set.empty
   ): Option[String] =
-    kleisliCompositionRewrite(defn, knownKleislies)
+    kleisliAliasRewrite(defn, knownKleislies)
+      .orElse(kleisliCompositionRewrite(defn, knownKleislies))
       .orElse(kleisliApplyRewrite(defn))
+
+  private def kleisliAliasRewrite(
+      defn: Defn.Def,
+      knownKleislies: Set[String]
+  ): Option[String] =
+    defn.decltpe.flatMap {
+      case returnType: Type.Apply if isFResult(returnType) =>
+        singlePlainParameter(defn).flatMap { param =>
+          for {
+            call <- finalKleisliCall(defn.body, knownKleislies)
+            if isSameArgument(call.argument, param.name.syntax)
+          } yield {
+            val modifiers = renderModifiers(defn.mods)
+            val parameterType = param.decltpe.map(_.syntax).getOrElse("")
+            val result = returnType.argClause.values.head
+
+            s"""${modifiers}def ${defn.name.syntax}: Kleisli[${returnType.tpe.syntax}, $parameterType, ${result.syntax}] =
+               |  ${call.callee}""".stripMargin
+          }
+        }
+      case _ =>
+        None
+    }
 
   private def kleisliApplyRewrite(defn: Defn.Def): Option[String] =
     singlePlainParameter(defn).flatMap { param =>
@@ -963,6 +987,12 @@ private[fix] object TypelevelPurrism {
         }
       case _ =>
         None
+    }
+
+  private def isSameArgument(argument: Term, name: String): Boolean =
+    argument match {
+      case Term.Name(value) => value == name
+      case _                => false
     }
 
   private def renderFunctionBody(body: Term): String =

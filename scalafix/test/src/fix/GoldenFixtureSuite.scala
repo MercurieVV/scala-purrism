@@ -105,6 +105,36 @@ final class GoldenFixtureSuite extends munit.FunSuite {
     )
   }
 
+  test("kleisli rewrite collapses a direct Kleisli alias") {
+    val method = firstMethod(
+      """def loadProfile(id: String): F[Profile] =
+        |  profile(id)""".stripMargin
+    )
+
+    assertEquals(
+      PreferKleisli.kleisliRewrite(method, Set("profile")),
+      Some(
+        """def loadProfile: Kleisli[F, String, Profile] =
+          |  profile""".stripMargin
+      )
+    )
+  }
+
+  test("kleisli rewrite collapses an explicit Kleisli run alias") {
+    val method = firstMethod(
+      """def loadProfile(id: String): F[Profile] =
+        |  profile.run(id)""".stripMargin
+    )
+
+    assertEquals(
+      PreferKleisli.kleisliRewrite(method),
+      Some(
+        """def loadProfile: Kleisli[F, String, Profile] =
+          |  profile""".stripMargin
+      )
+    )
+  }
+
   test("kleisli rewrite composes inside an existing Kleisli") {
     val method = firstMethod(
       """def loadProfile: Kleisli[F, String, Profile] =
