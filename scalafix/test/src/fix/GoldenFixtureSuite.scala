@@ -103,6 +103,22 @@ final class GoldenFixtureSuite extends munit.FunSuite {
     )
   }
 
+  test(
+    "simplify Cats expressions skips flatMap bodies that are not map calls"
+  ) {
+    val source = parseSource(
+      """final class Service[F[_]] {
+        |  def mentions(seed: F[Int]): F[List[String]] =
+        |    seed.flatMap(value => pullRequestMentions(value))
+        |}""".stripMargin
+    )
+
+    assertEquals(
+      SimplifyCatsExpressions.rewrites(source),
+      Nil
+    )
+  }
+
   test("simplify Cats expressions rewrites null and Either constructors") {
     val source = parseSource(
       """final class Service {

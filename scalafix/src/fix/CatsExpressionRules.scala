@@ -259,7 +259,9 @@ private[fix] object CatsExpressionRules {
               secondApply <- Some(firstFunction.body).collect {
                 case apply: Term.Apply => apply
               }
-              Term.Select(secondEffect, Term.Name("map")) = secondApply.fun
+              secondEffect <- Some(secondApply.fun).collect {
+                case Term.Select(effect, Term.Name("map")) => effect
+              }
               if !references(secondEffect, firstName)
               secondFunction <- singleArg(secondApply.argClause.values)
                 .collect { case function: Term.Function =>
