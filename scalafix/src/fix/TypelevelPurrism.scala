@@ -6,7 +6,7 @@ import scalafix.v1._
 
 final class TypelevelPurrism extends SemanticRule("TypelevelPurrism") {
   override def fix(implicit doc: SemanticDocument): Patch =
-    new TypeclassWeakening().fix + new PreferKleisli().fix
+    new TypeclassWeakening().fix + new PreferKleisli().fix + new OpaqueTypePropagation().fix
 }
 
 final class TypeclassWeakening extends SemanticRule("TypeclassWeakening") {

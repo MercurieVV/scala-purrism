@@ -6,8 +6,10 @@ import scalafix.v1._
 final class OpaqueTypePropagation
     extends SemanticRule("OpaqueTypePropagation") {
   override def fix(implicit doc: SemanticDocument): Patch = {
-    val chains = OpaqueTypePropagation.findPropagationChains(doc.tree)
-    val plan = OpaqueTypePropagation.rewritePlan(doc.tree, chains)
+    val tree =
+      dialects.Scala3(doc.input.text).parse[Source].toOption.getOrElse(doc.tree)
+    val chains = OpaqueTypePropagation.findPropagationChains(tree)
+    val plan = OpaqueTypePropagation.rewritePlan(tree, chains)
 
     plan.patches(using doc)
   }
