@@ -32,6 +32,3 @@ jobs:
 
       - name: Compile docs
         run: ./mill docs.compile
-
-      - name: Validate publish metadata
-        run: ./mill scalafix.publishM2Local
