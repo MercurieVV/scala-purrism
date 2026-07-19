@@ -124,10 +124,10 @@ final class GoldenFixtureSuite extends munit.FunSuite {
       TypelevelPurrism.kleisliRewrite(method),
       Some(
         """def loadProfile: Kleisli[F, String, Profile] =
-          |  Kleisli.apply { id =>
+          |  profile.local { id =>
           |    val user = User(id)
           |    user
-          |  }.andThen(profile)""".stripMargin
+          |  }""".stripMargin
       )
     )
   }

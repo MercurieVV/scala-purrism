@@ -397,9 +397,9 @@ private[fix] object TypelevelPurrism {
           val leftBody = renderFunctionBody(split.argument)
 
           CompositionRewrite(
-            s"""Kleisli.apply { ${param.name.syntax} =>
+            s"""${split.callee}.local { ${param.name.syntax} =>
                |${indent(leftBody, 2)}
-               |}.andThen(${split.callee})""".stripMargin
+               |}""".stripMargin
           )
         }
       case _ =>
