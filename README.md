@@ -98,13 +98,17 @@ You can combine `TypelevelPurrism` with other Scalafix rules:
 
 ```hocon
 rules = [
-  OrganizeImports,
-  DisableSyntax,
-  LeakingImplicitClassVal,
-  NoValInForComprehension,
-  TypelevelPurrism
+  TypeclassWeakening,
+  PreferKleisli,
+  OpaqueTypePropagation
 ]
 ```
+
+### Rule Overview
+
+- **`TypeclassWeakening`**: Weaken overly restrictive effect bounds (e.g. `Sync[F]` $\rightarrow$ `Monad[F]`) when only monadic operations are used.
+- **`PreferKleisli`**: Refactor effectful functions into `Kleisli` compositions.
+- **`OpaqueTypePropagation`**: Detect primitive value propagation chains (`String`, `Int`, `Long`, `BigDecimal`, etc.) across call trees and replace them with generated Scala 3 zero-cost `opaque type` domain wrappers.
 
 `TypelevelPurrism` is a semantic rule, so the target project must compile with
 SemanticDB enabled before the rule can run.

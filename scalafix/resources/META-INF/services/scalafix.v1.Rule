@@ -1,3 +1,4 @@
 fix.TypelevelPurrism
 fix.TypeclassWeakening
 fix.PreferKleisli
+fix.OpaqueTypePropagation
