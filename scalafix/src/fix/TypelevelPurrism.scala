@@ -79,25 +79,20 @@ object TypeclassWeakening {
 final class PreferKleisli extends SemanticRule("PreferKleisli") {
   override def fix(implicit doc: SemanticDocument): Patch = {
     val knownKleislies = PreferKleisli.collectKleisliNames(doc.tree)
+    val rewrites = PreferKleisli.rewritePlan(doc.tree, knownKleislies)
 
-    PreferKleisli
-      .rewriteCandidates(doc.tree)
-      .map { defn =>
-        kleisliPatch(defn, knownKleislies)
-      }
-      .asPatch
+    rewrites.map { case (defn, rewritten) =>
+      kleisliPatch(defn, rewritten)
+    }.asPatch
   }
 
   private def kleisliPatch(
       defn: Defn.Def,
-      knownKleislies: Set[String]
+      rewritten: String
   )(implicit doc: SemanticDocument): Patch =
-    PreferKleisli
-      .kleisliRewrite(defn, knownKleislies)
-      .fold(Patch.empty) { rewritten =>
-        Patch.addGlobalImport(Symbol("cats/data/Kleisli#")) +
-          Patch.replaceTree(defn, rewritten)
-      }
+    Patch.addGlobalImport(Symbol("cats/data/Kleisli#")) +
+      Patch.replaceTree(defn, rewritten) +
+      PreferKleisli.tupledCallPatches(doc.tree, defn)
 }
 
 object PreferKleisli {
@@ -118,6 +113,15 @@ object PreferKleisli {
 
   def rewriteCandidates(tree: Tree): List[Defn.Def] =
     TypelevelPurrism.rewriteCandidates(tree)
+
+  def rewritePlan(
+      tree: Tree,
+      knownKleislies: Set[String] = Set.empty
+  ): List[(Defn.Def, String)] =
+    TypelevelPurrism.kleisliRewritePlan(tree, knownKleislies)
+
+  def tupledCallPatches(tree: Tree, defn: Defn.Def): Patch =
+    TypelevelPurrism.tupledCallPatches(tree, defn)
 }
 
 private[fix] object TypelevelPurrism {
@@ -178,17 +182,17 @@ private[fix] object TypelevelPurrism {
     }
 
   private def kleisliApplyRewrite(defn: Defn.Def): Option[String] =
-    singlePlainParameter(defn).flatMap { param =>
+    plainParameters(defn).flatMap { params =>
       defn.decltpe.collect {
         case returnType: Type.Apply
-            if isKleisliCandidate(defn.mods, param, returnType) =>
+            if isKleisliCandidate(defn, params, returnType) =>
           val modifiers = renderModifiers(defn.mods)
-          val parameterName = param.name.syntax
-          val parameterType = param.decltpe.map(_.syntax).getOrElse("")
+          val parameterPattern = kleisliInputPattern(params)
+          val parameterType = kleisliInputType(params)
           val result = returnType.argClause.values.head
 
           s"""${modifiers}def ${defn.name.syntax}: Kleisli[${returnType.tpe.syntax}, $parameterType, ${result.syntax}] =
-             |  Kleisli.apply { $parameterName =>
+             |  Kleisli.apply { $parameterPattern =>
              |    ${defn.body.syntax}
              |  }""".stripMargin
       }
@@ -266,6 +270,43 @@ private[fix] object TypelevelPurrism {
         Nil
     }
   }
+
+  def kleisliRewritePlan(
+      tree: Tree,
+      knownKleislies: Set[String] = Set.empty
+  ): List[(Defn.Def, String)] = {
+    val rewrites =
+      rewriteCandidates(tree).flatMap { defn =>
+        kleisliRewrite(defn, knownKleislies).map(defn -> _)
+      }
+    val tupledRewriteNames =
+      rewrites.collect {
+        case (defn, _) if plainParameters(defn).exists(_.length > 1) =>
+          defn.name.value
+      }.toSet
+
+    rewrites.filterNot { case (defn, _) =>
+      plainParameters(defn).exists(_.length > 1) &&
+      callsAnyMethod(defn.body, tupledRewriteNames - defn.name.value)
+    }
+  }
+
+  def tupledCallPatches(tree: Tree, defn: Defn.Def): Patch =
+    plainParameters(defn).filter(_.length > 1).fold(Patch.empty) { params =>
+      val methodName = defn.name.value
+      val arity = params.length
+
+      tree.collect {
+        case applyTerm: Term.Apply
+            if callName(applyTerm.fun).contains(methodName) &&
+              applyTerm.argClause.values.length == arity &&
+              outsideTree(applyTerm, defn) =>
+          Patch.replaceTree(
+            applyTerm.argClause,
+            tupledArguments(applyTerm.argClause.values)
+          )
+      }.asPatch
+    }
 
   private def templateStats(templ: Template): List[Stat] =
     templ.body.stats
@@ -414,29 +455,51 @@ private[fix] object TypelevelPurrism {
       .foldLeft(Set.empty[String])(_ ++ _)
 
   private def singlePlainParameter(defn: Defn.Def): Option[Term.Param] =
+    plainParameters(defn).collect { case List(param) => param }
+
+  private def plainParameters(defn: Defn.Def): Option[List[Term.Param]] =
     defn.paramClauseGroups match {
       case List(group)
           if group.tparamClause.values.isEmpty &&
             group.paramClauses.length == 1 &&
             group.paramClauses.head.mod.isEmpty =>
         group.paramClauses.head.values match {
-          case List(param) => Some(param)
-          case _           => None
+          case params if params.nonEmpty => Some(params)
+          case _                         => None
         }
       case _ =>
         None
     }
 
   private def isKleisliCandidate(
-      mods: List[Mod],
-      param: Term.Param,
+      defn: Defn.Def,
+      params: List[Term.Param],
       returnType: Type.Apply
   ): Boolean =
-    !mods.exists(_.is[Mod.Override]) &&
-      param.mods.isEmpty &&
-      param.decltpe.nonEmpty &&
-      param.default.isEmpty &&
+    !defn.mods.exists(_.is[Mod.Override]) &&
+      params.forall(param =>
+        param.mods.isEmpty &&
+          param.decltpe.exists(!_.is[Type.Repeated]) &&
+          param.default.isEmpty
+      ) &&
+      !callsMethod(defn.body, defn.name.value) &&
+      !containsForExpression(defn.body) &&
       isFResult(returnType)
+
+  private def kleisliInputPattern(params: List[Term.Param]): String =
+    params match {
+      case List(param) => param.name.syntax
+      case many => s"case ${many.map(_.name.syntax).mkString("(", ", ", ")")}"
+    }
+
+  private def kleisliInputType(params: List[Term.Param]): String =
+    params match {
+      case List(param) => param.decltpe.map(_.syntax).getOrElse("")
+      case many =>
+        many
+          .map(_.decltpe.map(_.syntax).getOrElse(""))
+          .mkString("(", ", ", ")")
+    }
 
   private def isFResult(returnType: Type.Apply): Boolean =
     returnType.tpe.syntax == "F" &&
@@ -871,6 +934,34 @@ private[fix] object TypelevelPurrism {
       owner.start <= candidate.start && candidate.end <= owner.end
     }
 
+  private def outsideTree(candidate: Tree, owner: Tree): Boolean =
+    val ownerPosition = owner.pos
+    val candidatePosition = candidate.pos
+
+    candidatePosition.start < ownerPosition.start ||
+    ownerPosition.end < candidatePosition.end
+
+  private def callsMethod(tree: Tree, methodName: String): Boolean =
+    tree.collect {
+      case applyTerm: Term.Apply
+          if callName(applyTerm.fun).contains(methodName) =>
+        true
+    }.nonEmpty
+
+  private def callsAnyMethod(tree: Tree, methodNames: Set[String]): Boolean =
+    methodNames.nonEmpty &&
+      tree.collect {
+        case applyTerm: Term.Apply
+            if callName(applyTerm.fun).exists(methodNames.contains) =>
+          true
+      }.nonEmpty
+
+  private def containsForExpression(tree: Tree): Boolean =
+    tree.collect {
+      case _: Term.For      => true
+      case _: Term.ForYield => true
+    }.nonEmpty
+
   private def renderModifiers(mods: List[Mod]): String =
     if (mods.isEmpty) ""
     else mods.map(_.syntax).mkString("", " ", " ")
@@ -994,6 +1085,16 @@ private[fix] object TypelevelPurrism {
       case Term.Name(value) => value == name
       case _                => false
     }
+
+  private def callName(term: Term): Option[String] =
+    term match {
+      case Term.Name(value)     => Some(value)
+      case Term.Select(_, name) => Some(name.value)
+      case _                    => None
+    }
+
+  private def tupledArguments(arguments: List[Term]): String =
+    arguments.map(_.syntax).mkString("((", ", ", "))")
 
   private def renderFunctionBody(body: Term): String =
     body match {

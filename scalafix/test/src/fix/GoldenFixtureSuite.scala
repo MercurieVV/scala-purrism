@@ -57,13 +57,70 @@ final class GoldenFixtureSuite extends munit.FunSuite {
     )
   }
 
-  test("kleisli rewrite skips methods with multiple parameters") {
+  test("kleisli rewrite converts a public multi-parameter effect method") {
     val method = firstMethod(
       """def fetch(id: String, retry: Boolean): F[User] =
         |  client.get(id)""".stripMargin
     )
 
+    assertEquals(
+      PreferKleisli.kleisliRewrite(method),
+      Some(
+        """def fetch: Kleisli[F, (String, Boolean), User] =
+          |  Kleisli.apply { case (id, retry) =>
+          |    client.get(id)
+          |  }""".stripMargin
+      )
+    )
+  }
+
+  test("kleisli rewrite skips recursive multi-parameter methods") {
+    val method = firstMethod(
+      """def fetch(id: String, retry: Int): F[User] =
+        |  if (retry > 0) fetch(id, retry - 1) else client.get(id)""".stripMargin
+    )
+
     assertEquals(PreferKleisli.kleisliRewrite(method), None)
+  }
+
+  test("kleisli rewrite skips methods containing for expressions") {
+    val method = firstMethod(
+      """def release(root: os.Path, branchName: String): F[Unit] =
+        |  for
+        |    _ <- progress(root)
+        |    _ <- call(branchName)
+        |  yield ()""".stripMargin
+    )
+
+    assertEquals(PreferKleisli.kleisliRewrite(method), None)
+  }
+
+  test("kleisli rewrite converts a multi-parameter blocking helper") {
+    val method = firstMethod(
+      """private def branchExistsLocally(
+        |    root: os.Path,
+        |    branchName: String
+        |): F[Boolean] =
+        |  F.blocking {
+        |    os.proc("git", "rev-parse", "--verify", branchName)
+        |      .call(cwd = root, stdout = os.Pipe, stderr = os.Pipe, check = false)
+        |      .exitCode == 0
+        |  }""".stripMargin
+    )
+
+    assertEquals(
+      PreferKleisli.kleisliRewrite(method),
+      Some(
+        """private def branchExistsLocally: Kleisli[F, (os.Path, String), Boolean] =
+          |  Kleisli.apply { case (root, branchName) =>
+          |    F.blocking {
+          |    os.proc("git", "rev-parse", "--verify", branchName)
+          |      .call(cwd = root, stdout = os.Pipe, stderr = os.Pipe, check = false)
+          |      .exitCode == 0
+          |  }
+          |  }""".stripMargin
+      )
+    )
   }
 
   test("kleisli rewrite skips non-F unary return types") {
@@ -202,6 +259,43 @@ final class GoldenFixtureSuite extends munit.FunSuite {
     assertEquals(
       PreferKleisli.rewriteCandidates(source).map(_.name.value),
       List("fetch", "poll")
+    )
+  }
+
+  test("kleisli rule candidates include private class helpers") {
+    val source = parseSource(
+      """final class Git[F[_]] {
+        |  private def branchExistsLocally(
+        |      root: os.Path,
+        |      branchName: String
+        |  ): F[Boolean] =
+        |    F.blocking(false)
+        |}""".stripMargin
+    )
+
+    assertEquals(
+      PreferKleisli.rewriteCandidates(source).map(_.name.value),
+      List("branchExistsLocally")
+    )
+  }
+
+  test("kleisli rewrite plan keeps callers when tupled callees are rewritten") {
+    val source = parseSource(
+      """final class Git[F[_]] {
+        |  def ensureBranch(root: os.Path, branchName: String): F[Boolean] =
+        |    branchExistsLocally(root, branchName)
+        |
+        |  private def branchExistsLocally(
+        |      root: os.Path,
+        |      branchName: String
+        |  ): F[Boolean] =
+        |    F.blocking(false)
+        |}""".stripMargin
+    )
+
+    assertEquals(
+      PreferKleisli.rewritePlan(source).map(_._1.name.value),
+      List("branchExistsLocally")
     )
   }
 
