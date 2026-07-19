@@ -80,9 +80,12 @@ final class PreferKleisli extends SemanticRule("PreferKleisli") {
   override def fix(implicit doc: SemanticDocument): Patch = {
     val knownKleislies = PreferKleisli.collectKleisliNames(doc.tree)
 
-    doc.tree.collect { case defn: Defn.Def =>
-      kleisliPatch(defn, knownKleislies)
-    }.asPatch
+    PreferKleisli
+      .rewriteCandidates(doc.tree)
+      .map { defn =>
+        kleisliPatch(defn, knownKleislies)
+      }
+      .asPatch
   }
 
   private def kleisliPatch(
@@ -112,6 +115,9 @@ object PreferKleisli {
 
   def collectKleisliNames(tree: Tree): Set[String] =
     TypelevelPurrism.collectKleisliNames(tree)
+
+  def rewriteCandidates(tree: Tree): List[Defn.Def] =
+    TypelevelPurrism.rewriteCandidates(tree)
 }
 
 private[fix] object TypelevelPurrism {
@@ -203,6 +209,42 @@ private[fix] object TypelevelPurrism {
           valDef.pats.collect { case name: Pat.Var => name.name.syntax }.toSet
       }
       .foldLeft(Set.empty[String])(_ ++ _)
+
+  def rewriteCandidates(tree: Tree): List[Defn.Def] = {
+    def fromStats(stats: List[Stat]): List[Defn.Def] =
+      stats.flatMap {
+        case defn: Defn.Def =>
+          List(defn)
+        case cls: Defn.Class =>
+          fromStats(templateStats(cls.templ))
+        case obj: Defn.Object =>
+          fromStats(templateStats(obj.templ))
+        case traitDef: Defn.Trait =>
+          fromStats(templateStats(traitDef.templ))
+        case pkg: Pkg =>
+          fromStats(pkg.body.stats)
+        case _ =>
+          Nil
+      }
+
+    tree match {
+      case source: Source =>
+        fromStats(source.stats)
+      case pkg: Pkg =>
+        fromStats(pkg.body.stats)
+      case cls: Defn.Class =>
+        fromStats(templateStats(cls.templ))
+      case obj: Defn.Object =>
+        fromStats(templateStats(obj.templ))
+      case traitDef: Defn.Trait =>
+        fromStats(templateStats(traitDef.templ))
+      case _ =>
+        Nil
+    }
+  }
+
+  private def templateStats(templ: Template): List[Stat] =
+    templ.body.stats
 
   def contextBoundWeakenings(tree: Tree): List[TypeclassWeakening] =
     contextBoundWeakenings(tree, None)

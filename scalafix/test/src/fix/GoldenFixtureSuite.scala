@@ -152,6 +152,29 @@ final class GoldenFixtureSuite extends munit.FunSuite {
     assertEquals(PreferKleisli.kleisliCompositionRewrite(method), None)
   }
 
+  test("kleisli rule candidates skip local helper methods") {
+    val source = parseSource(
+      """final class PollingService[F[_]](client: Client[F]) {
+        |  def fetch(id: String): F[User] =
+        |    client.get(id)
+        |
+        |  def poll(taskId: Int): F[Issue] = {
+        |    def loop(deadlineMillis: Long): F[Issue] =
+        |      client.issue(taskId).flatMap {
+        |        case issue if issue.closed => client.pure(issue)
+        |        case _ => loop(deadlineMillis)
+        |      }
+        |    loop(1000L)
+        |  }
+        |}""".stripMargin
+    )
+
+    assertEquals(
+      PreferKleisli.rewriteCandidates(source).map(_.name.value),
+      List("fetch", "poll")
+    )
+  }
+
   test("context-bound weakening replaces Sync with Monad for monadic usage") {
     val cls = firstClass(
       """final class UserService[F[_]: Sync] {
