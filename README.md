@@ -8,7 +8,7 @@ and Cats Effect style.
 Latest release:
 
 ```text
-io.github.mercurievv:scala-purrism-scalafix_3:0.1.0
+io.github.mercurievv:scala-purrism-scalafix_3:0.2.0
 ```
 
 The published rule artifact currently targets Scala 3 and Scalafix `0.14.7`.
@@ -25,7 +25,7 @@ Add the rule dependency to `build.sbt`:
 
 ```scala
 ThisBuild / scalafixDependencies +=
-  "io.github.mercurievv" %% "scala-purrism-scalafix" % "0.1.0"
+  "io.github.mercurievv" %% "scala-purrism-scalafix" % "0.2.0"
 
 ThisBuild / scalacOptions += "-Ysemanticdb"
 ```
@@ -53,7 +53,7 @@ object app extends ScalaModule, ScalafixModule {
   def scalacOptions = Seq("-Ysemanticdb")
 
   def scalafixIvyDeps = Seq(
-    mvn"io.github.mercurievv::scala-purrism-scalafix:0.1.0"
+    mvn"io.github.mercurievv::scala-purrism-scalafix:0.2.0"
   )
 }
 ```
@@ -69,7 +69,7 @@ Run:
 Add the external rule dependency as a Scala CLI directive:
 
 ```scala
-//> using scalafix.dep io.github.mercurievv::scala-purrism-scalafix:0.1.0
+//> using scalafix.dep io.github.mercurievv::scala-purrism-scalafix:0.2.0
 ```
 
 For semantic rules, make sure Scala CLI emits SemanticDB:
@@ -90,11 +90,12 @@ Create `.scalafix.conf` in the project where you want to run the rules:
 
 ```hocon
 rules = [
-  TypelevelPurrism
+  TypeclassWeakening,
+  PreferKleisli
 ]
 ```
 
-You can combine `TypelevelPurrism` with other Scalafix rules:
+You can combine these with other Scalafix rules:
 
 ```hocon
 rules = [
@@ -110,7 +111,7 @@ rules = [
 - **`PreferKleisli`**: Refactor effectful functions into `Kleisli` compositions.
 - **`OpaqueTypePropagation`**: Detect primitive value propagation chains (`String`, `Int`, `Long`, `BigDecimal`, etc.) across call trees and replace them with generated Scala 3 zero-cost `opaque type` domain wrappers.
 
-`TypelevelPurrism` is a semantic rule, so the target project must compile with
+These are semantic rules, so the target project must compile with
 SemanticDB enabled before the rule can run.
 
 ## Publishing

@@ -40,8 +40,8 @@ rtk mill scalafix.publishM2Local
 3. Tag the exact commit:
 
 ```bash
-rtk git tag v0.1.0
-rtk git push origin v0.1.0
+rtk git tag v0.2.0
+rtk git push origin v0.2.0
 ```
 
 The `Release` workflow publishes tagged versions to Sonatype Central.

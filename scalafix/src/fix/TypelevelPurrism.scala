@@ -132,6 +132,14 @@ object PreferKleisli {
       knownKleislies: Set[String] = Set.empty
   ): Patch =
     TypelevelPurrism.sequencedLocalCompositionPatches(tree, knownKleislies)
+
+  def sequencedLocalCompositionRewrites(
+      tree: Tree,
+      knownKleislies: Set[String] = Set.empty
+  ): List[String] =
+    TypelevelPurrism
+      .sequencedLocalCompositionRewrites(tree, knownKleislies)
+      .map(_.replacement)
 }
 
 private[fix] object TypelevelPurrism {
@@ -1052,25 +1060,51 @@ private[fix] object TypelevelPurrism {
 
   private final case class SplitKleisliCall(callee: String, argument: Term)
 
-  private final case class KleisliInput(alias: String, names: List[String])
+  private final case class KleisliInput(
+      alias: String,
+      names: List[String],
+      inputType: Option[String],
+      valueTypes: List[String]
+  )
 
   private final case class KleisliBody(input: KleisliInput, body: Term)
+
+  private final case class SequencedProjection(call: SplitKleisliCall)
+
+  final case class SequencedLocalCompositionRewrite(
+      term: Term,
+      replacement: String
+  )
 
   def sequencedLocalCompositionPatches(
       tree: Tree,
       knownKleislies: Set[String] = Set.empty
   ): Patch =
+    sequencedLocalCompositionRewrites(tree, knownKleislies).map {
+      case SequencedLocalCompositionRewrite(term, replacement) =>
+        Patch.replaceTree(term, replacement)
+    }.asPatch
+
+  def sequencedLocalCompositionRewrites(
+      tree: Tree,
+      knownKleislies: Set[String] = Set.empty
+  ): List[SequencedLocalCompositionRewrite] =
     tree
-      .collect { case applyTerm: Term.Apply =>
-        kleisliBody(applyTerm).toList.flatMap { case KleisliBody(input, body) =>
-          body.collect { case term: Term =>
-            sequencedLocalComposition(term, input, knownKleislies)
-              .map(Patch.replaceTree(term, _))
-          }.flatten
+      .collect { case defn: Defn.Def =>
+        val inputType = defn.decltpe.flatMap(kleisliInputType)
+
+        defn.body.collect { case applyTerm: Term.Apply =>
+          kleisliBody(applyTerm, inputType).toList.flatMap {
+            case KleisliBody(input, body) =>
+              body.collect { case term: Term =>
+                sequencedLocalComposition(term, input, knownKleislies)
+                  .map(SequencedLocalCompositionRewrite(term, _))
+              }.flatten
+          }
         }
       }
       .flatten
-      .asPatch
+      .flatten
 
   private def compositionBody(
       body: Term,
@@ -1099,18 +1133,22 @@ private[fix] object TypelevelPurrism {
         None
     }
 
-  private def kleisliBody(applyTerm: Term.Apply): Option[KleisliBody] =
+  private def kleisliBody(
+      applyTerm: Term.Apply,
+      inputType: Option[(String, List[String])]
+  ): Option[KleisliBody] =
     for {
       function <- kleisliApplyPartialFunction(applyTerm)
-      input <- singleInputCase(function)
+      input <- singleInputCase(function, inputType)
     } yield input
 
   private def singleInputCase(
-      function: Term.PartialFunction
+      function: Term.PartialFunction,
+      inputType: Option[(String, List[String])]
   ): Option[KleisliBody] =
     partialFunctionCases(function) match {
       case List(Case(pattern, None, body)) =>
-        inputPattern(pattern).map(KleisliBody(_, body))
+        inputPattern(pattern, inputType).map(KleisliBody(_, body))
       case _ =>
         None
     }
@@ -1120,13 +1158,39 @@ private[fix] object TypelevelPurrism {
   ): List[Case] =
     function.cases
 
-  private def inputPattern(pattern: Pat): Option[KleisliInput] =
+  private def inputPattern(
+      pattern: Pat,
+      inputType: Option[(String, List[String])]
+  ): Option[KleisliInput] =
     pattern match {
       case Pat.Bind(Pat.Var(Term.Name(alias)), Pat.Tuple(values)) =>
-        tuplePatternNames(values).map(KleisliInput(alias, _))
+        tuplePatternNames(values).map { names =>
+          val (renderedInputType, valueTypes) =
+            inputType.getOrElse("" -> Nil)
+          KleisliInput(
+            alias,
+            names,
+            Option.when(renderedInputType.nonEmpty)(renderedInputType),
+            valueTypes
+          )
+        }
       case _ =>
         None
     }
+
+  private def kleisliInputType(tpe: Type): Option[(String, List[String])] =
+    tpe match {
+      case returnType: Type.Apply if isKleisliResult(returnType) =>
+        returnType.argClause.values.lift(1).collect {
+          case tupleType: Type.Tuple =>
+            tupleType.syntax -> tupleTypeValues(tupleType).map(_.syntax)
+        }
+      case _ =>
+        None
+    }
+
+  private def tupleTypeValues(tupleType: Type.Tuple): List[Type] =
+    tupleType.productElement(0).asInstanceOf[List[Type]]
 
   private def tuplePatternNames(values: List[Pat]): Option[List[String]] =
     values.foldRight(Option(List.empty[String])) {
@@ -1139,29 +1203,105 @@ private[fix] object TypelevelPurrism {
       input: KleisliInput,
       knownKleislies: Set[String]
   ): Option[String] =
-    tree match {
+    for {
+      terms <- sequencedTerms(tree)
+      if terms.length >= 2
+      last <- terms.lastOption
+      finalCall <- finalKleisliCall(last, knownKleislies)
+        .orElse(finalSingleArgumentCall(last))
+      if isSameArgument(finalCall.argument, input.alias)
+      (prefix, projections) <- sequencedProjectionSuffix(
+        terms.init,
+        input,
+        knownKleislies
+      )
+      if projections.nonEmpty
+    } yield {
+      val composed =
+        (projections.map(localComposition(_, input)) :+ finalCall.callee)
+          .mkString("(", " *> ", s").run(${input.alias})")
+
+      prefix match {
+        case Nil   => composed
+        case terms => terms.map(_.syntax).mkString("", " *> ", s" *> $composed")
+      }
+    }
+
+  private def sequencedProjectionSuffix(
+      terms: List[Term],
+      input: KleisliInput,
+      knownKleislies: Set[String]
+  ): Option[(List[Term], List[SequencedProjection])] = {
+    val (reversedProjections, reversedPrefix) =
+      terms.reverse.span(term =>
+        sequencedProjection(term, input, knownKleislies).nonEmpty
+      )
+    val projections =
+      reversedProjections.reverse.flatMap(
+        sequencedProjection(_, input, knownKleislies)
+      )
+
+    Option.when(projections.nonEmpty)(reversedPrefix.reverse -> projections)
+  }
+
+  private def sequencedProjection(
+      term: Term,
+      input: KleisliInput,
+      knownKleislies: Set[String]
+  ): Option[SequencedProjection] =
+    for {
+      call <- finalKleisliCall(term, knownKleislies)
+        .orElse(finalSingleArgumentCall(term))
+      projectionNames <- tupleTermNames(call.argument)
+      if projectionNames.nonEmpty
+      if projectionNames.forall(input.names.contains)
+    } yield SequencedProjection(call)
+
+  private def localComposition(
+      projection: SequencedProjection,
+      input: KleisliInput
+  ): String = {
+    val projectionNames =
+      tupleTermNames(projection.call.argument).getOrElse(Nil).toSet
+    val localPattern =
+      input.names
+        .zipAll(input.valueTypes, "", "")
+        .map { case (name, valueType) =>
+          val renderedName =
+            if (projectionNames.contains(name)) name else "_"
+          if (valueType.nonEmpty) s"$renderedName: $valueType"
+          else renderedName
+        }
+        .mkString("(", ", ", ")")
+    val localType =
+      input.inputType.fold("")(inputType => s"[$inputType]")
+
+    s"""${projection.call.callee}.local$localType { case $localPattern =>
+       |  ${projection.call.argument.syntax}
+       |}""".stripMargin
+  }
+
+  private def sequencedTerms(term: Tree): Option[List[Term]] =
+    term match {
       case Term.ApplyInfix.After_4_6_0(
             left,
             Term.Name("*>"),
             Type.ArgClause(Nil),
             Term.ArgClause(List(right), None)
           ) =>
-        for {
-          first <- finalKleisliCall(left, knownKleislies)
-          second <- finalKleisliCall(right, knownKleislies)
-          if isSameArgument(second.argument, input.alias)
-          projectionNames <- tupleTermNames(first.argument)
-          if projectionNames.forall(input.names.contains)
-        } yield {
-          val projectionSet = projectionNames.toSet
-          val localPattern =
-            input.names
-              .map(name => if (projectionSet.contains(name)) name else "_")
-              .mkString("(", ", ", ")")
+        sequencedTerms(left).map(_ :+ right)
+      case _ =>
+        Some(List(term.asInstanceOf[Term]))
+    }
 
-          s"""(${first.callee}.local { case $localPattern =>
-             |  ${first.argument.syntax}
-             |} *> ${second.callee})(${input.alias})""".stripMargin
+  private def finalSingleArgumentCall(term: Term): Option[SplitKleisliCall] =
+    term match {
+      case applyTerm: Term.Apply =>
+        applyTerm.argClause.values match {
+          case List(argument: Term) =>
+            Some(SplitKleisliCall(applyTerm.fun.syntax, argument))
+          case _ =>
+            None
         }
       case _ =>
         None

@@ -396,6 +396,45 @@ final class GoldenFixtureSuite extends munit.FunSuite {
     )
   }
 
+  test("kleisli names include significant-indentation multiline result types") {
+    val source = parseSource(
+      """final class Git[F[_]](using F: Sync[F]):
+        |  def acquireWorktree: Kleisli[
+        |    F,
+        |    (os.Path, os.Path, String, Option[String], String => F[Unit]),
+        |    Unit
+        |  ] =
+        |    Kleisli.apply {
+        |      case input @ (root, worktreePath, branchName, baseBranch, progress) =>
+        |        releaseWorktree(
+        |          (root, worktreePath, branchName, progress)
+        |        ) *> acquireWorktree(input)
+        |    }
+        |
+        |  def releaseWorktree
+        |      : Kleisli[F, (os.Path, os.Path, String, String => F[Unit]), Unit] =
+        |    Kleisli.apply { case (_, _, branchName, progress) =>
+        |      progress(branchName)
+        |    }""".stripMargin
+    )
+
+    assertEquals(
+      PreferKleisli.collectKleisliNames(source),
+      Set("acquireWorktree", "releaseWorktree")
+    )
+    assertEquals(
+      PreferKleisli.sequencedLocalCompositionRewrites(
+        source,
+        PreferKleisli.collectKleisliNames(source)
+      ),
+      List(
+        """(releaseWorktree.local[(os.Path, os.Path, String, Option[String], String => F[Unit])] { case (root: os.Path, worktreePath: os.Path, branchName: String, _: Option[String], progress: String => F[Unit]) =>
+          |  (root, worktreePath, branchName, progress)
+          |} *> acquireWorktree).run(input)""".stripMargin
+      )
+    )
+  }
+
   test("context-bound weakening replaces Sync with Monad for monadic usage") {
     val cls = firstClass(
       """final class UserService[F[_]: Sync] {
@@ -603,7 +642,8 @@ final class GoldenFixtureSuite extends munit.FunSuite {
     parseSource(source).stats.collectFirst { case cls: Defn.Class => cls }.get
 
   private def parseSource(source: String): Source =
-    source
+    dialects
+      .Scala3(source)
       .parse[Source]
       .get
 }
