@@ -81,19 +81,23 @@ object OpaqueTypePropagation {
     }
 
     private def insertTypeDefs(tree: Tree, code: String): Patch = {
-      tree match {
-        case source: Source =>
-          source.stats.headOption match {
-            case Some(stat) => Patch.addLeft(stat, code)
-            case None       => Patch.addLeft(source, code)
+      val stats = tree match {
+        case source: Source => source.stats
+        case pkg: Pkg       => pkg.body.stats
+        case _              => Nil
+      }
+
+      val imports = stats.collect { case imp: Import => imp }
+      imports.lastOption match {
+        case Some(lastImport) =>
+          Patch.addRight(lastImport, "\n\n" + code.trim + "\n")
+        case None =>
+          stats.headOption match {
+            case Some(firstStat) =>
+              Patch.addLeft(firstStat, code.trim + "\n\n")
+            case None =>
+              Patch.addLeft(tree, code.trim + "\n\n")
           }
-        case pkg: Pkg =>
-          pkg.body.stats.headOption match {
-            case Some(stat) => Patch.addLeft(stat, code)
-            case None       => Patch.addLeft(pkg.body, code)
-          }
-        case other =>
-          Patch.addLeft(other, code)
       }
     }
   }

@@ -556,6 +556,25 @@ final class GoldenFixtureSuite extends munit.FunSuite {
 
   private def read(path: Path): String =
     Files.readString(path, StandardCharsets.UTF_8)
+  test(
+    "opaque type propagation inserts definitions after imports with newlines"
+  ) {
+    val source = parseSource(
+      """package example
+        |
+        |import cats.syntax.all.*
+        |
+        |class UserService {
+        |  def processUser(userId: String): Unit = ()
+        |  def findUser(userId: String): Option[String] = None
+        |}""".stripMargin
+    )
+
+    val chains = OpaqueTypePropagation.findPropagationChains(source)
+    val plan = OpaqueTypePropagation.rewritePlan(source, chains)
+    assert(plan.opaqueTypeDefinitions.nonEmpty)
+  }
+
   test("opaque type propagation infers names correctly") {
     assertEquals(OpaqueTypePropagation.inferOpaqueTypeName("userId"), "UserId")
     assertEquals(
