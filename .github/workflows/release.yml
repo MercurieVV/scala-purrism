@@ -28,7 +28,7 @@ jobs:
         run: ./mill scalafix.compile scalafix.test docs.compile
 
       - name: Publish to Sonatype Central
-        run: ./mill mill.javalib.SonatypeCentralPublishModule/
+        run: ./mill scalafix.publishSonatypeCentral
         env:
           MILL_PGP_PASSPHRASE: ${{ secrets.MILL_PGP_PASSPHRASE }}
           MILL_PGP_SECRET_BASE64: ${{ secrets.MILL_PGP_SECRET_BASE64 }}
