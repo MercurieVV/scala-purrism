@@ -38,7 +38,89 @@ final class GoldenFixtureSuite extends munit.FunSuite {
     assert(services.toSet.contains("fix.TypelevelPurrism"))
     assert(services.toSet.contains("fix.TypeclassWeakening"))
     assert(services.toSet.contains("fix.PreferKleisli"))
+    assert(services.toSet.contains("fix.PreferCatsSyntax"))
+    assert(services.toSet.contains("fix.SimplifyCatsExpressions"))
     assert(services.toSet.contains("fix.OpaqueTypePropagation"))
+  }
+
+  test("prefer Cats syntax rewrites direct typeclass method calls") {
+    val source = parseSource(
+      """final class Service[F[_]] {
+        |  def pure(value: String): F[String] =
+        |    Applicative[F].pure(value)
+        |
+        |  def fail(error: Throwable): F[String] =
+        |    MonadThrow[F].raiseError[String](error)
+        |
+        |  def mapped(seed: F[Int]): F[String] =
+        |    Functor[F].map(seed)(value => value.toString)
+        |
+        |  def bound(seed: F[Int]): F[String] =
+        |    FlatMap[F].flatMap(seed)(value => value.toString.pure[F])
+        |}""".stripMargin
+    )
+
+    assertEquals(
+      PreferCatsSyntax.rewrites(source),
+      List(
+        "value.pure[F]",
+        "error.raiseError[F, String]",
+        "seed.map(value => value.toString)",
+        "seed.flatMap(value => value.toString.pure[F])"
+      )
+    )
+  }
+
+  test("simplify Cats expressions uses existing Cats combinators") {
+    val source = parseSource(
+      """final class Service[F[_]] {
+        |  def discard(seed: F[Int]): F[Unit] =
+        |    seed.map(_ => ())
+        |
+        |  def replace(seed: F[Int]): F[String] =
+        |    seed.map(_ => "done")
+        |
+        |  def mapped(seed: F[Int]): F[String] =
+        |    seed.flatMap(value => value.toString.pure[F])
+        |
+        |  def sequence(first: F[Unit], second: F[String]): F[String] =
+        |    first.flatMap(_ => second)
+        |
+        |  def combine(first: F[Int], second: F[String]): F[(Int, String)] =
+        |    first.flatMap(value => second.map(label => (value, label)))
+        |}""".stripMargin
+    )
+
+    assertEquals(
+      SimplifyCatsExpressions.rewrites(source),
+      List(
+        "seed.void",
+        """seed.as("done")""",
+        "seed.map(value => value.toString)",
+        "first *> second",
+        "(first, second).mapN((value, label) => (value, label))"
+      )
+    )
+  }
+
+  test("simplify Cats expressions rewrites null and Either constructors") {
+    val source = parseSource(
+      """final class Service {
+        |  def optional(value: String): Option[String] =
+        |    if value == null then None else Some(value)
+        |
+        |  def either(valid: Boolean, value: String): Either[String, String] =
+        |    if valid then Right(value) else Left("invalid")
+        |}""".stripMargin
+    )
+
+    assertEquals(
+      SimplifyCatsExpressions.rewrites(source),
+      List(
+        "Option(value)",
+        """Either.cond(valid, value, "invalid")"""
+      )
+    )
   }
 
   test("kleisli rewrite converts a simple unary effect method") {
