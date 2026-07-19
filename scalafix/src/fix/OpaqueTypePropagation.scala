@@ -24,6 +24,9 @@ object OpaqueTypePropagation {
     "UUID"
   )
 
+  private val DomainPattern =
+    "(?i).*(id|name|amount|price|token|code|key|url|email|address|number|count|width|height|millis|seconds|status|type)$".r
+
   final case class ParameterNode(
       name: String,
       paramType: String,
@@ -53,19 +56,23 @@ object OpaqueTypePropagation {
         val paramPatches = chains.flatMap { chain =>
           chain.nodes.map { node =>
             node.paramTree.decltpe match {
-              case Some(tpe) => Patch.replaceTree(tpe, chain.typeName)
-              case None      => Patch.empty
+              case Some(tpe: Type.Name) =>
+                Patch.replaceTree(tpe, chain.typeName)
+              case Some(Type.Apply.After_4_6_0(Type.Name("Option"), argClause))
+                  if argClause.values.length == 1 =>
+                Patch.replaceTree(argClause.values.head, chain.typeName)
+              case _ => Patch.empty
             }
           }
         }
 
         val returnPatches = chains.flatMap(_.returnTypeDefs).flatMap { defn =>
           defn.decltpe match {
-            case Some(tpe) =>
+            case Some(tpe: Type.Name) =>
               chains.find(_.returnTypeDefs.contains(defn)).map { chain =>
                 Patch.replaceTree(tpe, chain.typeName)
               }
-            case None => None
+            case _ => None
           }
         }
 
@@ -129,18 +136,17 @@ object OpaqueTypePropagation {
     val allMethods = tree.collect { case defn: Defn.Def => defn }
     val allClasses = tree.collect { case cls: Defn.Class => cls }
 
-    // Collect all primitive parameters across methods and classes
     val paramNodes = for {
       defn <- allMethods
       paramClause <- defn.paramClauseGroups.flatMap(_.paramClauses)
       param <- paramClause.values
       tpe <- param.decltpe
-      primitiveTypeName = tpe.syntax
-      if SupportedPrimitives.contains(primitiveTypeName)
+      primitiveTypeName = unwrapPrimitiveType(tpe)
+      if primitiveTypeName.exists(SupportedPrimitives.contains)
     } yield {
       ParameterNode(
         name = param.name.value,
-        paramType = primitiveTypeName,
+        paramType = primitiveTypeName.get,
         paramTree = param,
         ownerDefName = Some(defn.name.value)
       )
@@ -151,43 +157,65 @@ object OpaqueTypePropagation {
       paramClause <- cls.ctor.paramClauses
       param <- paramClause.values
       tpe <- param.decltpe
-      primitiveTypeName = tpe.syntax
-      if SupportedPrimitives.contains(primitiveTypeName)
+      primitiveTypeName = unwrapPrimitiveType(tpe)
+      if primitiveTypeName.exists(SupportedPrimitives.contains)
     } yield {
       ParameterNode(
         name = param.name.value,
-        paramType = primitiveTypeName,
+        paramType = primitiveTypeName.get,
         paramTree = param,
         ownerDefName = Some(cls.name.value)
       )
     }
 
+    val callSitePassings = tree.collect { case apply: Term.Apply =>
+      apply.argClause.values.collect { case Term.Name(argName) =>
+        argName
+      }
+    }.flatten
+
     val combinedNodes = paramNodes ++ classParamNodes
 
-    // Group nodes by primitive type and inferred name
     val grouped = combinedNodes.groupBy { node =>
       val inferred = inferOpaqueTypeName(node.name, node.ownerDefName)
       (node.paramType, inferred)
     }
 
-    // Build propagation chains for clusters with propagation depth >= 2
     grouped
-      .collect {
-        case ((primitiveType, typeName), nodes) if nodes.length >= 2 =>
+      .flatMap { case ((primitiveType, typeName), nodes) =>
+        val callPassingsCount =
+          nodes.map(n => callSitePassings.count(_ == n.name)).sum
+        val totalWeight = nodes.length + callPassingsCount
+        val isDomainMatch = nodes.exists(n => DomainPattern.matches(n.name))
+
+        if (totalWeight >= 2 || isDomainMatch) {
           val matchingReturnDefs = allMethods.filter { defn =>
-            defn.decltpe.exists(_.syntax == primitiveType) &&
+            defn.decltpe.exists(t =>
+              unwrapPrimitiveType(t).contains(primitiveType)
+            ) &&
             nodes.exists(_.ownerDefName.contains(defn.name.value))
           }
 
-          PropagationChain(
-            typeName = typeName,
-            primitiveType = primitiveType,
-            nodes = nodes,
-            returnTypeDefs = matchingReturnDefs
+          Some(
+            PropagationChain(
+              typeName = typeName,
+              primitiveType = primitiveType,
+              nodes = nodes,
+              returnTypeDefs = matchingReturnDefs
+            )
           )
+        } else None
       }
       .toList
       .sortBy(_.typeName)
+  }
+
+  private def unwrapPrimitiveType(tpe: Type): Option[String] = tpe match {
+    case Type.Name(name) if SupportedPrimitives.contains(name) => Some(name)
+    case Type.Apply.After_4_6_0(Type.Name("Option"), argClause)
+        if argClause.values.length == 1 =>
+      unwrapPrimitiveType(argClause.values.head)
+    case _ => None
   }
 
   def rewritePlan(tree: Tree, chains: List[PropagationChain]): RewritePlan = {
