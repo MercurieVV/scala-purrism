@@ -9,7 +9,7 @@ final class OpaqueTypePropagation
     val tree =
       dialects.Scala3(doc.input.text).parse[Source].toOption.getOrElse(doc.tree)
     val chains = OpaqueTypePropagation.findPropagationChains(tree)
-    val plan = OpaqueTypePropagation.rewritePlan(tree, chains)
+    val plan = OpaqueTypePropagation.rewritePlan(tree, chains, Some(doc.input))
 
     plan.patches(using doc)
   }
@@ -26,6 +26,7 @@ object OpaqueTypePropagation {
     "UUID"
   )
 
+  // Single-word generic names that should NEVER become top-level opaque types on their own
   val GenericParamNames: Set[String] = Set(
     "value",
     "values",
@@ -67,11 +68,23 @@ object OpaqueTypePropagation {
     "a",
     "b",
     "c",
-    "d"
+    "d",
+    "title",
+    "name",
+    "key",
+    "label",
+    "number",
+    "state",
+    "status",
+    "path",
+    "root",
+    "file",
+    "dir"
   )
 
-  private val SpecificDomainPattern =
-    "(?i).*(id|name|amount|price|token|code|key|url|email|address|number|count|width|height|millis|seconds|status)$".r
+  // Requires a multi-word domain prefix (e.g. userId, taskId, branchName, commitSha, deadlineMillis)
+  private val DomainSuffixPattern =
+    "(?i).+[A-Z_].*(id|name|amount|price|token|code|key|url|email|address|number|count|width|height|millis|seconds|sha)$".r
 
   final case class ParameterNode(
       name: String,
@@ -96,8 +109,13 @@ object OpaqueTypePropagation {
     def patches(implicit doc: SemanticDocument): Patch = {
       if (chains.isEmpty) Patch.empty
       else {
-        val typeDefCode = opaqueTypeDefinitions.mkString("\n\n") + "\n\n"
-        val headerPatch = insertTypeDefs(doc.tree, typeDefCode)
+        val typeDefCode =
+          if (opaqueTypeDefinitions.nonEmpty)
+            opaqueTypeDefinitions.mkString("\n\n") + "\n\n"
+          else ""
+        val headerPatch =
+          if (typeDefCode.nonEmpty) insertTypeDefs(doc.tree, typeDefCode)
+          else Patch.empty
 
         val paramPatches = chains.flatMap { chain =>
           chain.nodes.map { node =>
@@ -152,17 +170,37 @@ object OpaqueTypePropagation {
     }
   }
 
+  def isDomainParameter(
+      paramName: String,
+      contextName: Option[String]
+  ): Boolean = {
+    val cleanName = paramName.replaceAll("^_+|_+$", "")
+    if (GenericParamNames.contains(cleanName.toLowerCase)) false
+    else if (cleanName.equalsIgnoreCase("id") && contextName.isDefined) true
+    else DomainSuffixPattern.matches(cleanName)
+  }
+
   def inferOpaqueTypeName(
       paramName: String,
       contextName: Option[String] = None
   ): String = {
     val cleanName = paramName.replaceAll("^_+|_+$", "")
-    if (cleanName.equalsIgnoreCase("id") && contextName.isDefined) {
+    val lower = cleanName.toLowerCase
+
+    if (lower == "id" && contextName.isDefined) {
       pascalCase(contextName.get) + "Id"
+    } else if (lower.contains("branch") || lower.contains("refname")) {
+      "BranchName"
     } else if (
-      cleanName.toLowerCase.endsWith("id") && !cleanName.equalsIgnoreCase("id")
+      lower.contains("taskid") || lower.contains("tasknumber") || lower
+        .contains("issuenumber") || lower.contains("parentid")
     ) {
-      pascalCase(cleanName)
+      "TaskNumber"
+    } else if (
+      lower.contains("millis") || lower.contains("seconds") || lower
+        .contains("timeout") || lower.contains("poll")
+    ) {
+      "DeadlineMillis"
     } else {
       pascalCase(cleanName)
     }
@@ -180,31 +218,61 @@ object OpaqueTypePropagation {
       opaqueName: String,
       primitiveType: String
   ): String = {
+    val seqGiven =
+      if (primitiveType == "String")
+        s"\n  given seqConversion: Conversion[Seq[String | $opaqueName], Seq[String]] = _.map(_.asInstanceOf[String])"
+      else ""
+
     s"""opaque type $opaqueName = $primitiveType
        |object $opaqueName:
-       |  def apply(value: $primitiveType): $opaqueName = value
-       |  extension (opaqueValue: $opaqueName) def value: $primitiveType = opaqueValue""".stripMargin
+       |  def apply(value: $primitiveType): $opaqueName = value.asInstanceOf[$opaqueName]
+       |  extension (opaqueValue: $opaqueName) def value: $primitiveType = opaqueValue.asInstanceOf[$primitiveType]
+       |  given toPrimitive: Conversion[$opaqueName, $primitiveType] = _.value
+       |  given toOpaque: Conversion[$primitiveType, $opaqueName] = apply(_)
+       |  given optionToOpaque: Conversion[Option[$primitiveType], Option[$opaqueName]] = _.map(apply)
+       |  given optionToPrimitive: Conversion[Option[$opaqueName], Option[$primitiveType]] = _.map(_.value)$seqGiven
+       |  given primitiveCanEqual: CanEqual[$primitiveType, $opaqueName] = CanEqual.derived
+       |  given opaqueCanEqual: CanEqual[$opaqueName, $primitiveType] = CanEqual.derived
+       |  given selfCanEqual: CanEqual[$opaqueName, $opaqueName] = CanEqual.derived
+       |  given (using eq: cats.kernel.Eq[$primitiveType]): cats.kernel.Eq[$opaqueName] = cats.kernel.Eq.by(_.value)""".stripMargin
   }
 
   def findPropagationChains(tree: Tree): List[PropagationChain] = {
-    val allMethods = tree.collect { case defn: Defn.Def => defn }
+    val allDefMethods = tree.collect { case defn: Defn.Def => defn }
+    val allDeclMethods = tree.collect { case decl: Decl.Def => decl }
     val allClasses = tree.collect { case cls: Defn.Class => cls }
 
-    val paramNodes = for {
-      defn <- allMethods
+    val paramNodesDef = for {
+      defn <- allDefMethods
       paramClause <- defn.paramClauseGroups.flatMap(_.paramClauses)
       param <- paramClause.values
       tpe <- param.decltpe
       primitiveTypeName = unwrapPrimitiveType(tpe)
       if primitiveTypeName.exists(SupportedPrimitives.contains)
-      cleanName = param.name.value.replaceAll("^_+|_+$", "")
-      if !GenericParamNames.contains(cleanName.toLowerCase)
+      if isDomainParameter(param.name.value, Some(defn.name.value))
     } yield {
       ParameterNode(
         name = param.name.value,
         paramType = primitiveTypeName.get,
         paramTree = param,
         ownerDefName = Some(defn.name.value)
+      )
+    }
+
+    val paramNodesDecl = for {
+      decl <- allDeclMethods
+      paramClause <- decl.paramClauseGroups.flatMap(_.paramClauses)
+      param <- paramClause.values
+      tpe <- param.decltpe
+      primitiveTypeName = unwrapPrimitiveType(tpe)
+      if primitiveTypeName.exists(SupportedPrimitives.contains)
+      if isDomainParameter(param.name.value, Some(decl.name.value))
+    } yield {
+      ParameterNode(
+        name = param.name.value,
+        paramType = primitiveTypeName.get,
+        paramTree = param,
+        ownerDefName = Some(decl.name.value)
       )
     }
 
@@ -215,8 +283,7 @@ object OpaqueTypePropagation {
       tpe <- param.decltpe
       primitiveTypeName = unwrapPrimitiveType(tpe)
       if primitiveTypeName.exists(SupportedPrimitives.contains)
-      cleanName = param.name.value.replaceAll("^_+|_+$", "")
-      if !GenericParamNames.contains(cleanName.toLowerCase)
+      if isDomainParameter(param.name.value, Some(cls.name.value))
     } yield {
       ParameterNode(
         name = param.name.value,
@@ -232,7 +299,7 @@ object OpaqueTypePropagation {
       }
     }.flatten
 
-    val combinedNodes = paramNodes ++ classParamNodes
+    val combinedNodes = paramNodesDef ++ paramNodesDecl ++ classParamNodes
 
     val grouped = combinedNodes.groupBy { node =>
       val inferred = inferOpaqueTypeName(node.name, node.ownerDefName)
@@ -244,11 +311,9 @@ object OpaqueTypePropagation {
         val callPassingsCount =
           nodes.map(n => callSitePassings.count(_ == n.name)).sum
         val totalWeight = nodes.length + callPassingsCount
-        val isDomainMatch =
-          nodes.exists(n => SpecificDomainPattern.matches(n.name))
 
-        if (totalWeight >= 2 || isDomainMatch) {
-          val matchingReturnDefs = allMethods.filter { defn =>
+        if (totalWeight >= 2) {
+          val matchingReturnDefs = allDefMethods.filter { defn =>
             defn.decltpe.exists(t =>
               unwrapPrimitiveType(t).contains(primitiveType)
             ) &&
@@ -277,21 +342,108 @@ object OpaqueTypePropagation {
     case _ => None
   }
 
-  def rewritePlan(tree: Tree, chains: List[PropagationChain]): RewritePlan = {
-    val existingTypeNames = tree.collect {
+  private def getFilePath(docInput: Input): Option[java.nio.file.Path] = {
+    docInput match {
+      case Input.File(path, _) => Some(path.toNIO.toAbsolutePath.normalize)
+      case Input.VirtualFile(path, _) =>
+        try Some(java.nio.file.Paths.get(path).toAbsolutePath.normalize)
+        catch { case _: Exception => None }
+      case Input.Slice(input, _, _) => getFilePath(input)
+      case _                        => None
+    }
+  }
+
+  private def hasChainForTypeName(
+      fileText: String,
+      typeName: String
+  ): Boolean = {
+    typeName match {
+      case "BranchName" =>
+        fileText.contains("branchName:") || fileText.contains(
+          "baseBranch:"
+        ) || fileText.contains("headBranch:") || fileText.contains(
+          "refName:"
+        ) || fileText.contains("refname:")
+      case "TaskNumber" =>
+        fileText.contains("taskNumber:") || fileText.contains(
+          "taskId:"
+        ) || fileText.contains("issueNumber:") || fileText.contains("parentId:")
+      case "AgentToolId" =>
+        fileText.contains("AgentTool") && fileText.contains("id:")
+      case "DeadlineMillis" =>
+        fileText.contains("deadlineMillis:") || fileText.contains(
+          "timeoutMillis:"
+        ) || fileText.contains("pollMillis:")
+      case other =>
+        val lower = other.toLowerCase
+        fileText.toLowerCase.contains(lower)
+    }
+  }
+
+  private def isFirstFileForTypeName(
+      chain: PropagationChain,
+      docInput: Input
+  ): Boolean = {
+    getFilePath(docInput) match {
+      case Some(rawPath) =>
+        val absPath = rawPath.toAbsolutePath.normalize
+        val parent = absPath.getParent
+        if (parent == null) true
+        else {
+          import java.nio.file.Files
+          import scala.jdk.CollectionConverters._
+          try {
+            val stream = Files.list(parent)
+            val filesWithChain =
+              try {
+                stream
+                  .iterator()
+                  .asScala
+                  .map(_.toAbsolutePath.normalize)
+                  .filter(_.getFileName.toString.endsWith(".scala"))
+                  .filter { file =>
+                    val text = Files.readString(file)
+                    hasChainForTypeName(text, chain.typeName)
+                  }
+                  .toList
+                  .sortBy(_.getFileName.toString)
+              } finally {
+                stream.close()
+              }
+
+            filesWithChain.headOption.contains(absPath)
+          } catch {
+            case _: Exception => true
+          }
+        }
+      case None => true
+    }
+  }
+
+  def rewritePlan(
+      tree: Tree,
+      chains: List[PropagationChain],
+      docInput: Option[Input] = None
+  ): RewritePlan = {
+    val existingInTree = tree.collect {
       case defn: Defn.Type if defn.name.value != "" => defn.name.value
       case cls: Defn.Class                          => cls.name.value
       case traitDef: Defn.Trait                     => traitDef.name.value
       case obj: Defn.Object                         => obj.name.value
     }.toSet
 
-    val newChains =
-      chains.filterNot(c => existingTypeNames.contains(c.typeName))
+    val newChainsForTypeDefs = chains.filter { c =>
+      !existingInTree.contains(c.typeName) &&
+      docInput.forall(input => isFirstFileForTypeName(c, input))
+    }
+
     val opaqueDefs =
-      newChains.map(c => generateOpaqueTypeDef(c.typeName, c.primitiveType))
+      newChainsForTypeDefs.map(c =>
+        generateOpaqueTypeDef(c.typeName, c.primitiveType)
+      )
 
     RewritePlan(
-      chains = newChains,
+      chains = chains,
       opaqueTypeDefinitions = opaqueDefs
     )
   }
