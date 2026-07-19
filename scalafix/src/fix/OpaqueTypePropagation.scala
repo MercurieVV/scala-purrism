@@ -218,23 +218,10 @@ object OpaqueTypePropagation {
       opaqueName: String,
       primitiveType: String
   ): String = {
-    val seqGiven =
-      if (primitiveType == "String")
-        s"\n  given seqConversion: Conversion[Seq[String | $opaqueName], Seq[String]] = _.map(_.asInstanceOf[String])"
-      else ""
-
     s"""opaque type $opaqueName = $primitiveType
        |object $opaqueName:
        |  def apply(value: $primitiveType): $opaqueName = value.asInstanceOf[$opaqueName]
-       |  extension (opaqueValue: $opaqueName) def value: $primitiveType = opaqueValue.asInstanceOf[$primitiveType]
-       |  given toPrimitive: Conversion[$opaqueName, $primitiveType] = _.value
-       |  given toOpaque: Conversion[$primitiveType, $opaqueName] = apply(_)
-       |  given optionToOpaque: Conversion[Option[$primitiveType], Option[$opaqueName]] = _.map(apply)
-       |  given optionToPrimitive: Conversion[Option[$opaqueName], Option[$primitiveType]] = _.map(_.value)$seqGiven
-       |  given primitiveCanEqual: CanEqual[$primitiveType, $opaqueName] = CanEqual.derived
-       |  given opaqueCanEqual: CanEqual[$opaqueName, $primitiveType] = CanEqual.derived
-       |  given selfCanEqual: CanEqual[$opaqueName, $opaqueName] = CanEqual.derived
-       |  given (using eq: cats.kernel.Eq[$primitiveType]): cats.kernel.Eq[$opaqueName] = cats.kernel.Eq.by(_.value)""".stripMargin
+       |  extension (opaqueValue: $opaqueName) def value: $primitiveType = opaqueValue.asInstanceOf[$primitiveType]""".stripMargin
   }
 
   def findPropagationChains(tree: Tree): List[PropagationChain] = {
