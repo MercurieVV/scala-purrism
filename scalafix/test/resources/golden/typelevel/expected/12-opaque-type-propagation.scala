@@ -4,6 +4,7 @@ opaque type UserId = String
 object UserId:
   def apply(value: String): UserId = value
   extension (opaqueValue: UserId) def value: String = opaqueValue
+  given cats.Eq[UserId] = cats.Eq.by(_.value)
 
 case class User(userId: UserId, name: String)
 

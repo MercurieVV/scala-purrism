@@ -614,6 +614,7 @@ final class GoldenFixtureSuite extends munit.FunSuite {
         "extension (opaqueValue: UserId) def value: String = opaqueValue"
       )
     )
+    assert(opaqueDef.contains("given cats.Eq[UserId] = cats.Eq.by(_.value)"))
   }
 
   test("opaque type propagation detects parameter propagation chains") {
@@ -651,6 +652,107 @@ final class GoldenFixtureSuite extends munit.FunSuite {
     assertEquals(chains.head.typeName, "UserId")
     assertEquals(chains.head.primitiveType, "String")
     assertEquals(chains.head.nodes.length, 3)
+  }
+
+  test("opaque type propagation keeps wrapping chains for existing opaques") {
+    val source = parseSource(
+      """opaque type AgentToolId = String
+        |object AgentToolId:
+        |  def apply(value: String): AgentToolId = value
+        |  extension (opaqueValue: AgentToolId) def value: String = opaqueValue
+        |
+        |final case class AgentTool(id: AgentToolId, agent: String)
+        |
+        |object AgentInventory:
+        |  private val fallback =
+        |    AgentTool(id = "claude-opus", agent = "claude")""".stripMargin
+    )
+
+    val chains = OpaqueTypePropagation.findPropagationChains(source)
+    assertEquals(chains.map(_.typeName), List("AgentToolId"))
+    assertEquals(chains.head.primitiveType, "String")
+  }
+
+  test("opaque type propagation follows unary type constructors") {
+    val source = parseSource(
+      """final class BranchWorkflow[F[_]] {
+        |  def create(branchName: String): Unit = ()
+        |  def load(branchName: F[String]): F[String] = branchName
+        |  def known(branchName: List[String]): List[String] = branchName
+        |}""".stripMargin
+    )
+
+    val chains = OpaqueTypePropagation.findPropagationChains(source)
+    assertEquals(chains.map(_.typeName), List("BranchName"))
+    assertEquals(chains.head.primitiveType, "String")
+    assertEquals(
+      chains.head.nodes.map(_.name),
+      List("branchName", "branchName", "branchName")
+    )
+    assertEquals(
+      chains.head.returnTypeDefs.map(_.name.value),
+      List("load", "known")
+    )
+  }
+
+  test("opaque type propagation follows nested type constructor arguments") {
+    val source = parseSource(
+      """final class BranchWorkflow[F[_]] {
+        |  def create(branchName: String): Unit = ()
+        |  def exists(branchName: (os.Path, String)): F[Boolean] = ???
+        |  def either(branchName: Either[Throwable, String]): Either[Throwable, String] =
+        |    branchName
+        |}""".stripMargin
+    )
+
+    val chains = OpaqueTypePropagation.findPropagationChains(source)
+    assertEquals(chains.map(_.typeName), List("BranchName"))
+    assertEquals(chains.head.primitiveType, "String")
+    assertEquals(
+      chains.head.nodes.map(_.name),
+      List("branchName", "branchName", "branchName")
+    )
+    assertEquals(chains.head.returnTypeDefs.map(_.name.value), List("either"))
+  }
+
+  test("opaque type propagation detects generic return type parameters") {
+    val source = parseSource(
+      """final class GenericBranchWorkflow {
+        |  def carry[D, E](d: D, e: E): E = e
+        |
+        |  def normalize(branchName: String): String =
+        |    val selected: String = carry[Any, String]((), branchName)
+        |    selected
+        |}""".stripMargin
+    )
+
+    val shapes = OpaqueTypePropagation.genericMethodShapes(source)
+    assertEquals(shapes.map(_.name), List("carry"))
+    assertEquals(shapes.head.typeParamNames, List("D", "E"))
+    assertEquals(shapes.head.paramTypeParams, List(Set("D"), Set("E")))
+    assertEquals(shapes.head.returnTypeParams, Set("E"))
+  }
+
+  test("opaque type propagation detects local opaque call positions") {
+    val source = parseSource(
+      """final class BranchWorkflow {
+        |  def create(branchName: String): Unit = ()
+        |  def ensureBranch(root: os.Path, baseBranch: String): Unit = ()
+        |  def command(branchName: String): Unit =
+        |    ensureBranch(os.pwd, branchName)
+        |}""".stripMargin
+    )
+
+    val chains = OpaqueTypePropagation.findPropagationChains(source)
+    val shapes = OpaqueTypePropagation.localCallShapes(source, chains)
+
+    assertEquals(chains.map(_.typeName), List("BranchName"))
+    assertEquals(
+      shapes
+        .find(_.name == "ensureBranch")
+        .map(_.paramChains.map(_.map(_.typeName))),
+      Some(List(None, Some("BranchName")))
+    )
   }
 
   private def readResources(name: String): List[String] =
