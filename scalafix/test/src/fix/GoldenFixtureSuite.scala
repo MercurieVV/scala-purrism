@@ -83,6 +83,40 @@ final class GoldenFixtureSuite extends munit.FunSuite {
     assertEquals(PreferKleisli.kleisliRewrite(method), None)
   }
 
+  test("kleisli rewrite converts exact recursive multi-parameter methods") {
+    val method = firstMethod(
+      """def acquire(root: os.Path, branchName: String): F[Unit] =
+        |  cleanup(root, branchName) *> acquire(root, branchName)""".stripMargin
+    )
+
+    assertEquals(
+      PreferKleisli.kleisliRewrite(method),
+      Some(
+        """def acquire: Kleisli[F, (os.Path, String), Unit] =
+          |  Kleisli.apply { case input @ (root, branchName) =>
+          |    cleanup(root, branchName) *> acquire(input)
+          |  }""".stripMargin
+      )
+    )
+  }
+
+  test("kleisli rewrite keeps Scala 3 vararg splices") {
+    val method = firstMethod(
+      """def add(root: os.Path, branchName: String): F[Unit] =
+        |  call(root, (Seq("git", "worktree") ++ List(branchName))*)""".stripMargin
+    )
+
+    assertEquals(
+      PreferKleisli.kleisliRewrite(method),
+      Some(
+        """def add: Kleisli[F, (os.Path, String), Unit] =
+          |  Kleisli.apply { case (root, branchName) =>
+          |    call(root, (Seq("git", "worktree") ++ List(branchName))*)
+          |  }""".stripMargin
+      )
+    )
+  }
+
   test("kleisli rewrite skips methods containing for expressions") {
     val method = firstMethod(
       """def release(root: os.Path, branchName: String): F[Unit] =
@@ -296,6 +330,56 @@ final class GoldenFixtureSuite extends munit.FunSuite {
     assertEquals(
       PreferKleisli.rewritePlan(source).map(_._1.name.value),
       List("branchExistsLocally")
+    )
+  }
+
+  test("kleisli rewrite plan skips methods used with placeholder arguments") {
+    val source = parseSource(
+      """final class Git[F[_]] {
+        |  def acquire(root: os.Path, progress: String => F[Unit]): F[Unit] =
+        |    branch.traverse_(ensureBranch(root, _, progress))
+        |
+        |  def ensureBranch(
+        |      root: os.Path,
+        |      branchName: String,
+        |      progress: String => F[Unit]
+        |  ): F[Unit] =
+        |    progress(branchName)
+        |}""".stripMargin
+    )
+
+    assertEquals(
+      PreferKleisli.rewritePlan(source).map(_._1.name.value),
+      List("acquire")
+    )
+  }
+
+  test("kleisli rewrite plan converts exact recursive workflow methods") {
+    val source = parseSource(
+      """final class Git[F[_]] {
+        |  def acquireWorktree(
+        |      root: os.Path,
+        |      worktreePath: os.Path,
+        |      branchName: String,
+        |      baseBranch: Option[String],
+        |      progress: String => F[Unit]
+        |  ): F[Unit] =
+        |    release(root, worktreePath, branchName, progress) *>
+        |      acquireWorktree(root, worktreePath, branchName, baseBranch, progress)
+        |
+        |  def release(
+        |      root: os.Path,
+        |      worktreePath: os.Path,
+        |      branchName: String,
+        |      progress: String => F[Unit]
+        |  ): F[Unit] =
+        |    for _ <- progress(branchName) yield ()
+        |}""".stripMargin
+    )
+
+    assertEquals(
+      PreferKleisli.rewritePlan(source).map(_._1.name.value),
+      List("acquireWorktree")
     )
   }
 

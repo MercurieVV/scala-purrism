@@ -187,13 +187,14 @@ private[fix] object TypelevelPurrism {
         case returnType: Type.Apply
             if isKleisliCandidate(defn, params, returnType) =>
           val modifiers = renderModifiers(defn.mods)
-          val parameterPattern = kleisliInputPattern(params)
+          val parameterPattern = kleisliInputPattern(defn, params)
           val parameterType = kleisliInputType(params)
           val result = returnType.argClause.values.head
+          val body = kleisliBody(defn, params)
 
           s"""${modifiers}def ${defn.name.syntax}: Kleisli[${returnType.tpe.syntax}, $parameterType, ${result.syntax}] =
              |  Kleisli.apply { $parameterPattern =>
-             |    ${defn.body.syntax}
+             |    $body
              |  }""".stripMargin
       }
     }
@@ -275,9 +276,14 @@ private[fix] object TypelevelPurrism {
       tree: Tree,
       knownKleislies: Set[String] = Set.empty
   ): List[(Defn.Def, String)] = {
-    val rewrites =
+    val candidateRewrites =
       rewriteCandidates(tree).flatMap { defn =>
         kleisliRewrite(defn, knownKleislies).map(defn -> _)
+      }
+    val rewrites =
+      candidateRewrites.filterNot { case (defn, _) =>
+        plainParameters(defn).exists(_.length > 1) &&
+        hasPlaceholderCallSite(tree, defn)
       }
     val tupledRewriteNames =
       rewrites.collect {
@@ -482,14 +488,20 @@ private[fix] object TypelevelPurrism {
           param.decltpe.exists(!_.is[Type.Repeated]) &&
           param.default.isEmpty
       ) &&
-      !callsMethod(defn.body, defn.name.value) &&
+      selfRecursionIsSafe(defn, params) &&
       !containsForExpression(defn.body) &&
       isFResult(returnType)
 
-  private def kleisliInputPattern(params: List[Term.Param]): String =
+  private def kleisliInputPattern(
+      defn: Defn.Def,
+      params: List[Term.Param]
+  ): String =
     params match {
       case List(param) => param.name.syntax
-      case many => s"case ${many.map(_.name.syntax).mkString("(", ", ", ")")}"
+      case many if callsMethod(defn.body, defn.name.value) =>
+        s"case input @ ${many.map(_.name.syntax).mkString("(", ", ", ")")}"
+      case many =>
+        s"case ${many.map(_.name.syntax).mkString("(", ", ", ")")}"
     }
 
   private def kleisliInputType(params: List[Term.Param]): String =
@@ -499,6 +511,13 @@ private[fix] object TypelevelPurrism {
         many
           .map(_.decltpe.map(_.syntax).getOrElse(""))
           .mkString("(", ", ", ")")
+    }
+
+  private def kleisliBody(defn: Defn.Def, params: List[Term.Param]): String =
+    normalizeScala3Varargs {
+      if (params.length > 1 && callsMethod(defn.body, defn.name.value))
+        replaceExactSelfCalls(defn.body.syntax, defn.name.value, params)
+      else defn.body.syntax
     }
 
   private def isFResult(returnType: Type.Apply): Boolean =
@@ -948,6 +967,47 @@ private[fix] object TypelevelPurrism {
         true
     }.nonEmpty
 
+  private def selfRecursionIsSafe(
+      defn: Defn.Def,
+      params: List[Term.Param]
+  ): Boolean = {
+    val selfCalls = selfCallApplications(defn.body, defn.name.value)
+
+    selfCalls.isEmpty ||
+    params.length > 1 &&
+    selfCalls.forall(selfCallPassesParameters(_, params))
+  }
+
+  private def selfCallApplications(
+      tree: Tree,
+      methodName: String
+  ): List[Term.Apply] =
+    tree.collect {
+      case applyTerm: Term.Apply
+          if callName(applyTerm.fun).contains(methodName) =>
+        applyTerm
+    }
+
+  private def selfCallPassesParameters(
+      applyTerm: Term.Apply,
+      params: List[Term.Param]
+  ): Boolean =
+    applyTerm.argClause.values.map(_.syntax) == params.map(_.name.syntax)
+
+  private def replaceExactSelfCalls(
+      body: String,
+      methodName: String,
+      params: List[Term.Param]
+  ): String = {
+    val selfCall =
+      params.map(_.name.syntax).mkString(s"$methodName(", ", ", ")")
+
+    body.replace(selfCall, s"$methodName(input)")
+  }
+
+  private def normalizeScala3Varargs(body: String): String =
+    body.replace(": _*", "*")
+
   private def callsAnyMethod(tree: Tree, methodNames: Set[String]): Boolean =
     methodNames.nonEmpty &&
       tree.collect {
@@ -955,6 +1015,21 @@ private[fix] object TypelevelPurrism {
             if callName(applyTerm.fun).exists(methodNames.contains) =>
           true
       }.nonEmpty
+
+  private def hasPlaceholderCallSite(tree: Tree, defn: Defn.Def): Boolean =
+    plainParameters(defn).exists { params =>
+      tree.collect {
+        case applyTerm: Term.Apply
+            if callName(applyTerm.fun).contains(defn.name.value) &&
+              applyTerm.argClause.values.length == params.length &&
+              outsideTree(applyTerm, defn) &&
+              applyTerm.argClause.values.exists(containsPlaceholder) =>
+          true
+      }.nonEmpty
+    }
+
+  private def containsPlaceholder(tree: Tree): Boolean =
+    tree.collect { case _: Term.Placeholder => true }.nonEmpty
 
   private def containsForExpression(tree: Tree): Boolean =
     tree.collect {
