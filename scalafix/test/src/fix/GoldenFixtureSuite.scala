@@ -29,6 +29,15 @@ final class GoldenFixtureSuite extends munit.FunSuite {
     assertNotEquals(base, expected)
   }
 
+  test("rule can be discovered by name") {
+    val services =
+      readResources("META-INF/services/scalafix.v1.Rule").flatMap(
+        _.linesIterator
+      )
+
+    assert(services.toSet.contains("fix.TypelevelPurrism"))
+  }
+
   test("kleisli rewrite converts a simple unary effect method") {
     val method = firstMethod(
       """def fetch(id: String): F[User] =
@@ -188,6 +197,13 @@ final class GoldenFixtureSuite extends munit.FunSuite {
 
   private def read(path: Path): String =
     Files.readString(path, StandardCharsets.UTF_8)
+
+  private def readResources(name: String): List[String] =
+    getClass.getClassLoader.getResources(name).asScala.toList.map { url =>
+      val stream = url.openStream()
+      try String(stream.readAllBytes(), StandardCharsets.UTF_8)
+      finally stream.close()
+    }
 
   private def firstMethod(source: String): Defn.Def =
     s"""final class Wrapper {
