@@ -117,7 +117,7 @@ final class GoldenFixtureSuite extends munit.FunSuite {
     )
   }
 
-  test("kleisli rewrite skips methods containing for expressions") {
+  test("kleisli rewrite wraps methods containing for expressions") {
     val method = firstMethod(
       """def release(root: os.Path, branchName: String): F[Unit] =
         |  for
@@ -126,7 +126,18 @@ final class GoldenFixtureSuite extends munit.FunSuite {
         |  yield ()""".stripMargin
     )
 
-    assertEquals(PreferKleisli.kleisliRewrite(method), None)
+    assertEquals(
+      PreferKleisli.kleisliRewrite(method),
+      Some(
+        """def release: Kleisli[F, (os.Path, String), Unit] =
+          |  Kleisli.apply { case (root, branchName) =>
+          |    for
+          |    _ <- progress(root)
+          |    _ <- call(branchName)
+          |  yield ()
+          |  }""".stripMargin
+      )
+    )
   }
 
   test("kleisli rewrite converts a multi-parameter blocking helper") {
@@ -371,7 +382,8 @@ final class GoldenFixtureSuite extends munit.FunSuite {
         |      root: os.Path,
         |      worktreePath: os.Path,
         |      branchName: String,
-        |      progress: String => F[Unit]
+        |      progress: String => F[Unit],
+        |      force: Boolean = true
         |  ): F[Unit] =
         |    for _ <- progress(branchName) yield ()
         |}""".stripMargin
