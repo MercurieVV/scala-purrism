@@ -1,5 +1,6 @@
 package fix
 
+import scala.annotation.nowarn
 import scala.meta._
 import scalafix.v1._
 
@@ -106,6 +107,7 @@ object OpaqueTypePropagation {
       chains: List[PropagationChain],
       opaqueTypeDefinitions: List[String]
   ) {
+    @nowarn("cat=deprecation")
     def patches(implicit doc: SemanticDocument): Patch = {
       if (chains.isEmpty) Patch.empty
       else {
@@ -144,7 +146,72 @@ object OpaqueTypePropagation {
           }
         }
 
-        headerPatch + paramPatches.asPatch + returnPatches.asPatch
+        val unwrapUsagePatches: List[Patch] = chains.flatMap { chain =>
+          doc.tree.collect {
+            case Term.ApplyInfix(lhs: Term.Name, op, _, _)
+                if (op.value == "/" || op.value == "*" || op.value == "+" || op.value == "-") &&
+                  chain.nodes.exists(n => n.name == lhs.value) =>
+              List(Patch.replaceTree(lhs, s"${lhs.value}.value"))
+
+            case Term.Apply(
+                  Term.Select(Term.Name("Thread"), Term.Name("sleep")),
+                  args
+                ) =>
+              args.collect {
+                case nameTerm: Term.Name
+                    if chain.nodes.exists(n => n.name == nameTerm.value) =>
+                  Patch.replaceTree(nameTerm, s"${nameTerm.value}.value")
+              }
+
+            case apply: Term.Apply =>
+              val isPrimitiveApi = apply.fun match {
+                case Term.Select(
+                      Term.Name("os"),
+                      Term.Name(
+                        "proc" | "Path" | "RelPath" | "SubPath" | "read" |
+                        "write" | "makeDir"
+                      )
+                    ) =>
+                  true
+                case Term.Select(Term.Name("System"), _)       => true
+                case Term.Name("print" | "println" | "printf") => true
+                case _                                         => false
+              }
+              if (isPrimitiveApi) {
+                apply.argClause.values.collect {
+                  case nameTerm: Term.Name
+                      if chain.nodes.exists(n => n.name == nameTerm.value) =>
+                    Patch.replaceTree(nameTerm, s"${nameTerm.value}.value")
+                }
+              } else List.empty[Patch]
+
+            case apply: Term.ApplyInfix =>
+              val op = apply.op.value
+              if (
+                op == "==" || op == "!=" || op == ">=" || op == "<=" || op == ">" || op == "<"
+              ) {
+                val leftPatch = apply.lhs match {
+                  case nameTerm: Term.Name
+                      if chain.nodes.exists(n => n.name == nameTerm.value) =>
+                    List(
+                      Patch.replaceTree(nameTerm, s"${nameTerm.value}.value")
+                    )
+                  case _ => Nil
+                }
+                val rightPatch = apply.argClause match {
+                  case Term.ArgClause(List(nameTerm: Term.Name), _)
+                      if chain.nodes.exists(n => n.name == nameTerm.value) =>
+                    List(
+                      Patch.replaceTree(nameTerm, s"${nameTerm.value}.value")
+                    )
+                  case _ => Nil
+                }
+                leftPatch ++ rightPatch
+              } else List.empty[Patch]
+          }.flatten
+        }
+
+        headerPatch + paramPatches.asPatch + returnPatches.asPatch + unwrapUsagePatches.asPatch
       }
     }
 
