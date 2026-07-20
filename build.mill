@@ -1,0 +1,137 @@
+import mill._, scalalib._, javalib._
+import mill.javalib.publish._
+
+object Versions {
+  def scala3 = "3.8.4"
+  def catsCore = "2.13.0"
+  def catsEffect = "3.7.0"
+  def mdoc = "2.9.0"
+  def munit = "1.3.4"
+  def munitScalaCheck = "1.3.0"
+  def scalafix = "0.14.7"
+  def scalaSemantic = "0.3.10"
+}
+
+object Project {
+  def organization = "io.github.mercurievv"
+  def repositoryOwner = "MercurieVV"
+  def repositoryName = "scala-purrism"
+  def publishVersion = "0.5.0"
+}
+
+object scalafix extends ScalaModule with SonatypeCentralPublishModule {
+  def scalaVersion = Versions.scala3
+  def artifactName = "scala-purrism-scalafix"
+  def publishVersion = Project.publishVersion
+  def pomSettings = PomSettings(
+    description =
+      "Scalafix semantic rules for refactoring Typelevel Scala code toward pure, polymorphic Cats and Cats Effect style.",
+    organization = Project.organization,
+    url = s"https://github.com/${Project.repositoryOwner}/${Project.repositoryName}",
+    licenses = Seq(License.`Apache-2.0`),
+    versionControl =
+      VersionControl.github(Project.repositoryOwner, Project.repositoryName),
+    developers = Seq(
+      Developer(
+        id = "MercurieVV",
+        name = "MercurieVV",
+        url = "https://github.com/MercurieVV"
+      )
+    )
+  )
+
+  def scalacOptions = Seq(
+    "-Ysemanticdb",
+    "-Wunused:imports",
+    "-Werror"
+  )
+  def mvnDeps = Seq(
+    // [dependencies-start]
+    mvn"ch.epfl.scala:scalafix-rules_${Versions.scala3}:${Versions.scalafix}",
+    mvn"io.github.mercurievv::scalasemantic-analysis:${Versions.scalaSemantic}",
+    mvn"org.typelevel::cats-core:${Versions.catsCore}",
+    mvn"org.typelevel::cats-effect:${Versions.catsEffect}"
+    // [dependencies-end]
+  )
+
+  // Stainless is not a resolvable scalac-plugin Maven coordinate (verified: no
+  // ch.epfl.lara:stainless-* artifact is published to Maven Central under any
+  // version/name). Other projects run it as a standalone CLI over an
+  // unmanaged stainless-library.jar instead of a compiler plugin dependency.
+  def scalacPluginMvnDeps = Seq()
+
+  // Fixture sources for scalafix-testkit. Compiled with SemanticDB so the
+  // testkit can find a payload for each input file. Deliberately does NOT
+  // inherit the main module's -Werror: fixtures contain the very code smells
+  // the rules exist to remove.
+  object testInput extends ScalaModule {
+    def scalaVersion = Versions.scala3
+    // -sourceroot must match the `sourceroot` property written below, or the
+    // testkit looks for SemanticDB payloads under the wrong relative path.
+    def scalacOptions =
+      Seq("-Ysemanticdb", s"-sourceroot:${mill.api.BuildCtx.workspaceRoot}")
+    def mvnDeps = Seq(
+      mvn"org.typelevel::cats-core:${Versions.catsCore}",
+      mvn"org.typelevel::cats-effect:${Versions.catsEffect}"
+    )
+  }
+
+  // Expected output for each testInput fixture. Must compile, but needs no
+  // SemanticDB.
+  object testOutput extends ScalaModule {
+    def scalaVersion = Versions.scala3
+    def mvnDeps = testInput.mvnDeps
+  }
+
+  object test extends ScalaTests {
+    def testFramework = "munit.Framework"
+    def mvnDeps = Seq(
+      // [test-dependencies-start]
+      mvn"ch.epfl.scala:scalafix-testkit_${Versions.scala3}:${Versions.scalafix}",
+      mvn"org.scalameta::munit:${Versions.munit}",
+      mvn"org.scalameta::munit-scalacheck:${Versions.munitScalaCheck}"
+      // [test-dependencies-end]
+    )
+
+    def testkitProperties = Task {
+      val sep = java.io.File.pathSeparator
+      val lines = Seq(
+        "inputClasspath" -> (testInput.compile().classes.path +: testInput
+          .runClasspath()
+          .map(_.path)).mkString(sep),
+        "inputSourceDirectories" -> testInput
+          .sources()
+          .map(_.path)
+          .mkString(sep),
+        "outputSourceDirectories" -> testOutput
+          .sources()
+          .map(_.path)
+          .mkString(sep),
+        "sourceroot" -> mill.api.BuildCtx.workspaceRoot.toString,
+        "scalaVersion" -> Versions.scala3,
+        "scalacOptions" -> testInput.scalacOptions().mkString("|")
+      ).map { case (key, value) => s"$key=$value" }
+      os.write(
+        Task.dest / "scalafix-testkit.properties",
+        lines.mkString("\n")
+      )
+      Seq(PathRef(Task.dest))
+    }
+
+    def resources = Task { super.resources() ++ testkitProperties() }
+  }
+}
+
+object docs extends ScalaModule {
+  def scalaVersion = "3.3.8"
+  def mvnDeps = Seq(mvn"org.scalameta::mdoc:${Versions.mdoc}")
+}
+
+def prePush() = Task.Command {
+  scalafix.compile()
+  // Compile fixtures before the suite so a broken fixture reports as a compile
+  // error rather than an opaque "SemanticDB not found" test failure.
+  scalafix.testInput.compile()
+  scalafix.testOutput.compile()
+  scalafix.test.testForked()()
+}
