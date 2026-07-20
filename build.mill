@@ -16,7 +16,7 @@ object Project {
   def organization = "io.github.mercurievv"
   def repositoryOwner = "MercurieVV"
   def repositoryName = "scala-purrism"
-  def publishVersion = "0.4.1"
+  def publishVersion = "0.5.0"
 }
 
 object scalafix extends ScalaModule with SonatypeCentralPublishModule {
@@ -60,6 +60,29 @@ object scalafix extends ScalaModule with SonatypeCentralPublishModule {
   // unmanaged stainless-library.jar instead of a compiler plugin dependency.
   def scalacPluginMvnDeps = Seq()
 
+  // Fixture sources for scalafix-testkit. Compiled with SemanticDB so the
+  // testkit can find a payload for each input file. Deliberately does NOT
+  // inherit the main module's -Werror: fixtures contain the very code smells
+  // the rules exist to remove.
+  object testInput extends ScalaModule {
+    def scalaVersion = Versions.scala3
+    // -sourceroot must match the `sourceroot` property written below, or the
+    // testkit looks for SemanticDB payloads under the wrong relative path.
+    def scalacOptions =
+      Seq("-Ysemanticdb", s"-sourceroot:${mill.api.BuildCtx.workspaceRoot}")
+    def mvnDeps = Seq(
+      mvn"org.typelevel::cats-core:${Versions.catsCore}",
+      mvn"org.typelevel::cats-effect:${Versions.catsEffect}"
+    )
+  }
+
+  // Expected output for each testInput fixture. Must compile, but needs no
+  // SemanticDB.
+  object testOutput extends ScalaModule {
+    def scalaVersion = Versions.scala3
+    def mvnDeps = testInput.mvnDeps
+  }
+
   object test extends ScalaTests {
     def testFramework = "munit.Framework"
     def mvnDeps = Seq(
@@ -69,6 +92,33 @@ object scalafix extends ScalaModule with SonatypeCentralPublishModule {
       mvn"org.scalameta::munit-scalacheck:${Versions.munitScalaCheck}"
       // [test-dependencies-end]
     )
+
+    def testkitProperties = Task {
+      val sep = java.io.File.pathSeparator
+      val lines = Seq(
+        "inputClasspath" -> (testInput.compile().classes.path +: testInput
+          .runClasspath()
+          .map(_.path)).mkString(sep),
+        "inputSourceDirectories" -> testInput
+          .sources()
+          .map(_.path)
+          .mkString(sep),
+        "outputSourceDirectories" -> testOutput
+          .sources()
+          .map(_.path)
+          .mkString(sep),
+        "sourceroot" -> mill.api.BuildCtx.workspaceRoot.toString,
+        "scalaVersion" -> Versions.scala3,
+        "scalacOptions" -> testInput.scalacOptions().mkString("|")
+      ).map { case (key, value) => s"$key=$value" }
+      os.write(
+        Task.dest / "scalafix-testkit.properties",
+        lines.mkString("\n")
+      )
+      Seq(PathRef(Task.dest))
+    }
+
+    def resources = Task { super.resources() ++ testkitProperties() }
   }
 }
 
@@ -79,5 +129,9 @@ object docs extends ScalaModule {
 
 def prePush() = Task.Command {
   scalafix.compile()
+  // Compile fixtures before the suite so a broken fixture reports as a compile
+  // error rather than an opaque "SemanticDB not found" test failure.
+  scalafix.testInput.compile()
+  scalafix.testOutput.compile()
   scalafix.test.testForked()()
 }
