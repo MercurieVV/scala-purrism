@@ -7,6 +7,7 @@ This documentation is compiled and type-checked using **mdoc**.
 - [Project](PROJECT.md)
 - [Engineering Rules](RULES.md)
 - [Golden Fixtures](GOLDEN_FIXTURES.md)
+- [Kleisli → Arrow Catalogue](ARROW_PATTERNS.md)
 - [Maintenance](MAINTENANCE.md)
 - [Publishing](PUBLISHING.md)
 
