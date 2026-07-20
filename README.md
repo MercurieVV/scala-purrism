@@ -170,6 +170,45 @@ Whether the two values are really the same concept is a domain question, so the
 rule reports rather than guesses. Adding the named symbol to `widen` pulls it in
 and propagation continues through it.
 
+### Finding candidates automatically
+
+Hand-picking seeds does not scale to a whole codebase, so the explorer picks
+them mechanically. It ranks every basic-typed value by **how many nodes its
+value-flow closure covers** — the more of the program an opaque type would
+protect, the higher it ranks — and emits the top N as a pasteable
+`PropagateOpaqueType.types` block.
+
+```bash
+mill scalafix.explorer.runMain fix.opaque.ExploreOpaques \
+  --target /path/to/target-project \
+  --out /tmp/opaque-candidates.conf \
+  -n 10
+```
+
+| flag | default |
+| --- | --- |
+| `-n`, `--top` | `10` clusters |
+| `--basic-types` | `scala/Predef.String#,scala/Int#,scala/Long#,scala/Double#,scala/Boolean#,java/util/UUID#` |
+| `--out` | `<target>/opaque-candidates.conf` |
+| `--dry-run` | rank and write the config, but do not rewrite |
+
+The target must already be compiled with SemanticDB; the driver fails with an
+explicit message rather than reporting zero candidates when it is not.
+
+Names are derived mechanically (most frequent member name, capitalized) and the
+definition file is the nearest package object, else the file defining the
+cluster's dominant owner. Both are first drafts meant for a human to correct.
+
+Without `--dry-run` the driver then applies each spec in turn. One spec failing
+is reported and the rest still run. Rewrites land in the target's **working
+tree only** — the driver never runs a git command against it. Applying many
+opaque types at once can leave the target not compiling; that is expected of an
+exploratory run.
+
+Note that rewriting a file invalidates its SemanticDB, and the rule refuses to
+patch against a stale payload, so roughly the first spec touching a file lands
+per run. Recompile the target and re-run to apply the next.
+
 ## Publishing
 
 Release and Sonatype Central setup notes are in [docs/PUBLISHING.md](docs/PUBLISHING.md).
