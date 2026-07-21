@@ -4,12 +4,12 @@ import scala.meta._
 
 import scalafix.v1._
 
-/** A Pattern C candidate where both `.run`/`.apply` arguments share the
-  * def's own parameter *name* but not its *symbol* -- the shape docs/RULES.md
-  * warns about: an inner scope shadows the input before the second Kleisli
-  * runs, so the two calls are not actually fed the same value. Reported
-  * rather than silently skipped so a reader is warned the near-miss was
-  * seen and rejected, not simply never recognised.
+/** A Pattern C candidate where both `.run`/`.apply` arguments share the def's
+  * own parameter *name* but not its *symbol* -- the shape docs/RULES.md warns
+  * about: an inner scope shadows the input before the second Kleisli runs, so
+  * the two calls are not actually fed the same value. Reported rather than
+  * silently skipped so a reader is warned the near-miss was seen and rejected,
+  * not simply never recognised.
   *
   * `Diagnostic` defaults to `LintSeverity.Error`, and scalafix withholds a
   * rule's patches for a file that reports lint errors, so this stays a
@@ -34,23 +34,23 @@ final case class FanOutShadowedInputDiagnostic(
   * Three shapes are handled:
   *
   *   - Pattern A: a linear chain of three or more `flatMap` steps (or the
-  *     equivalent `for`-comprehension), each one calling `.run`/`.apply` on
-  *     the previous step's result and threading it straight into the next
-  *     Kleisli, collapses to `k1.andThen(k2).andThen(k3)`.
+  *     equivalent `for`-comprehension), each one calling `.run`/`.apply` on the
+  *     previous step's result and threading it straight into the next Kleisli,
+  *     collapses to `k1.andThen(k2).andThen(k3)`.
   *   - Pattern B: `k.run(x).map(f)` where `x` is the def's own input and `f`
   *     does not close over it collapses to `k.map(f)`.
-  *   - Pattern C: two Kleislis run on the *same* input and paired into a
-  *     tuple (`for { b <- k1.run(x); c <- k2.run(x) } yield (b, c)`, or its
+  *   - Pattern C: two Kleislis run on the *same* input and paired into a tuple
+  *     (`for { b <- k1.run(x); c <- k2.run(x) } yield (b, c)`, or its
   *     `flatMap`/`map` desugaring) collapses to `k1 &&& k2`. Unlike A and B,
-  *     "same input" is a binding-identity question, not a spelling one, so
-  *     it is resolved via SemanticDB symbols (see [[fanOutCandidate]] /
+  *     "same input" is a binding-identity question, not a spelling one, so it
+  *     is resolved via SemanticDB symbols (see [[fanOutCandidate]] /
   *     [[fanOutRewrite]]), never by comparing `Term.Name` strings.
   *
   * All three rewrites turn `def m(x: A): F[B]` into `def m: Kleisli[F, A, B]`,
   * so they only fire when the def takes exactly one plain parameter and every
   * step resolves, via [[PreferKleisli.collectKleisliNames]], to a receiver
-  * actually declared as a `Kleisli` -- syntactic shape alone (an unrelated
-  * type that also happens to expose `.run`) is not enough.
+  * actually declared as a `Kleisli` -- syntactic shape alone (an unrelated type
+  * that also happens to expose `.run`) is not enough.
   */
 final class PreferArrow extends SemanticRule("PreferArrow") {
   override def fix(implicit doc: SemanticDocument): Patch = {
@@ -125,9 +125,9 @@ object PreferArrow {
       applyTerm: Term.Apply
   ): Option[Term.Function] =
     applyTerm.argClause.values match {
-      case List(function: Term.Function) => Some(function)
+      case List(function: Term.Function)                   => Some(function)
       case List(Term.Block(List(function: Term.Function))) => Some(function)
-      case _ => None
+      case _                                               => None
     }
 
   private def singleFunctionParamName(
@@ -137,7 +137,7 @@ object PreferArrow {
       case List(param) =>
         param.name match {
           case name: Name if name.value != "_" => Some(name.value)
-          case _                                => None
+          case _                               => None
         }
       case _ =>
         None
@@ -188,7 +188,7 @@ object PreferArrow {
             if (rest.isEmpty)
               yieldBody match {
                 case Term.Name(name) if name == boundName => Some(Nil)
-                case _                                     => None
+                case _                                    => None
               }
             else
               collectForSteps(rest, yieldBody, boundName, knownKleislies)
@@ -205,8 +205,7 @@ object PreferArrow {
     body match {
       case Term.ForYield.After_4_9_9(enumerators, yieldBody) =>
         collectForSteps(enumerators, yieldBody, inputArgument, knownKleislies)
-      case applyTerm: Term.Apply
-          if applyTerm.fun match {
+      case applyTerm: Term.Apply if applyTerm.fun match {
             case Term.Select(_, Term.Name("flatMap")) => true
             case _                                    => false
           } =>
@@ -275,12 +274,12 @@ object PreferArrow {
     }
   }
 
-  /** The two steps of a candidate Pattern C fan-out, before binding identity
-    * or Kleisli-ness has been checked. `firstCalleeExpr` / `secondCalleeExpr`
-    * are the expressions receiving `.run`/`.apply` (e.g. `loadUser`);
+  /** The two steps of a candidate Pattern C fan-out, before binding identity or
+    * Kleisli-ness has been checked. `firstCalleeExpr` / `secondCalleeExpr` are
+    * the expressions receiving `.run`/`.apply` (e.g. `loadUser`);
     * `firstArgument` / `secondArgument` are the `Term.Name`s passed as the
-    * argument to each call, whose *symbols* -- not spellings -- decide
-    * whether this is really one input threaded twice.
+    * argument to each call, whose *symbols* -- not spellings -- decide whether
+    * this is really one input threaded twice.
     */
   private final case class FanOutCandidate(
       firstCalleeExpr: Term,
@@ -337,10 +336,10 @@ object PreferArrow {
 
   /** The last expression of a function body, unwrapping a `Term.Block` --
     * present when the body shadows a binding with a `val` before the tail
-    * expression, as in the Pattern C negative fixture. Unwrapping only
-    * changes which syntax shape is *recognised*; it is
-    * [[sameBinding]]/symbol resolution, not this unwrapping, that decides
-    * whether a shadowed name still counts as the same input.
+    * expression, as in the Pattern C negative fixture. Unwrapping only changes
+    * which syntax shape is *recognised*; it is [[sameBinding]]/symbol
+    * resolution, not this unwrapping, that decides whether a shadowed name
+    * still counts as the same input.
     */
   private def lastExpr(term: Term): Option[Term] =
     term match {
@@ -401,8 +400,8 @@ object PreferArrow {
     forYieldFanOut(body).orElse(desugaredFanOut(body))
 
   /** `import cats.syntax.arrow._`, built as an AST rather than via the
-    * `importer"..."` quasiquote macro, which Scala 2 macros -- and this
-    * project targets Scala 3 -- cannot run.
+    * `importer"..."` quasiquote macro, which Scala 2 macros -- and this project
+    * targets Scala 3 -- cannot run.
     */
   private val ArrowSyntaxImporter: Importer =
     Importer(
@@ -414,12 +413,20 @@ object PreferArrow {
     )
 
   private val MonadOrStrongerBounds =
-    Set("Monad", "Async", "Concurrent", "MonadCancel", "MonadThrow", "Sync", "Temporal")
+    Set(
+      "Monad",
+      "Async",
+      "Concurrent",
+      "MonadCancel",
+      "MonadThrow",
+      "Sync",
+      "Temporal"
+    )
 
   private def contextBoundNames(tparam: Type.Param): List[String] =
     tparam.bounds.context.collect {
-      case Type.Name(name)                          => name
-      case Type.Select(_, Type.Name(name))           => name
+      case Type.Name(name)                 => name
+      case Type.Select(_, Type.Name(name)) => name
       case applyTerm: Type.Apply if applyTerm.tpe.is[Type.Name] =>
         applyTerm.tpe.asInstanceOf[Type.Name].value
     }
@@ -435,9 +442,9 @@ object PreferArrow {
 
   /** `Kleisli`'s `ArrowChoice`/`Arrow` instance (`&&&`) requires `Monad[F]`,
     * strictly stronger than the `FlatMap[F]` the original `for`-comprehension
-    * needs -- see the effect-ordering note on issue #8. Walk up from the
-    * `def` to find whichever enclosing class/trait/def declares the effect
-    * type parameter and check its context bound is `Monad` or a subtype.
+    * needs -- see the effect-ordering note on issue #8. Walk up from the `def`
+    * to find whichever enclosing class/trait/def declares the effect type
+    * parameter and check its context bound is `Monad` or a subtype.
     */
   private def hasMonadOrStrongerBound(
       defn: Defn.Def,
@@ -446,7 +453,7 @@ object PreferArrow {
     def search(tree: Tree): Boolean = {
       val here = tparamsOf(tree).exists { tparam =>
         tparam.name.value == effectTypeName &&
-          contextBoundNames(tparam).exists(MonadOrStrongerBounds.contains)
+        contextBoundNames(tparam).exists(MonadOrStrongerBounds.contains)
       }
       here || tree.parent.exists(search)
     }

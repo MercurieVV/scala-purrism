@@ -137,24 +137,23 @@ final class KleisliLawSuite extends ScalaCheckSuite {
   property(
     "PreferArrow Pattern A: preserves short-circuiting on None in middle step"
   ) {
-    forAll {
-      (input: Int, firstValue: Int) =>
-        val step1: Kleisli[Option, Int, Int] =
-          Kleisli(_ => Some(firstValue))
-        val step2: Kleisli[Option, Int, Int] =
-          Kleisli(_ => None)
-        val step3: Kleisli[Option, Int, String] =
-          Kleisli(value => Some(value.toString))
+    forAll { (input: Int, firstValue: Int) =>
+      val step1: Kleisli[Option, Int, Int] =
+        Kleisli(_ => Some(firstValue))
+      val step2: Kleisli[Option, Int, Int] =
+        Kleisli(_ => None)
+      val step3: Kleisli[Option, Int, String] =
+        Kleisli(value => Some(value.toString))
 
-        val original: Option[String] =
-          step1.run(input).flatMap { v1 =>
-            step2.run(v1).flatMap(v2 => step3.run(v2))
-          }
-        val refactored: Option[String] =
-          step1.andThen(step2).andThen(step3).run(input)
+      val original: Option[String] =
+        step1.run(input).flatMap { v1 =>
+          step2.run(v1).flatMap(v2 => step3.run(v2))
+        }
+      val refactored: Option[String] =
+        step1.andThen(step2).andThen(step3).run(input)
 
-        assertEquals(refactored, original)
-        assertEquals(refactored, None)
+      assertEquals(refactored, original)
+      assertEquals(refactored, None)
     }
   }
 
