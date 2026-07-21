@@ -95,7 +95,7 @@ rules = [
   PreferArrow,
   PreferCatsSyntax,
   SimplifyCatsExpressions,
-  OpaqueTypePropagation
+  PropagateOpaqueType
 ]
 ```
 
@@ -109,7 +109,6 @@ to convert — see [Propagating an opaque type](#propagating-an-opaque-type).
 - **`PreferArrow`**: Prefer point-free `Arrow` composition over unpacking `Kleisli` with `.run`/`.apply` and stitching pieces together by hand. Handles linear chains (`andThen`), maps after run, and fan-out patterns (`&&&`).
 - **`PreferCatsSyntax`**: Replace direct Cats typeclass calls such as `Applicative[F].pure(a)`, `MonadThrow[F].raiseError[A](e)`, `Functor[F].map(fa)(f)`, and `FlatMap[F].flatMap(fa)(f)` with Cats syntax.
 - **`SimplifyCatsExpressions`**: Simplify common Cats and FP expressions using existing combinators, including `.void`, `.as`, `*>`, narrow `.mapN`, `Option(value)`, and `Either.cond`.
-- **`OpaqueTypePropagation`**: Detect primitive value propagation chains (`String`, `Int`, `Long`, `BigDecimal`, etc.) across call trees and replace them with generated Scala 3 zero-cost `opaque type` domain wrappers. Discovers targets by parameter *name*, so it converts every domain-suffixed field it finds. For converting one specific field, prefer `PropagateOpaqueType`.
 - **`PropagateOpaqueType`**: Replace one value's type with an `opaque type` and follow that value wherever it flows — parameters, fields, returns, container type arguments, `Kleisli` input tuples — wrapping where it is created and unwrapping where it crosses into an API you do not own. Targets are exact SemanticDB symbols rather than names, so unrelated `String`s that merely share a name are untouched. See [Propagating an opaque type](#propagating-an-opaque-type).
 
 These are semantic rules, so the target project must compile with
