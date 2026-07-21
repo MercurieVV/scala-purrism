@@ -7,6 +7,7 @@ import scalafix.v1._
 final class TypelevelPurrism extends SemanticRule("TypelevelPurrism") {
   override def fix(implicit doc: SemanticDocument): Patch =
     new TypeclassWeakening().fix + new PreferKleisli().fix +
+      new PreferArrow().fix +
       new PreferCatsSyntax().fix + new SimplifyCatsExpressions().fix +
       new OpaqueTypePropagation().fix
 }
@@ -116,6 +117,12 @@ object PreferKleisli {
 
   def collectKleisliNames(tree: Tree): Set[String] =
     TypelevelPurrism.collectKleisliNames(tree)
+
+  def kleisliCallee(term: Term, knownKleislies: Set[String]): Option[String] =
+    TypelevelPurrism.kleisliCallee(term, knownKleislies)
+
+  def kleisliApplyFunction(applyTerm: Term.Apply): Option[Term.Function] =
+    TypelevelPurrism.kleisliApplyFunction(applyTerm)
 
   def rewriteCandidates(tree: Tree): List[Defn.Def] =
     TypelevelPurrism.rewriteCandidates(tree)
@@ -1444,7 +1451,7 @@ private[fix] object TypelevelPurrism {
         None
     }
 
-  private def kleisliCallee(
+  private[fix] def kleisliCallee(
       term: Term,
       knownKleislies: Set[String]
   ): Option[String] =
@@ -1458,7 +1465,7 @@ private[fix] object TypelevelPurrism {
         None
     }
 
-  private def kleisliApplyFunction(
+  private[fix] def kleisliApplyFunction(
       applyTerm: Term.Apply
   ): Option[Term.Function] =
     for {

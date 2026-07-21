@@ -1,10 +1,6 @@
 /*
-rules = [DisableSyntax]
+rules = [PreferArrow]
 
-# PreferArrow does not exist yet; this is a source-of-truth fixture for it,
-# not a rewrite fixture. DisableSyntax is configured with nothing here so it
-# changes no text, which is why this file needs no matching testOutput entry.
-#
 # Pattern B: a plain `map` after `run`, with no second Kleisli involved:
 #
 #   def userName: Kleisli[F, String, String] =

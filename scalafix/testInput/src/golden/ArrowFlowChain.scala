@@ -1,10 +1,6 @@
 /*
-rules = [DisableSyntax]
+rules = [PreferArrow]
 
-# PreferArrow does not exist yet; this is a source-of-truth fixture for it,
-# not a rewrite fixture. DisableSyntax is configured with nothing here so it
-# changes no text, which is why this file needs no matching testOutput entry.
-#
 # Pattern A: a 3-step linear Kleisli chain, one entry point via nested
 # `flatMap` and one via `for`. Both collapse to the same `andThen` chain:
 #
