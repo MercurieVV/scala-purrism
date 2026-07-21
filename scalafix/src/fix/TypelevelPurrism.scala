@@ -117,6 +117,9 @@ object PreferKleisli {
   def collectKleisliNames(tree: Tree): Set[String] =
     TypelevelPurrism.collectKleisliNames(tree)
 
+  def kleisliCallee(term: Term, knownKleislies: Set[String]): Option[String] =
+    TypelevelPurrism.kleisliCallee(term, knownKleislies)
+
   def rewriteCandidates(tree: Tree): List[Defn.Def] =
     TypelevelPurrism.rewriteCandidates(tree)
 
@@ -1444,7 +1447,7 @@ private[fix] object TypelevelPurrism {
         None
     }
 
-  private def kleisliCallee(
+  def kleisliCallee(
       term: Term,
       knownKleislies: Set[String]
   ): Option[String] =

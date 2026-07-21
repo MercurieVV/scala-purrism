@@ -92,6 +92,7 @@ Create `.scalafix.conf` in the project where you want to run the rules:
 rules = [
   TypeclassWeakening,
   PreferKleisli,
+  PreferArrow,
   PreferCatsSyntax,
   SimplifyCatsExpressions,
   OpaqueTypePropagation
@@ -105,6 +106,7 @@ to convert — see [Propagating an opaque type](#propagating-an-opaque-type).
 
 - **`TypeclassWeakening`**: Weaken overly restrictive effect bounds (e.g. `Sync[F]` $\rightarrow$ `Monad[F]`) when only monadic operations are used.
 - **`PreferKleisli`**: Refactor effectful functions into `Kleisli` compositions.
+- **`PreferArrow`**: Prefer point-free `Arrow` composition over unpacking `Kleisli` with `.run`/`.apply` and stitching pieces together by hand. Handles linear chains (`andThen`), maps after run, and fan-out patterns (`&&&`).
 - **`PreferCatsSyntax`**: Replace direct Cats typeclass calls such as `Applicative[F].pure(a)`, `MonadThrow[F].raiseError[A](e)`, `Functor[F].map(fa)(f)`, and `FlatMap[F].flatMap(fa)(f)` with Cats syntax.
 - **`SimplifyCatsExpressions`**: Simplify common Cats and FP expressions using existing combinators, including `.void`, `.as`, `*>`, narrow `.mapN`, `Option(value)`, and `Either.cond`.
 - **`OpaqueTypePropagation`**: Detect primitive value propagation chains (`String`, `Int`, `Long`, `BigDecimal`, etc.) across call trees and replace them with generated Scala 3 zero-cost `opaque type` domain wrappers. Discovers targets by parameter *name*, so it converts every domain-suffixed field it finds. For converting one specific field, prefer `PropagateOpaqueType`.
