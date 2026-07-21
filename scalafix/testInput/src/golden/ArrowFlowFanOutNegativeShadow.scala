@@ -1,6 +1,10 @@
 /*
-rules = [PreferArrow]
+rules = [DisableSyntax]
 
+# PreferArrow does not exist yet; this is a source-of-truth fixture for it,
+# not a rewrite fixture. DisableSyntax is configured with nothing here so it
+# changes no text, which is why this file needs no matching testOutput entry.
+#
 # Pattern C negative: the second branch rebinds `id` to a derived value
 # before calling `loadSettings.run(id)`. The name is the same as the def's
 # own input parameter, but the binding is not — the two Kleislis are not

@@ -1,6 +1,10 @@
 /*
-rules = [PreferArrow]
+rules = [DisableSyntax]
 
+# PreferArrow does not exist yet; this is a source-of-truth fixture for it,
+# not a rewrite fixture. DisableSyntax is configured with nothing here so it
+# changes no text, which is why this file needs no matching testOutput entry.
+#
 # Pattern B negative: the mapping function closes over `id`, the def's own
 # input parameter. `loadUser.map(name => s"$id:$name")` would leave `id`
 # referring to a parameter that no longer exists once the def is rewritten

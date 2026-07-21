@@ -1,8 +1,15 @@
 /*
-rules = [PreferArrow]
+rules = [DisableSyntax]
 
+# PreferArrow does not exist yet; this is a source-of-truth fixture for it,
+# not a rewrite fixture. DisableSyntax is configured with nothing here so it
+# changes no text, which is why this file needs no matching testOutput entry.
+#
 # Pattern C: two Kleislis applied to the same input and combined into a
-# tuple, collapsing to `&&&` fan-out.
+# tuple, collapsing to `&&&` fan-out:
+#
+#   def profile: Kleisli[F, String, (Int, Boolean)] =
+#     loadUser &&& loadSettings
  */
 package golden
 

@@ -1,6 +1,10 @@
 /*
-rules = [PreferArrow]
+rules = [DisableSyntax]
 
+# PreferArrow does not exist yet; this is a source-of-truth fixture for it,
+# not a rewrite fixture. DisableSyntax is configured with nothing here so it
+# changes no text, which is why this file needs no matching testOutput entry.
+#
 # Shared negative: `.run` is called on a `Pipe`, not a `Kleisli`. Same shape
 # as the chain regression fixture, but the receiver type must gate the
 # rewrite, so this must be left untouched.
