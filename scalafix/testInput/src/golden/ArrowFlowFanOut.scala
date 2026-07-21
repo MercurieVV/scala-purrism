@@ -1,12 +1,8 @@
 /*
-rules = [DisableSyntax]
+rules = [PreferArrow]
 
-# PreferArrow does not exist yet; this is a source-of-truth fixture for it,
-# not a rewrite fixture. DisableSyntax is configured with nothing here so it
-# changes no text, which is why this file needs no matching testOutput entry.
-#
 # Pattern C: two Kleislis applied to the same input and combined into a
-# tuple, collapsing to `&&&` fan-out:
+# tuple, collapsing to `&&&` fan-out. Two entry shapes, both landing on:
 #
 #   def profile: Kleisli[F, String, (Int, Boolean)] =
 #     loadUser &&& loadSettings
@@ -24,4 +20,10 @@ final class FanOutFlow[F[_]: Monad](
 ) {
   def profile(id: String): F[(Int, Boolean)] =
     loadUser.run(id).flatMap(age => loadSettings.run(id).map(active => (age, active)))
+
+  def profileFor(id: String): F[(Int, Boolean)] =
+    for {
+      age    <- loadUser.run(id)
+      active <- loadSettings.run(id)
+    } yield (age, active)
 }

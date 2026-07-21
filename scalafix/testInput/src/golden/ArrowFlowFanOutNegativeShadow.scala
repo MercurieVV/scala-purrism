@@ -1,15 +1,12 @@
 /*
-rules = [DisableSyntax]
+rules = [PreferArrow]
 
-# PreferArrow does not exist yet; this is a source-of-truth fixture for it,
-# not a rewrite fixture. DisableSyntax is configured with nothing here so it
-# changes no text, which is why this file needs no matching testOutput entry.
-#
 # Pattern C negative: the second branch rebinds `id` to a derived value
 # before calling `loadSettings.run(id)`. The name is the same as the def's
-# own input parameter, but the binding is not — the two Kleislis are not
-# actually applied to the same input, so this is not a fan-out and must be
-# left untouched.
+# own input parameter, but the binding is not -- resolved via SemanticDB
+# symbols, not the `Term.Name` spelling -- so the two Kleislis are not
+# actually applied to the same input. Not a fan-out; must be left untouched,
+# with a Warning-severity diagnostic explaining why (asserted below).
  */
 package golden
 
@@ -25,6 +22,6 @@ final class FanOutShadowFlow[F[_]: Monad](
   def profile(id: String): F[(Int, Boolean)] =
     loadUserAge.run(id).flatMap { age =>
       val id = age.toString
-      loadSettings.run(id).map(active => (age, active))
+      loadSettings.run(id).map(active => (age, active)) // assert: PreferArrow
     }
 }
