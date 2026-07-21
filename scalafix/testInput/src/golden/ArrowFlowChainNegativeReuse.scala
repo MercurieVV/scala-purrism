@@ -1,10 +1,6 @@
 /*
-rules = [DisableSyntax]
+rules = [PreferArrow]
 
-# PreferArrow does not exist yet; this is a source-of-truth fixture for it,
-# not a rewrite fixture. DisableSyntax is configured with nothing here so it
-# changes no text, which is why this file needs no matching testOutput entry.
-#
 # Pattern A negative: the intermediate binding `user` is used twice — once
 # as the argument to the next Kleisli, once again in the final `map`. A
 # straight `andThen` chain would drop the value `user` needs downstream, so
