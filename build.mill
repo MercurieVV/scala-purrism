@@ -16,7 +16,15 @@ object Project {
   def organization = "io.github.mercurievv"
   def repositoryOwner = "MercurieVV"
   def repositoryName = "scala-purrism"
-  def publishVersion = "0.5.8"
+  def publishVersion: String = {
+    import scala.sys.process._
+    try {
+      val tag = "git describe --tags --abbrev=0 master".!!.trim
+      if (tag.startsWith("v")) tag.substring(1) else tag
+    } catch {
+      case _: Exception => "0.5.3"
+    }
+  }
 }
 
 object scalafix extends ScalaModule with SonatypeCentralPublishModule {
