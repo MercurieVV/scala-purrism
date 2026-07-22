@@ -42,6 +42,7 @@ object ArrowNormalize {
       case FlatTap(a, binders, tap) => FlatTap(step(a), binders, step(tap))
       case Local(f, a)              => Local(f, step(a))
       case Rmap(a, f)               => Rmap(step(a), f)
+      case As(a, v)                 => As(step(a), v)
       case leaf                     => leaf
     }
 }

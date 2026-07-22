@@ -34,6 +34,53 @@ object KleisliType {
   def isKleisli(term: Term)(implicit doc: SemanticDocument): Boolean =
     semanticType(term).exists(resolvesToKleisli(_, 0))
 
+  /** Whether the term *evaluates to* a Kleisli -- including a term that had to
+    * be applied to get there, such as `GitHub.comment(progress)` where
+    * `comment` takes a callback and returns a `Kleisli`.
+    *
+    * [[isKleisli]] cannot answer this. It reads the symbol the term carries,
+    * and a `Term.Apply` carries none -- there is no occurrence at an
+    * application node -- so every curried callee resolved to nothing. That is
+    * precisely the shape `PreferKleisli` leaves behind when it lifts a def with
+    * a callback parameter, so the two rules composed into a blind spot: stage 1
+    * produced exactly the callees stage 2 could not recognise.
+    *
+    * The applied clauses must be *counted*, not just peeled. A partially
+    * applied `def m(a: A)(b: B): Kleisli[F, X, Y]` also has a `Kleisli` return
+    * type, but `m(a)` is not a Kleisli -- `b` is still the method's own
+    * parameter, not the arrow's input. So the term is a Kleisli only once every
+    * explicit parameter list has been supplied. Implicit and `using` clauses
+    * are excluded from the count: they are inserted by the compiler and never
+    * appear in the syntax being counted.
+    */
+  def isKleisliValue(term: Term)(implicit doc: SemanticDocument): Boolean = {
+    def go(current: Term, applied: Int): Boolean =
+      current match {
+        case Term.ApplyType.After_4_6_0(fun, _) => go(fun, applied)
+        case Term.Apply.After_4_6_0(fun, _)     => go(fun, applied + 1)
+        case head =>
+          head.symbol.info.map(_.signature).exists {
+            case ValueSignature(tpe) =>
+              applied == 0 && resolvesToKleisli(tpe, 0)
+            case MethodSignature(_, parameterLists, tpe) =>
+              applied == explicitClauseCount(parameterLists) &&
+              resolvesToKleisli(tpe, 0)
+            case _ => false
+          }
+      }
+
+    go(term, 0)
+  }
+
+  private def explicitClauseCount(
+      parameterLists: List[List[SymbolInformation]]
+  ): Int =
+    parameterLists.count(clause =>
+      clause.nonEmpty && !clause.forall(param =>
+        param.isImplicit || param.isGiven
+      )
+    )
+
   /** The type of a term, as far as a declaration's signature reveals it.
     *
     * For a `MethodSignature` this is the *return* type, which is what a fully

@@ -69,17 +69,100 @@ object ArrowParser {
       input: Option[Input],
       aggressive: Boolean
   )(implicit doc: SemanticDocument): Option[ArrowIR] =
-    peelTrailingMap(body) match {
-      // `<effects>.map(fn)` -- pattern B and the tail of a chain that ends in a
-      // pure reshape. Parse the effect part, then reshape its output.
-      case Some((inner, fn)) =>
-        // The reshape must not close over the arrow input; point-free output
-        // has no name to bind it to, so a capturing `map` would be dropped.
-        if (referencesAny(fn, List(inputSymbol))) None
-        else parseSpine(inner, inputSymbol, input, aggressive).map(Rmap(_, fn))
+    peelTrailingReshape(body) match {
+      // `<effects>.map(fn)` / `<effects>.as(value)` -- pattern B and the tail
+      // of a chain that ends in a pure reshape.
+      case Some((inner, reshape)) =>
+        if (!referencesAny(reshape.term, List(inputSymbol)))
+          parseSpine(inner, inputSymbol, input, aggressive)
+            .map(reshape.applyTo)
+        else
+          // The reshape closes over the arrow input, which point-free output
+          // has no name for -- unless the input is deliberately carried along.
+          // A leading `Kleisli.ask` does exactly that, at the cost of a tuple
+          // and a destructuring reshape, so it is offered in aggressive mode
+          // only. Conservative mode declines, as it did before.
+          for {
+            in <- input if aggressive
+            effect <- in.effect
+            retained <- retainingReshape(in.name, reshape)
+            ir <- parseSpine(inner, inputSymbol, input, aggressive)
+          } yield Rmap(Merge(Ask(effect, in.tpe), ir), retained)
       case None =>
         parseSpine(body, inputSymbol, input, aggressive)
     }
+
+  /** A pure reshape sitting at the tail of an effectful body. */
+  private sealed trait Reshape {
+
+    /** The expression the reshape is written with, whose free names decide
+      * whether it closes over the arrow input.
+      */
+    def term: Term
+    def applyTo(ir: ArrowIR): ArrowIR
+  }
+
+  private object Reshape {
+    final case class Mapped(fn: Term) extends Reshape {
+      def term: Term = fn
+      def applyTo(ir: ArrowIR): ArrowIR = Rmap(ir, fn)
+    }
+    final case class Constant(value: Term) extends Reshape {
+      def term: Term = value
+      def applyTo(ir: ArrowIR): ArrowIR = As(ir, value)
+    }
+  }
+
+  private def peelTrailingReshape(
+      term: Term
+  )(implicit doc: SemanticDocument): Option[(Term, Reshape)] =
+    peelTrailingMap(term)
+      .map { case (inner, fn) => (inner, Reshape.Mapped(fn)) }
+      .orElse(peelTrailingAs(term).map { case (inner, value) =>
+        (inner, Reshape.Constant(value))
+      })
+
+  /** The destructuring reshape that goes with a leading `Kleisli.ask`:
+    * `{ case (input, result) => ... }`, rebinding the arrow input under the
+    * name the source used so the captured expression carries over verbatim.
+    *
+    * A `.as(value)` discards the effect's result, so its slot is a wildcard. A
+    * `.map(fn)` keeps it, and its lambda's own parameter becomes the second
+    * binder -- which is what lets the lambda *body* be reused as written. A
+    * `.map` whose argument is not a single-parameter lambda (a placeholder, an
+    * eta-expanded method) has no parameter to rebind, so it is declined rather
+    * than wrapped in a synthetic application.
+    */
+  private def retainingReshape(
+      inputName: String,
+      reshape: Reshape
+  ): Option[Term] = {
+    val slot: Option[(Pat, Term)] = reshape match {
+      case Reshape.Constant(value) => Some((Pat.Wildcard(), value))
+      case Reshape.Mapped(fn: Term.Function) =>
+        fn.paramClause.values match {
+          case List(param) =>
+            param.name match {
+              case name: Term.Name => Some((Pat.Var(name), fn.body))
+              case _               => None
+            }
+          case _ => None
+        }
+      case _ => None
+    }
+
+    slot.map { case (resultPat, body) =>
+      Term.PartialFunction(
+        List(
+          Case(
+            Pat.Tuple(List(Pat.Var(Term.Name(inputName)), resultPat)),
+            None,
+            body
+          )
+        )
+      )
+    }
+  }
 
   /** Splits `receiver.map(fn)` into `(receiver, fn)` when `fn` is a function
     * literal or placeholder and `receiver` is not itself already a Kleisli's
@@ -99,6 +182,22 @@ object ArrowParser {
         None
     }
 
+  /** Splits `receiver.as(value)` into `(receiver, value)`. Unlike the `.map`
+    * peel this needs no "receiver is not already a Kleisli" guard: if the
+    * receiver *is* a bare Kleisli there is nothing left for the spine parser to
+    * find, so the site declines on its own and no no-op edit is emitted.
+    */
+  private def peelTrailingAs(term: Term): Option[(Term, Term)] =
+    term match {
+      case Term.Apply.After_4_6_0(
+            Term.Select(receiver, Term.Name("as")),
+            Term.ArgClause(List(value), _)
+          ) =>
+        Some((receiver, value))
+      case _ =>
+        None
+    }
+
   private def parseSpine(
       body: Term,
       inputSymbol: Symbol,
@@ -108,7 +207,7 @@ object ArrowParser {
     choiceArrow(body, inputSymbol).orElse {
       val (steps, yieldTerm) = spine(body)
       val conservative =
-        if (steps.isEmpty) bareEffect(body, inputSymbol)
+        if (steps.isEmpty) bareEffect(body, inputSymbol, input)
         else classify(steps, yieldTerm, inputSymbol, input)
       conservative.orElse(
         if (aggressive) aggressiveFor(body, inputSymbol, input) else None
@@ -428,14 +527,27 @@ object ArrowParser {
     */
   private def bareEffect(
       body: Term,
-      inputSymbol: Symbol
+      inputSymbol: Symbol,
+      input: Option[Input]
   )(implicit doc: SemanticDocument): Option[ArrowIR] =
-    runArgument(body) match {
-      case Some((callee, arg))
-          if arg.symbol == inputSymbol && KleisliType.isKleisli(callee) =>
-        Some(Eff(callee))
-      case _ =>
-        None
+    runArgAny(body).flatMap { case (callee, arg) =>
+      if (!KleisliType.isKleisliValue(callee)) None
+      else if (arg.symbol == inputSymbol) Some(Eff(callee))
+      // The Kleisli is fed a *projection* of the arrow input --
+      // `k((split.run.context.root, split.run.task))` -- which is exactly what
+      // `.local` expresses, so the surrounding `Kleisli { split => ... }` can
+      // go. Only a lone fan-out branch used to get this treatment; a body that
+      // *is* the single call was left wrapped, which is the common shape once
+      // `PreferKleisli` has lifted the callee.
+      else if (
+        argRoot(arg).contains(inputSymbol) &&
+        // A function argument is a combinator's own lambda (`k.local(f)`), not
+        // a projection of the input -- and re-wrapping our own output would
+        // break idempotence.
+        !arg.is[Term.Function]
+      )
+        input.map(in => Local(projectionLambda(in, arg), Eff(callee)))
+      else None
     }
 
   /** Flattens a monadic body into its effect steps and its trailing value.
@@ -789,29 +901,38 @@ object ArrowParser {
         case _: Term.Name =>
           Some(Eff(callee))
         case projection =>
-          // The projection lambda's parameter is annotated with the input type
-          // -- `(request: Request) => request.path` -- because `Kleisli.local`
-          // would otherwise infer the new input type as `Any`. Without the
-          // input type in hand, a projected branch is not offered.
-          input.map { in =>
-            val projectionFn = Term.Function(
-              Term.ParamClause(
-                List(
-                  Term.Param(
-                    Nil,
-                    Term.Name(in.name),
-                    Some(Type.Name(in.tpe)),
-                    None
-                  )
-                ),
-                None
-              ),
-              projection
-            )
-            Local(projectionFn, Eff(callee))
-          }
+          input.map(in => Local(projectionLambda(in, projection), Eff(callee)))
       }
     }
+
+  /** `(request: Request) => request.path` -- the lambda a `.local` reshape
+    * needs. The parameter is annotated with the input type because
+    * `Kleisli.local` would otherwise infer the new input type as `Any`, so
+    * without the input type in hand a projected reshape is not offered at all.
+    * The parameter reuses the source's own name for the input, which is what
+    * lets the projection expression be carried over verbatim.
+    */
+  private def projectionLambda(in: Input, projection: Term): Term.Function =
+    Term.Function(
+      Term.ParamClause(
+        List(Term.Param(Nil, Term.Name(in.name), Some(inputType(in)), None)),
+        None
+      ),
+      projection
+    )
+
+  /** The input type as a `Type`, parsed rather than wrapped in a `Type.Name`.
+    * `Type.Name("(Int, String)")` is not an identifier, so the prettyprinter
+    * quotes it into `` `(Int, String)` `` -- which does not compile. Tuple and
+    * applied input types are the norm once `PreferKleisli` has tupled a
+    * multi-parameter def, so this is the common case, not an edge one.
+    */
+  private def inputType(in: Input): Type =
+    dialects
+      .Scala3(in.tpe)
+      .parse[Type]
+      .toOption
+      .getOrElse(Type.Name(in.tpe))
 
   /** `yield (a, b, c)` in generator order reshapes to nothing (`None`); any
     * other tuple or expression reshapes with a `map`. `&&&` nests its output as

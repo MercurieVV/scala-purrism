@@ -47,6 +47,7 @@ object ArrowRender {
         s"${receiverOperand(a)}.flatTap { ${binderPattern(binders)} => ${render(tap)} }"
       case Local(fn, a) => s"${receiverOperand(a)}.local(${fn.syntax})"
       case Rmap(a, fn)  => s"${receiverOperand(a)}.map(${fn.syntax})"
+      case As(a, value) => s"${receiverOperand(a)}.as(${value.syntax})"
       case Opaque(term) =>
         sys.error(
           s"ArrowRender reached an Opaque leaf (${term.syntax}); the budget " +
@@ -114,7 +115,7 @@ object ArrowRender {
   private def infixOperand(ir: ArrowIR): String =
     ir match {
       case _: Eff | _: LiftK | Id | _: Ask | _: Lift | _: AndThen | _: Rmap |
-          _: Local | _: FlatTap =>
+          _: Local | _: FlatTap | _: As =>
         render(ir)
       case _ => s"(${render(ir)})"
     }
@@ -123,10 +124,15 @@ object ArrowRender {
     * arrow operator, so any compound receiver -- including a `>>>` chain --
     * must be parenthesised, or `(a >>> b).map(f)` would degrade to
     * `a >>> b.map(f)`.
+    *
+    * A node that *renders as* a method call needs no parentheses of its own:
+    * its own rendering already parenthesised whatever it wraps, so the result
+    * ends in `.local(...)`/`.map(...)` and chains directly.
     */
   private def receiverOperand(ir: ArrowIR): String =
     ir match {
-      case _: Eff | _: LiftK | Id | _: Ask | _: Lift | _: FlatTap => render(ir)
-      case _ => s"(${render(ir)})"
+      case _: Eff | _: LiftK | Id | _: Ask | _: Lift => render(ir)
+      case _: FlatTap | _: As | _: Local | _: Rmap   => render(ir)
+      case _                                         => s"(${render(ir)})"
     }
 }

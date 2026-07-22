@@ -86,6 +86,15 @@ object ArrowIR {
   /** `a.map(fn)` -- reshape the output of `a` with the pure `fn`. */
   final case class Rmap(a: ArrowIR, fn: Term) extends ArrowIR
 
+  /** `a.as(value)` -- replace `a`'s output with a constant.
+    *
+    * Kept distinct from `Rmap(a, _ => value)` so the rewrite prints back the
+    * combinator the source used. Peeling it matters more than printing it: a
+    * body like `k(x.a, x.b).as(summary)` is a `.local` reshape wearing a hat,
+    * and without recognising the `as` the whole site is declined.
+    */
+  final case class As(a: ArrowIR, value: Term) extends ArrowIR
+
   /** A subtree the parser could not analyse. Never survives the budget. */
   final case class Opaque(term: Term) extends ArrowIR
 
@@ -102,6 +111,7 @@ object ArrowIR {
       case FlatTap(a, _, t) => fold(t)(fold(a)(here)(op))(op)
       case Local(_, a)      => fold(a)(here)(op)
       case Rmap(a, _)       => fold(a)(here)(op)
+      case As(a, _)         => fold(a)(here)(op)
       case _                => here
     }
   }

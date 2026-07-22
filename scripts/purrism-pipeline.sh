@@ -46,20 +46,61 @@ CONF
   printf 'wrote default pipeline config: %s\n' "$CONFIG"
 fi
 
-# A locally published rule lands in ivy2/local, which coursier prefers; the
-# swap forces the m2 copy when one is present.
-IVY_JAR="$HOME/.ivy2/local/io.github.mercurievv/scala-purrism-scalafix_3/$VERSION/jars/scala-purrism-scalafix_3.jar"
+# Force the locally published (m2) rule jar when one exists.
+#
+# This is not a convenience -- without it the run silently tests the wrong
+# code. Coursier resolves this coordinate from whichever repository answers
+# first, and both `~/.ivy2/local` (left behind by `publishLocal`) and Maven
+# Central (the *released* version) outrank the m2 copy `publishM2Local`
+# writes. A stale jar in either place produces a clean, plausible, entirely
+# meaningless run against a rule build that is not the one under test.
+#
+# So the substitution matches the artifact by *name* anywhere on the resolved
+# classpath rather than by an expected path: the path differs per repository,
+# the artifact name does not.
 M2_JAR="$HOME/.m2/repository/io/github/mercurievv/scala-purrism-scalafix_3/$VERSION/scala-purrism-scalafix_3-$VERSION.jar"
 
 resolve_classpath() {
-  local cp
+  local cp entry
+  local -a out=()
   cp="$(coursier fetch -p -r m2Local "io.github.mercurievv:scala-purrism-scalafix_3:$VERSION")"
-  if [[ -f "$M2_JAR" ]]; then
-    cp="${cp//$IVY_JAR/$M2_JAR}"
+
+  if [[ ! -f "$M2_JAR" ]]; then
+    printf 'no local m2 build of %s; using whatever coursier resolved\n' \
+      "$VERSION" >&2
+    printf '%s' "$cp"
+    return
   fi
-  printf '%s' "$cp"
+
+  local IFS=:
+  for entry in $cp; do
+    case "$entry" in
+      *scala-purrism-scalafix_3*) out+=("$M2_JAR") ;;
+      *) out+=("$entry") ;;
+    esac
+  done
+  printf '%s' "${out[*]}"
 }
 
+# KNOWN LIMITATION -- cross-file symbol information is not available.
+#
+# `SemanticDocument.info(symbol)` answers only for symbols *declared in the file
+# being rewritten*. For anything declared elsewhere it returns nothing, so a
+# rule asking "is this callee a Kleisli?" gets "no" for every callee one file
+# over, and declines. That is indistinguishable, from the outside, from a rule
+# that correctly found nothing -- which is why this is recorded here rather than
+# left to be rediscovered.
+#
+# Measured on gh-tasks-llm-executor: an identical body rewrites when its callee
+# is in the same file and is declined when the callee moves to another file.
+# Passing scalafix `--classpath` -- the compiled classes directory, the
+# semanticdb targetroot, and the two merged so `META-INF/semanticdb` sits inside
+# the classes entry -- did not restore it in any combination.
+#
+# Consequence: `PreferArrow` fires on same-file compositions only. `PreferKleisli`
+# is unaffected; it reads the SemanticDB payloads directly (see KleisliLiftScope)
+# rather than going through the symbol table, which is what lets its cross-file
+# mode work at all.
 run_stage() {
   local rule="$1"
   shift
