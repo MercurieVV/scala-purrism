@@ -44,18 +44,30 @@ object ArrowParser {
     * Both are needed to emit a projected fan-out; without them, projected
     * branches are not offered.
     */
-  final case class Input(name: String, tpe: String)
+  final case class Input(
+      name: String,
+      tpe: String,
+      effect: Option[String] = None
+  )
 
   def parse(
       body: Term,
       inputSymbol: Symbol
   )(implicit doc: SemanticDocument): Option[ArrowIR] =
-    parse(body, inputSymbol, None)
+    parse(body, inputSymbol, None, aggressive = false)
 
   def parse(
       body: Term,
       inputSymbol: Symbol,
       input: Option[Input]
+  )(implicit doc: SemanticDocument): Option[ArrowIR] =
+    parse(body, inputSymbol, input, aggressive = false)
+
+  def parse(
+      body: Term,
+      inputSymbol: Symbol,
+      input: Option[Input],
+      aggressive: Boolean
   )(implicit doc: SemanticDocument): Option[ArrowIR] =
     peelTrailingMap(body) match {
       // `<effects>.map(fn)` -- pattern B and the tail of a chain that ends in a
@@ -64,9 +76,9 @@ object ArrowParser {
         // The reshape must not close over the arrow input; point-free output
         // has no name to bind it to, so a capturing `map` would be dropped.
         if (referencesAny(fn, List(inputSymbol))) None
-        else parseSpine(inner, inputSymbol, input).map(Rmap(_, fn))
+        else parseSpine(inner, inputSymbol, input, aggressive).map(Rmap(_, fn))
       case None =>
-        parseSpine(body, inputSymbol, input)
+        parseSpine(body, inputSymbol, input, aggressive)
     }
 
   /** Splits `receiver.map(fn)` into `(receiver, fn)` when `fn` is a function
@@ -90,13 +102,115 @@ object ArrowParser {
   private def parseSpine(
       body: Term,
       inputSymbol: Symbol,
-      input: Option[Input]
+      input: Option[Input],
+      aggressive: Boolean
   )(implicit doc: SemanticDocument): Option[ArrowIR] =
     choiceArrow(body, inputSymbol).orElse {
       val (steps, yieldTerm) = spine(body)
-      if (steps.isEmpty) bareEffect(body, inputSymbol)
-      else classify(steps, yieldTerm, inputSymbol, input)
+      val conservative =
+        if (steps.isEmpty) bareEffect(body, inputSymbol)
+        else classify(steps, yieldTerm, inputSymbol, input)
+      conservative.orElse(
+        if (aggressive) aggressiveFor(body, inputSymbol, input) else None
+      )
     }
+
+  /** Aggressive fan-out (opt-in via `PreferArrow.aggressive`). Where the
+    * conservative paths decline because a generator calls a *plain* effectful
+    * method rather than an existing Kleisli -- `dc <- GitHub.dep(x.a, x.b)` --
+    * lift each generator's right-hand side into `Kleisli { (x: T) => rhs }` and
+    * fan the independent generators out with `&&&`. When the `yield` still
+    * references the input, retain it with a leading `Kleisli.ask`. The result
+    * is provably equivalent (independent generators commute under the same
+    * input; `&&&` on `Kleisli` sequences left-then-right exactly as the `for`
+    * did) but often busier than the source -- which is why it is gated behind
+    * the flag rather than on by default.
+    *
+    * Restricted to a `for` of plain generators: no `val` binders, no guards, no
+    * generator depending on another's binding (that needs `flatMap`, not
+    * `&&&`). Requires the input's name, type and effect, since the lifted
+    * lambdas and the typed `ask` all need them.
+    */
+  private def aggressiveFor(
+      body: Term,
+      inputSymbol: Symbol,
+      input: Option[Input]
+  )(implicit doc: SemanticDocument): Option[ArrowIR] =
+    for {
+      in <- input
+      effect <- in.effect
+      gens <- body match {
+        case Term.ForYield.After_4_9_9(enums, yieldBody) =>
+          plainGenerators(enums.enums).map((_, yieldBody))
+        case _ => None
+      }
+      (generators, yieldBody) = gens
+      ir <- buildAggressiveFanOut(
+        generators,
+        yieldBody,
+        inputSymbol,
+        in,
+        effect
+      )
+    } yield ir
+
+  /** Every enumerator is a bare `name <- rhs` generator, as `(name, rhs)`
+    * pairs. Any `val` binder or guard makes this `None` -- those shapes are not
+    * a clean fan-out.
+    */
+  private def plainGenerators(
+      enums: List[Enumerator]
+  ): Option[List[(Term.Name, Term)]] =
+    traverse(enums) {
+      case Enumerator.Generator(Pat.Var(name), rhs) => Some((name, rhs))
+      case _                                        => None
+    }
+
+  private def buildAggressiveFanOut(
+      generators: List[(Term.Name, Term)],
+      yieldBody: Term,
+      inputSymbol: Symbol,
+      in: Input,
+      effect: String
+  )(implicit doc: SemanticDocument): Option[ArrowIR] = {
+    val bindingSymbols = generators.map(_._1.symbol)
+    // Fan-out demands the generators be mutually independent: no right-hand
+    // side may reference another generator's binding, and every one must be a
+    // function of the arrow input (so lifting it into `Kleisli { x => rhs }` is
+    // meaningful). A generator referencing a prior binding needs `flatMap`
+    // sequencing, which this path deliberately does not fake.
+    val independent =
+      generators.forall { case (_, rhs) => !referencesAny(rhs, bindingSymbols) }
+    val allReferenceInput =
+      generators.forall { case (_, rhs) =>
+        referencesAny(rhs, List(inputSymbol))
+      }
+    if (generators.length < 2 || !independent || !allReferenceInput) None
+    else {
+      val arms: List[ArrowIR] =
+        generators.map { case (_, rhs) => LiftK(in.name, in.tpe, rhs) }
+      val inputRetained = referencesAny(yieldBody, List(inputSymbol))
+      val allArms =
+        if (inputRetained) Ask(effect, in.tpe) :: arms else arms
+      val merged = allArms.reduceLeft(Merge(_, _))
+      val names =
+        (if (inputRetained) List(in.name) else Nil) ++ generators.map(
+          _._1.value
+        )
+      Some(Rmap(merged, destructureFunction(names, yieldBody)))
+    }
+  }
+
+  /** A `{ case ((a, b), c) => body }` that unpacks the left-nested tuple a
+    * chain of `&&&` produces, binding each arm's result to the name the source
+    * `for` used, so the original `yield` body can be reused verbatim.
+    */
+  private def destructureFunction(names: List[String], body: Term): Term = {
+    val nested = names
+      .map(n => Pat.Var(Term.Name(n)): Pat)
+      .reduceLeft((acc, p) => Pat.Tuple(List(acc, p)))
+    Term.PartialFunction(List(Case(nested, None, body)))
+  }
 
   /** The clean `ArrowChoice` shape: a Kleisli producing an `Either` whose two
     * arms are each a Kleisli applied to the matched value --

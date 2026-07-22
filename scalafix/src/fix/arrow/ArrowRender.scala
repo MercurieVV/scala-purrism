@@ -20,9 +20,12 @@ object ArrowRender {
     */
   def render(ir: ArrowIR): String =
     ir match {
-      case Id          => "Kleisli.ask"
-      case Lift(fn)    => s"Kleisli.pure(${fn.syntax})"
-      case Eff(callee) => callee.syntax
+      case Id               => "Kleisli.ask"
+      case Ask(effect, tpe) => s"Kleisli.ask[$effect, $tpe]"
+      case Lift(fn)         => s"Kleisli.pure(${fn.syntax})"
+      case Eff(callee)      => callee.syntax
+      case LiftK(param, tpe, body) =>
+        s"Kleisli { ($param: $tpe) => ${body.syntax} }"
       // `>>>` is associative, so a chain needs no internal grouping; flatten it
       // to `a >>> b >>> c` rather than nesting parentheses.
       // `>>>`, `&&&` and `|||` are each associative, so a chain of one operator
@@ -71,7 +74,8 @@ object ArrowRender {
     */
   private def infixOperand(ir: ArrowIR): String =
     ir match {
-      case _: Eff | Id | _: Lift | _: AndThen | _: Rmap | _: Local =>
+      case _: Eff | _: LiftK | Id | _: Ask | _: Lift | _: AndThen | _: Rmap |
+          _: Local =>
         render(ir)
       case _ => s"(${render(ir)})"
     }
@@ -83,7 +87,7 @@ object ArrowRender {
     */
   private def receiverOperand(ir: ArrowIR): String =
     ir match {
-      case _: Eff | Id | _: Lift => render(ir)
-      case _                     => s"(${render(ir)})"
+      case _: Eff | _: LiftK | Id | _: Ask | _: Lift => render(ir)
+      case _                                         => s"(${render(ir)})"
     }
 }

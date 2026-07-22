@@ -21,12 +21,20 @@ object ReadabilityBudget {
   private def plumbingNodes(ir: ArrowIR): Int =
     ArrowIR.fold(ir)(0) {
       case (acc, _: Local)     => acc + 1
+      case (acc, _: Ask)       => acc + 1
       case (acc, Merge(_, Id)) => acc + 1
       case (acc, Merge(Id, _)) => acc + 1
       case (acc, _)            => acc
     }
 
   val MaxPlumbing = 2
+
+  /** Aggressive mode trades readability for coverage, so the plumbing ceiling
+    * is raised rather than removed: a lifted-and-fanned `for` legitimately
+    * carries one `ask` plus one `.local`/reshape per arm. The length guard
+    * still applies, bounding pathological blow-up.
+    */
+  val MaxPlumbingAggressive = 8
 
   sealed trait Verdict
   case object Accept extends Verdict
@@ -43,16 +51,30 @@ object ReadabilityBudget {
       case _      => false
     }
 
-  def verdict(ir: ArrowIR, renderedLength: Int, sourceLength: Int): Verdict =
+  def verdict(
+      ir: ArrowIR,
+      renderedLength: Int,
+      sourceLength: Int
+  ): Verdict = verdict(ir, renderedLength, sourceLength, aggressive = false)
+
+  def verdict(
+      ir: ArrowIR,
+      renderedLength: Int,
+      sourceLength: Int,
+      aggressive: Boolean
+  ): Verdict = {
+    val maxPlumbing = if (aggressive) MaxPlumbingAggressive else MaxPlumbing
     if (ArrowIR.containsOpaque(ir))
       Decline("body contains a subexpression the rule could not analyse")
-    else if (ArrowIR.effectCount(ir) < 1 || isTrivial(ir))
+    // Aggressive mode accepts the eta-collapse `Kleisli { x => k.run(x) } => k`;
+    // conservative mode declines it as nothing gained.
+    else if (ArrowIR.effectCount(ir) < 1 || (isTrivial(ir) && !aggressive))
       Decline("no composition to gain")
-    else if (plumbingNodes(ir) > MaxPlumbing)
+    else if (plumbingNodes(ir) > maxPlumbing)
       Decline(
-        s"needs more than $MaxPlumbing plumbing steps to stay point-free"
+        s"needs more than $maxPlumbing plumbing steps to stay point-free"
       )
-    else if (renderedLength > sourceLength * 3 / 2)
+    else if (!aggressive && renderedLength > sourceLength * 3 / 2)
       // The structural plumbing budget already bounds readability; the length
       // check is a secondary guard against pathological bloat only. A
       // point-free form that is merely a little longer than a verbose
@@ -61,4 +83,5 @@ object ReadabilityBudget {
       Decline("point-free form is substantially longer than the original")
     else
       Accept
+  }
 }

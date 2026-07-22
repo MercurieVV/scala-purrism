@@ -2,6 +2,8 @@ package fix
 
 import scala.meta._
 
+import metaconfig.ConfDecoder
+import metaconfig.Configured
 import scalafix.v1._
 
 import fix.arrow.ArrowIR
@@ -76,14 +78,43 @@ final case class ArrowBudgetDiagnostic(
   * never by matching the token `Kleisli` or an alias spelling, per
   * `docs/RULES.md`.
   */
-final class PreferArrow extends SemanticRule("PreferArrow") {
+/** `PreferArrow.aggressive = true` opts a codebase into lifting plain effectful
+  * `for` generators into Kleislis and fanning them out, accepting busier
+  * point-free output for wider coverage. Off by default, so the conservative
+  * budget governs unless a project asks otherwise.
+  */
+final case class PreferArrowConfig(aggressive: Boolean = false)
+
+object PreferArrowConfig {
+  val default: PreferArrowConfig = PreferArrowConfig()
+  implicit val decoder: ConfDecoder[PreferArrowConfig] =
+    ConfDecoder.from { conf =>
+      conf
+        .getOrElse("aggressive")(default.aggressive)
+        .map(PreferArrowConfig(_))
+    }
+}
+
+final class PreferArrow(config: PreferArrowConfig)
+    extends SemanticRule("PreferArrow") {
+
+  def this() = this(PreferArrowConfig.default)
+
+  private val aggressive: Boolean = config.aggressive
+
+  override def withConfiguration(
+      configuration: Configuration
+  ): Configured[Rule] =
+    configuration.conf
+      .getOrElse("PreferArrow")(PreferArrowConfig.default)
+      .map(new PreferArrow(_))
 
   override def fix(implicit doc: SemanticDocument): Patch =
     doc.tree.collect {
       case applyTerm: Term.Apply if KleisliType.isKleisliApply(applyTerm) =>
-        PreferArrow.rewriteBody(applyTerm)
+        PreferArrow.rewriteBody(applyTerm, aggressive)
       case defn: Defn.Def =>
-        PreferArrow.rewriteSignature(defn)
+        PreferArrow.rewriteSignature(defn, aggressive)
     }.asPatch
 }
 
@@ -129,7 +160,8 @@ object PreferArrow {
   // ---- body-only entry ----------------------------------------------------
 
   def rewriteBody(
-      applyTerm: Term.Apply
+      applyTerm: Term.Apply,
+      aggressive: Boolean
   )(implicit doc: SemanticDocument): Patch =
     kleisliLambda(applyTerm) match {
       case None => Patch.empty
@@ -140,8 +172,14 @@ object PreferArrow {
         val input = param.decltpe
           .map(_.syntax)
           .orElse(enclosingKleisliInputType(applyTerm))
-          .map(tpe => ArrowParser.Input(inputParam.value, tpe))
-        compile(fn.body, inputSymbol, input) match {
+          .map(tpe =>
+            ArrowParser.Input(
+              inputParam.value,
+              tpe,
+              enclosingKleisliEffectType(applyTerm)
+            )
+          )
+        compile(fn.body, inputSymbol, input, aggressive) match {
           case Compiled.Emit(rendered, imports) =>
             Patch.replaceTree(applyTerm, rendered) +
               imports.map(Patch.addGlobalImport).asPatch
@@ -158,7 +196,8 @@ object PreferArrow {
   // ---- signature-lifting entry --------------------------------------------
 
   def rewriteSignature(
-      defn: Defn.Def
+      defn: Defn.Def,
+      aggressive: Boolean
   )(implicit doc: SemanticDocument): Patch =
     (for {
       param <- singlePlainParameter(defn)
@@ -174,7 +213,12 @@ object PreferArrow {
     } yield (param, effect._1, effect._2)) match {
       case None => Patch.empty
       case Some((param, effectType, resultType)) =>
-        compile(defn.body, param.name.symbol, inputOf(param)) match {
+        compile(
+          defn.body,
+          param.name.symbol,
+          inputOf(param, effectType),
+          aggressive
+        ) match {
           case Compiled.Emit(rendered, imports) =>
             val parameterType = param.decltpe.map(_.syntax).getOrElse("")
             val signature =
@@ -238,8 +282,13 @@ object PreferArrow {
   /** The input type for a `def m(x: A): F[B]` signature-lifting candidate --
     * the parameter's own declared type.
     */
-  private def inputOf(param: Term.Param): Option[ArrowParser.Input] =
-    param.decltpe.map(tpe => ArrowParser.Input(param.name.value, tpe.syntax))
+  private def inputOf(
+      param: Term.Param,
+      effectType: String
+  ): Option[ArrowParser.Input] =
+    param.decltpe.map(tpe =>
+      ArrowParser.Input(param.name.value, tpe.syntax, Some(effectType))
+    )
 
   /** The input type of a `Kleisli { x => ... }` body, read from the second type
     * argument of the enclosing declaration's `Kleisli[F, A, B]` return type
@@ -250,6 +299,34 @@ object PreferArrow {
     applyTerm.parent
       .flatMap(enclosingDeclType)
       .flatMap(kleisliInputArg)
+
+  /** The `F` in a written `Kleisli[F, A, B]` / `-->[F, A, B]` / `Flow[F][A, B]`
+    * enclosing return type -- the effect constructor, needed to emit a typed
+    * `Kleisli.ask[F, A]` in aggressive mode.
+    */
+  private def enclosingKleisliEffectType(
+      applyTerm: Term.Apply
+  ): Option[String] =
+    applyTerm.parent
+      .flatMap(enclosingDeclType)
+      .flatMap(kleisliEffectArg)
+
+  private def kleisliEffectArg(tpe: Type): Option[String] =
+    tpe match {
+      case applied: Type.Apply =>
+        (applied.tpe, applied.argClause.values) match {
+          // `Kleisli[F, A, B]` / `-->[F, A, B]` -- the effect is the first arg.
+          case (_, List(f, _, _)) => Some(f.syntax)
+          // `Flow[F][A, B]` -- the effect is the alias's own argument.
+          case (inner: Type.Apply, List(_, _)) =>
+            inner.argClause.values match {
+              case List(f) => Some(f.syntax)
+              case _       => None
+            }
+          case _ => None
+        }
+      case _ => None
+    }
 
   private def enclosingDeclType(tree: Tree): Option[Type] =
     tree match {
@@ -281,9 +358,10 @@ object PreferArrow {
   private def compile(
       body: Term,
       inputSymbol: Symbol,
-      input: Option[ArrowParser.Input] = None
+      input: Option[ArrowParser.Input],
+      aggressive: Boolean
   )(implicit doc: SemanticDocument): Compiled =
-    ArrowParser.parse(body, inputSymbol, input) match {
+    ArrowParser.parse(body, inputSymbol, input, aggressive) match {
       case None => Compiled.Skip
       case Some(rawIr) =>
         val ir = ArrowNormalize(rawIr)
@@ -291,7 +369,8 @@ object PreferArrow {
         ReadabilityBudget.verdict(
           ir,
           rendered.length,
-          body.syntax.length
+          body.syntax.length,
+          aggressive
         ) match {
           case ReadabilityBudget.Accept =>
             Compiled.Emit(rendered, syntaxImports(ir))
