@@ -215,7 +215,7 @@ private[fix] object TypelevelPurrism {
             val parameterType = param.decltpe.map(_.syntax).getOrElse("")
             val result = returnType.argClause.values.head
 
-            s"""${modifiers}def ${defn.name.syntax}: Kleisli[${returnType.tpe.syntax}, $parameterType, ${result.syntax}] =
+            s"""${modifiers}def ${defn.name.syntax}${typeParamSyntax(defn)}${implicitClauseSyntax(defn)}: Kleisli[${returnType.tpe.syntax}, $parameterType, ${result.syntax}] =
                |  ${call.callee}""".stripMargin
           }
         }
@@ -225,21 +225,44 @@ private[fix] object TypelevelPurrism {
 
   private def kleisliApplyRewrite(defn: Defn.Def): Option[String] =
     plainParameters(defn).flatMap { params =>
-      defn.decltpe.collect {
-        case returnType: Type.Apply
-            if isKleisliCandidate(defn, params, returnType) =>
-          val modifiers = renderModifiers(defn.mods)
-          val parameterPattern = kleisliInputPattern(defn, params)
-          val parameterType = kleisliInputType(params)
-          val result = returnType.argClause.values.head
-          val body = kleisliBody(defn, params)
-
-          s"""${modifiers}def ${defn.name.syntax}: Kleisli[${returnType.tpe.syntax}, $parameterType, ${result.syntax}] =
-             |  Kleisli.apply { $parameterPattern =>
-             |    $body
-             |  }""".stripMargin
-      }
+      defn.decltpe
+        .collect {
+          case returnType: Type.Apply
+              if isKleisliCandidate(defn, params, returnType) =>
+            renderKleisliApply(defn, params, returnType)
+        }
+        .flatten
     }
+
+  private def renderKleisliApply(
+      defn: Defn.Def,
+      params: List[Term.Param],
+      returnType: Type.Apply
+  ): Option[String] = {
+    val (inputParams, callbackParams) =
+      splitEffectCallbacks(params, returnType.tpe.syntax)
+    // All-callback defs have no data to make an arrow input out of.
+    if (inputParams.isEmpty) None
+    else {
+      val modifiers = renderModifiers(defn.mods)
+      val parameterPattern = kleisliInputPattern(defn, inputParams)
+      val parameterType = kleisliInputType(inputParams)
+      val result = returnType.argClause.values.head
+      val body = kleisliBody(defn, params)
+      val tparams = typeParamSyntax(defn)
+      val callbackClause =
+        if (callbackParams.isEmpty) ""
+        else callbackParams.map(_.syntax).mkString("(", ", ", ")")
+      val implicits = implicitClauseSyntax(defn)
+
+      Some(
+        s"""${modifiers}def ${defn.name.syntax}$tparams$callbackClause$implicits: Kleisli[${returnType.tpe.syntax}, $parameterType, ${result.syntax}] =
+           |  Kleisli.apply { $parameterPattern =>
+           |    $body
+           |  }""".stripMargin
+      )
+    }
+  }
 
   /** Composition of *existing* Kleislis -- `k1.andThen(k2)` and its
     * `for`/`flatMap`/fan-out generalisations -- moved to `PreferArrow`, which
@@ -342,18 +365,53 @@ private[fix] object TypelevelPurrism {
     plainParameters(defn).filter(_.length > 1).fold(Patch.empty) { params =>
       val methodName = defn.name.value
       val arity = params.length
+      val effectName =
+        defn.decltpe.collect { case returnType: Type.Apply =>
+          returnType.tpe.syntax
+        }
+      val callbackFlags = effectName.toList.flatMap(effect =>
+        params.map(param => isEffectCallback(param, effect))
+      )
 
       tree.collect {
         case applyTerm: Term.Apply
             if callName(applyTerm.fun).contains(methodName) &&
               applyTerm.argClause.values.length == arity &&
               outsideTree(applyTerm, defn) =>
-          Patch.replaceTree(
-            applyTerm.argClause,
-            tupledArguments(applyTerm.argClause.values)
-          )
+          val arguments = applyTerm.argClause.values
+          if (callbackFlags.contains(true))
+            // The def kept its callbacks as a leading parameter list, so the
+            // call splits the same way: `m(a, b, log)` becomes `m(log)((a, b))`.
+            Patch.replaceTree(
+              applyTerm,
+              callbackSplitCall(applyTerm.fun, arguments, callbackFlags)
+            )
+          else
+            Patch.replaceTree(
+              applyTerm.argClause,
+              tupledArguments(arguments)
+            )
       }.asPatch
     }
+
+  private def callbackSplitCall(
+      callee: Term,
+      arguments: List[Term],
+      callbackFlags: List[Boolean]
+  ): String = {
+    val (inputArgs, callbackArgs) =
+      arguments.zip(callbackFlags).partition { case (_, isCallback) =>
+        !isCallback
+      }
+    val callbackClause =
+      callbackArgs.map(_._1.syntax).mkString("(", ", ", ")")
+    val inputClause =
+      inputArgs.map(_._1) match {
+        case List(single) => s"(${single.syntax})"
+        case many         => many.map(_.syntax).mkString("((", ", ", "))")
+      }
+    s"${callee.syntax}$callbackClause$inputClause"
+  }
 
   private def templateStats(templ: Template): List[Stat] =
     templ.body.stats
@@ -505,18 +563,77 @@ private[fix] object TypelevelPurrism {
     plainParameters(defn).collect { case List(param) => param }
 
   private def plainParameters(defn: Defn.Def): Option[List[Term.Param]] =
+    valueParamClause(defn).map(_.values).filter(_.nonEmpty)
+
+  /** The def's one explicit value parameter clause.
+    *
+    * A leading type-parameter clause (`[F[_]: Sync]`) and any trailing
+    * `implicit`/`using` clause are carried through the rewrite verbatim, so
+    * neither disqualifies the def. Requiring them absent is what made this rule
+    * blind to every method-level polymorphic def -- the shape a Typelevel
+    * codebase is almost entirely made of -- and left it firing only where `F`
+    * was bound on the enclosing class.
+    */
+  private def valueParamClause(defn: Defn.Def): Option[Term.ParamClause] =
     defn.paramClauseGroups match {
-      case List(group)
-          if group.tparamClause.values.isEmpty &&
-            group.paramClauses.length == 1 &&
-            group.paramClauses.head.mod.isEmpty =>
-        group.paramClauses.head.values match {
-          case params if params.nonEmpty => Some(params)
-          case _                         => None
+      case List(group) =>
+        group.paramClauses.filter(_.mod.isEmpty) match {
+          case List(clause) => Some(clause)
+          case _            => None
         }
       case _ =>
         None
     }
+
+  private def typeParamSyntax(defn: Defn.Def): String =
+    defn.paramClauseGroups.headOption
+      .map(_.tparamClause)
+      .filter(_.values.nonEmpty)
+      .map(_.syntax)
+      .getOrElse("")
+
+  /** The `implicit`/`using` clauses, kept verbatim after the rewritten def's
+    * remaining explicit clause.
+    */
+  private def implicitClauseSyntax(defn: Defn.Def): String =
+    defn.paramClauseGroups.headOption.toList
+      .flatMap(_.paramClauses)
+      .filter(_.mod.nonEmpty)
+      .map(_.syntax)
+      .mkString
+
+  /** Splits a def's value parameters into the ones that become the Kleisli's
+    * input and the ones that stay a parameter list in front of it.
+    *
+    * An *effect callback* -- a function parameter whose result mentions the
+    * effect type, `progress: String => F[Unit]` -- is not data flowing through
+    * the arrow; it is a collaborator the def is partially applied with. Tupling
+    * it into the input would force every call site to thread the logger through
+    * `.local`, so it stays a leading parameter list and the arrow's input is
+    * the remaining data.
+    */
+  private def splitEffectCallbacks(
+      params: List[Term.Param],
+      effectName: String
+  ): (List[Term.Param], List[Term.Param]) =
+    params.partition(param => !isEffectCallback(param, effectName))
+
+  private def isEffectCallback(
+      param: Term.Param,
+      effectName: String
+  ): Boolean =
+    param.decltpe.exists {
+      case function: Type.Function =>
+        mentionsEffect(function.res, effectName)
+      case Type.Apply.After_4_6_0(Type.Name(name), args)
+          if name.startsWith("Function") =>
+        args.values.lastOption.exists(mentionsEffect(_, effectName))
+      case _ =>
+        false
+    }
+
+  private def mentionsEffect(tpe: Type, effectName: String): Boolean =
+    tpe.collect { case Type.Name(`effectName`) => () }.nonEmpty
 
   private def isKleisliCandidate(
       defn: Defn.Def,
