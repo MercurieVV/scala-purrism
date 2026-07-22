@@ -59,9 +59,53 @@ object OpaqueTypeSpec {
     }
 }
 
+/** Triggers `ExploreOpaques`'s ranking logic from inside the rule itself,
+  * instead of requiring a separate `mill scalafix.explorer.runMain` pass whose
+  * output is then hand-pasted into `types`.
+  *
+  * `serialize = false` (the default) folds every discovered candidate into the
+  * same `types` list the rule already applies in one `fix()` pass -- exactly
+  * how several hand-written specs are applied today, so two clusters that touch
+  * the same declarations merge (or conflict) the same way hand-written ones
+  * would.
+  *
+  * `serialize = true` instead applies each discovered candidate as its own
+  * nested `PropagateOpaqueType` invocation via [[CandidateApplier]], writing to
+  * disk between candidates the way `ExploreOpaques`'s driver does. That avoids
+  * same-file patch conflicts between discovered clusters, at the cost of only
+  * the first cluster touching a given file landing per run -- the rest report
+  * the file's payload as stale (see `PropagateOpaqueType.fix`) and need a
+  * recompile-and-rerun to apply, same caveat `ExploreOpaques` prints.
+  */
+final case class AutoDiscoverConfig(
+    enabled: Boolean = false,
+    topN: Int = ExplorerConfig.DefaultTopN,
+    basicTypes: List[String] = ExplorerConfig.DefaultBasicTypes,
+    serialize: Boolean = false
+)
+
+object AutoDiscoverConfig {
+  val default: AutoDiscoverConfig = AutoDiscoverConfig()
+
+  implicit val decoder: ConfDecoder[AutoDiscoverConfig] =
+    ConfDecoder.from { conf =>
+      conf.getOrElse("enabled")(default.enabled).andThen { enabled =>
+        conf.getOrElse("topN")(default.topN).andThen { topN =>
+          conf.getOrElse("basicTypes")(default.basicTypes).andThen {
+            basicTypes =>
+              conf.getOrElse("serialize")(default.serialize).map { serialize =>
+                AutoDiscoverConfig(enabled, topN, basicTypes, serialize)
+              }
+          }
+        }
+      }
+    }
+}
+
 final case class PropagateOpaqueTypeConfig(
     types: List[OpaqueTypeSpec] = Nil,
-    debug: Boolean = false
+    debug: Boolean = false,
+    autoDiscover: AutoDiscoverConfig = AutoDiscoverConfig.default
 )
 
 object PropagateOpaqueTypeConfig {
@@ -69,9 +113,12 @@ object PropagateOpaqueTypeConfig {
   implicit val decoder: ConfDecoder[PropagateOpaqueTypeConfig] =
     ConfDecoder.from { conf =>
       conf.getOrElse("types")(default.types).andThen { types =>
-        conf
-          .getOrElse("debug")(default.debug)
-          .map(PropagateOpaqueTypeConfig(types, _))
+        conf.getOrElse("debug")(default.debug).andThen { debug =>
+          conf.getOrElse("autoDiscover")(default.autoDiscover).map {
+            autoDiscover =>
+              PropagateOpaqueTypeConfig(types, debug, autoDiscover)
+          }
+        }
       }
     }
 }
@@ -104,7 +151,8 @@ final case class MergePointDiagnostic(
   */
 final class PropagateOpaqueType(
     config: PropagateOpaqueTypeConfig,
-    classpath: List[Path]
+    classpath: List[Path],
+    precomputed: Option[PropagateOpaqueType.IndexBundle] = None
 ) extends SemanticRule("PropagateOpaqueType") {
 
   def this() = this(PropagateOpaqueTypeConfig.default, Nil)
@@ -114,23 +162,66 @@ final class PropagateOpaqueType(
   ): Configured[Rule] =
     configuration.conf
       .getOrElse("PropagateOpaqueType")(PropagateOpaqueTypeConfig.default)
-      .map(parsed =>
-        new PropagateOpaqueType(
-          parsed,
-          // `--semanticdb-targetroots` is prepended to the scalac classpath by
-          // the CLI, so the payload location arrives here for free.
-          configuration.scalacClasspath.map(_.toNIO)
-        )
-      )
+      .andThen { parsed =>
+        // `--semanticdb-targetroots` is prepended to the scalac classpath by
+        // the CLI, so the payload location arrives here for free.
+        val scalacClasspath = configuration.scalacClasspath.map(_.toNIO)
 
-  private lazy val index: SemanticdbIndex = SemanticdbIndex.load(classpath)
+        if (!parsed.autoDiscover.enabled)
+          Configured.ok(new PropagateOpaqueType(parsed, scalacClasspath))
+        else if (parsed.autoDiscover.serialize)
+          // This module deliberately excludes scalafix-cli/-interfaces from
+          // its own dependencies -- see build.mill's `explorer` module comment
+          // -- so a published rule jar never drags the CLI in as a transitive
+          // dependency of `scalafixDependencies`. That is exactly what a
+          // recompile-between-candidates apply needs (it runs each candidate
+          // as its own nested Scalafix invocation), so it can only live in
+          // the `explorer` module, not in this rule.
+          Configured.error(
+            "PropagateOpaqueType.autoDiscover.serialize is not supported " +
+              "from inside the rule itself: recompile-between-candidates apply " +
+              "needs scalafix-cli, which this module cannot depend on. Run " +
+              "`mill scalafix.explorer.runMain fix.opaque.ExploreOpaques " +
+              "--target <path>` instead, or set autoDiscover.serialize = false " +
+              "to fold discovered candidates into this rule's own single pass."
+          )
+        else {
+          // Built once here and threaded into the instance below, rather than
+          // left to the lazy vals: autoDiscover needs the whole-program index
+          // and facts before `types` even exists, and a rule built fresh would
+          // otherwise redo that same whole-program build a second time.
+          val bundle = PropagateOpaqueType.IndexBundle.build(scalacClasspath)
+          val discovered = PropagateOpaqueType.discover(
+            bundle,
+            parsed.autoDiscover,
+            parsed.types
+          )
+
+          Configured.ok(
+            new PropagateOpaqueType(
+              parsed.copy(types = parsed.types ++ discovered.map(_.spec)),
+              scalacClasspath,
+              Some(bundle)
+            )
+          )
+        }
+      }
+
+  private lazy val index: SemanticdbIndex =
+    precomputed.map(_.index).getOrElse(SemanticdbIndex.load(classpath))
 
   private lazy val sourceroot: Path =
-    PropagateOpaqueType.inferSourceroot(index, classpath)
+    precomputed
+      .map(_.sourceroot)
+      .getOrElse(PropagateOpaqueType.inferSourceroot(index, classpath))
 
-  private lazy val graph: Graph = new GraphBuilder(index, sourceroot).build()
+  private lazy val graph: Graph =
+    precomputed
+      .map(_.graph)
+      .getOrElse(new GraphBuilder(index, sourceroot).build())
 
-  private lazy val facts: Facts = GraphBuilder.facts(index, graph)
+  private lazy val facts: Facts =
+    precomputed.map(_.facts).getOrElse(GraphBuilder.facts(index, graph))
 
   private lazy val closures: List[(OpaqueTypeSpec, ClosureResult)] =
     config.types.map { spec =>
@@ -309,6 +400,56 @@ final class PropagateOpaqueType(
 }
 
 object PropagateOpaqueType {
+
+  /** The whole-program payload `autoDiscover` and the rule's own closures both
+    * need, built once and shared between them.
+    */
+  final case class IndexBundle(
+      index: SemanticdbIndex,
+      sourceroot: Path,
+      graph: Graph,
+      facts: Facts
+  )
+
+  object IndexBundle {
+    def build(classpath: List[Path]): IndexBundle = {
+      val index = SemanticdbIndex.load(classpath)
+      val sourceroot = inferSourceroot(index, classpath)
+      val graph = new GraphBuilder(index, sourceroot).build()
+      val facts = GraphBuilder.facts(index, graph)
+      IndexBundle(index, sourceroot, graph, facts)
+    }
+  }
+
+  /** Candidates `ExploreOpaques`'s ranking would find, minus any that collide
+    * with a hand-written spec in `manual` -- same name, or a seed a manual spec
+    * already claims. Manual specs win: they were written on purpose, discovery
+    * is a suggestion.
+    */
+  def discover(
+      bundle: IndexBundle,
+      autoDiscover: AutoDiscoverConfig,
+      manual: List[OpaqueTypeSpec]
+  ): List[OpaqueCandidate] = {
+    val claimedNames = manual.map(_.name).toSet
+    val claimedSeeds = manual.flatMap(_.seeds).toSet
+    val explorerConfig = ExplorerConfig(
+      basicTypes = autoDiscover.basicTypes,
+      topN = autoDiscover.topN
+    )
+    val candidates = OpaqueCandidateExplorer.withPlacement(
+      bundle.index,
+      OpaqueCandidateExplorer.explore(
+        bundle.index,
+        bundle.facts,
+        explorerConfig
+      )
+    )
+    candidates.filterNot(candidate =>
+      claimedNames.contains(candidate.name) ||
+        candidate.seeds.exists(claimedSeeds.contains)
+    )
+  }
 
   /** Walk a declared type by type-argument index, matching how `TypePath`
     * addresses SemanticDB signatures. A tuple is indexed like any other type
