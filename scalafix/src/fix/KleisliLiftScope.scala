@@ -65,13 +65,7 @@ object KleisliLiftScope {
     * it resolves to a lifted symbol.
     */
   def build(root: Path, index: SemanticdbIndex): KleisliLiftScope = {
-    val analysed =
-      index.documents.toList.flatMap { document =>
-        val path = root.resolve(document.uri)
-
-        if (!Files.isRegularFile(path)) None
-        else parseSource(path).map(tree => (document, tree))
-      }
+    val analysed = analyse(root, index)
 
     // Where the compiler put each definition, so a parsed `Defn.Def` can be
     // given the symbol its own occurrence carries.
@@ -101,22 +95,7 @@ object KleisliLiftScope {
         }
       }.toMap
 
-    // A symbol referenced without being called cannot become a Kleisli. Only
-    // occurrences that resolve to *this* symbol count, so an unrelated method
-    // sharing the name no longer vetoes it.
-    val referencedAsValue =
-      analysed.flatMap { case (document, tree) =>
-        document.occurrences.collect {
-          case occurrence
-              if occurrence.role.isReference && occurrence.range.isDefined &&
-                TypelevelPurrism.isValueReferenceAt(
-                  tree,
-                  occurrence.range.get.startLine,
-                  occurrence.range.get.startCharacter
-                ) =>
-            SemanticdbIndex.qualify(document.uri, occurrence.symbol)
-        }
-      }.toSet
+    val referencedAsValue = valueReferences(analysed)
 
     val eligible = candidates.filterNot { case (symbol, candidate) =>
       referencedAsValue.contains(symbol) ||
@@ -128,6 +107,57 @@ object KleisliLiftScope {
       symbol -> c.shape
     })
   }
+
+  private def analyse(
+      root: Path,
+      index: SemanticdbIndex
+  ): List[(s.TextDocument, Tree)] =
+    index.documents.toList.flatMap { document =>
+      val path = root.resolve(document.uri)
+
+      if (!Files.isRegularFile(path)) None
+      else parseSource(path).map(tree => (document, tree))
+    }
+
+  /** Symbols the project hands over *unapplied* somewhere -- `progress` in
+    * `acquire(root, n, progress)`, passed as a `String => F[Unit]`.
+    *
+    * Nothing so referenced can become a `Kleisli`: `Kleisli[F, String, Unit]`
+    * does not conform to a function type, so lifting it compiles the definition
+    * and breaks every such call site, possibly in another file.
+    *
+    * Exposed because `PreferArrow` lifts signatures too, and its version of the
+    * decision was per-file, so it could not see the reference at all. The set
+    * is keyed on resolved symbols, so an unrelated method that shares a
+    * spelling is unaffected.
+    */
+  def valueReferences(root: Path, index: SemanticdbIndex): Set[String] =
+    valueReferenceCache.computeIfAbsent(
+      root.toAbsolutePath.normalize,
+      _ => valueReferences(analyse(root, index))
+    )
+
+  private val valueReferenceCache =
+    new java.util.concurrent.ConcurrentHashMap[Path, Set[String]]()
+
+  /** Only occurrences that resolve to a given symbol count, so an unrelated
+    * method sharing the name no longer vetoes it.
+    */
+  private def valueReferences(
+      analysed: List[(s.TextDocument, Tree)]
+  ): Set[String] =
+    analysed.flatMap { case (document, tree) =>
+      document.occurrences.collect {
+        case occurrence
+            if occurrence.role.isReference && occurrence.range.isDefined &&
+              TypelevelPurrism.isValueReferenceAt(
+                tree,
+                occurrence.range.get.startLine,
+                occurrence.range.get.startCharacter
+              ) =>
+          SemanticdbIndex.qualify(document.uri, occurrence.symbol)
+      }
+    }.toSet
 
   private final case class Candidate(
       uri: String,

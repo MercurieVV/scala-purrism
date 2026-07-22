@@ -121,12 +121,30 @@ final class PreferArrow(
     */
   private lazy val scope: KleisliScope = KleisliScope.load(classpath)
 
+  /** Defs the project hands over unapplied somewhere, which therefore cannot
+    * become Kleislis -- see [[KleisliLiftScope.valueReferences]]. Signature
+    * lifting changes a declaration other files call, so the veto has to be
+    * computed from the whole project; a per-file view cannot see the reference.
+    *
+    * The body-only entry needs no such check: it rewrites inside an expression
+    * and leaves every signature exactly as it was.
+    */
+  private lazy val liftVetoed: Set[String] =
+    if (classpath.isEmpty) Set.empty
+    else {
+      val index = _root_.fix.opaque.SemanticdbIndex.load(classpath)
+      KleisliLiftScope.valueReferences(
+        PropagateOpaqueType.inferSourceroot(index, classpath),
+        index
+      )
+    }
+
   override def fix(implicit doc: SemanticDocument): Patch = {
     KleisliScope.install(scope)
     doc.tree.collect {
       case applyTerm: Term.Apply if KleisliType.isKleisliApply(applyTerm) =>
         PreferArrow.rewriteBody(applyTerm, aggressive)
-      case defn: Defn.Def =>
+      case defn: Defn.Def if !liftVetoed.contains(defn.name.symbol.value) =>
         PreferArrow.rewriteSignature(defn, aggressive)
     }.asPatch
   }
