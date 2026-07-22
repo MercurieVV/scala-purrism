@@ -17,8 +17,12 @@
 # REFRESH_CMD to whatever recompiles it.
 set -euo pipefail
 
+# The default is the latest *released* version. A locally built rule publishes
+# under its VcsVersion (`0.5.5-21-2c626c`, say) -- read it with
+# `mill show scalafix.publishVersion` and pass it as the second argument, or the
+# run silently tests the release instead of your build.
 TARGET="${1:?usage: purrism-pipeline.sh <target-project> [rule-version]}"
-VERSION="${2:-0.5.3}"
+VERSION="${2:-0.5.5}"
 SCALAFIX_VERSION="${SCALAFIX_VERSION:-0.14.7}"
 SCALA_VERSION="${SCALA_VERSION:-3.8.4}"
 REFRESH_CMD="${REFRESH_CMD:-scripts/refresh-semanticdb.sh}"
