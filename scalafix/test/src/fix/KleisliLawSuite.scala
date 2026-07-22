@@ -296,6 +296,67 @@ final class KleisliLawSuite extends ScalaCheckSuite {
   }
 
   property(
+    "PreferArrow aggressive: ask &&& liftK fan-out matches the input-capturing for"
+  ) {
+    forAll {
+      (
+          input: Int,
+          aOut: Map[Int, Option[Int]],
+          aFallback: Option[Int],
+          bOut: Map[Int, Option[String]],
+          bFallback: Option[String]
+      ) =>
+        // Plain effectful functions of the input -- not Kleislis -- exactly the
+        // shape aggressive mode lifts. The `yield` captures the input too, so
+        // the point-free form must retain it with a leading `Kleisli.ask`.
+        def effA(i: Int): Option[Int] = aOut.getOrElse(i, aFallback)
+        def effB(i: Int): Option[String] = bOut.getOrElse(i, bFallback)
+
+        val original: Option[(Int, Int, String)] =
+          for {
+            a <- effA(input)
+            b <- effB(input)
+          } yield (input, a, b)
+
+        // Exactly what aggressive mode emits: each generator lifted into a
+        // `Kleisli`, fanned out with `&&&`, the input kept by `Kleisli.ask`,
+        // and the nested tuple destructured back in a trailing `.map`.
+        val refactored: Option[(Int, Int, String)] =
+          (Kleisli.ask[Option, Int]
+            &&& Kleisli((i: Int) => effA(i))
+            &&& Kleisli((i: Int) => effB(i)))
+            .map { case ((i, a), b) => (i, a, b) }
+            .run(input)
+
+        assertEquals(refactored, original)
+    }
+  }
+
+  property(
+    "PreferArrow aggressive: ask &&& liftK fan-out short-circuits on the first failure"
+  ) {
+    forAll { (input: Int) =>
+      def effA(i: Int): Option[Int] = None
+      def effB(i: Int): Option[String] = Some(i.toString)
+
+      val original: Option[(Int, Int, String)] =
+        for {
+          a <- effA(input)
+          b <- effB(input)
+        } yield (input, a, b)
+      val refactored: Option[(Int, Int, String)] =
+        (Kleisli.ask[Option, Int]
+          &&& Kleisli((i: Int) => effA(i))
+          &&& Kleisli((i: Int) => effB(i)))
+          .map { case ((i, a), b) => (i, a, b) }
+          .run(input)
+
+      assertEquals(refactored, original)
+      assertEquals(refactored, None)
+    }
+  }
+
+  property(
     "PreferArrow Pattern E: Either branching matches k >>> (onLeft ||| onRight)"
   ) {
     forAll {

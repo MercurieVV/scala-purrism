@@ -289,3 +289,35 @@ where nothing runs. Minimum:
   be violated in real code: A/binding used twice, B/`f` captures the input,
   C/same spelling but different binding. A negative fixture that produces no
   output file is the cheapest way to pin "the rule correctly does nothing".
+
+## Aggressive mode (`PreferArrow.aggressive`, opt-in, off by default)
+
+The conservative budget only fires where point-free is at least as readable as
+the source. Real monadic codebases often keep the input around in the `yield`
+and call *plain* effectful methods (not existing Kleislis) in each generator —
+shapes where the point-free form is *correct* but busier. `PreferArrow.aggressive
+= true` opts a project into rewriting those anyway.
+
+```hocon
+PreferArrow.aggressive = true
+```
+
+What it unlocks, on top of the conservative shapes:
+
+- **Plain-`F` lifting.** A generator `b <- svc.thing(x.a, x.b)` whose right-hand
+  side is an ordinary `F`-returning call is lifted in place into
+  `Kleisli { (x: T) => svc.thing(x.a, x.b) }`, so independent generators can fan
+  out even though none of them was a Kleisli to begin with.
+- **Input retention via `Kleisli.ask`.** When the `yield` still references the
+  arrow input, a leading `Kleisli.ask[F, A]` carries it alongside the fanned-out
+  results, and the trailing `.map` destructures the nested tuple back to the
+  original `yield` body.
+- **Eta-collapse.** `Kleisli { x => k.run(x) }` reduces to `k`.
+
+Only independent-generator `for`s qualify: no `val` binder, no guard, and no
+generator that reads another's binding (that genuinely needs `flatMap`, which
+this path never fakes). Correctness is unchanged — independent generators
+commute under the same input and `&&&` on `Kleisli` sequences left-to-right
+exactly as the `for` did (proved in `KleisliLawSuite`). The output is simply
+busier, which is why it is behind a flag. Fixtures: `ArrowBodyAggressiveLift`
+(fires) and `ArrowBodyPlainForDeclined` (identical body, no flag, declined).

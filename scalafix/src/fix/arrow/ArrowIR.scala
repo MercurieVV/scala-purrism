@@ -31,6 +31,24 @@ object ArrowIR {
   /** A Kleisli-typed leaf: the receiver expression, e.g. `loadUser`. */
   final case class Eff(callee: Term) extends ArrowIR
 
+  /** A plain effectful expression lifted into a Kleisli *in place* --
+    * `Kleisli { (p: T) => body }` -- where `body` is an `F`-returning
+    * expression that is a function of the arrow input `p`. Distinct from
+    * [[Eff]] (which names an existing Kleisli value) and [[Lift]] (a pure
+    * `A => B` via `Kleisli.pure`): here the effect is inline and would not
+    * otherwise be a Kleisli at all. Produced only in aggressive mode, where a
+    * `for` generator that calls a plain effectful method is lifted so the
+    * independent generators can fan out with `&&&`.
+    */
+  final case class LiftK(param: String, tpe: String, body: Term) extends ArrowIR
+
+  /** A typed `Kleisli.ask[F, A]` -- the arrow that returns its own input. Used
+    * in aggressive mode to retain the input alongside fanned-out results when
+    * the `yield` still references it. Carries both types because bare
+    * `Kleisli.ask` does not infer them inside an `&&&`.
+    */
+  final case class Ask(effect: String, inputTpe: String) extends ArrowIR
+
   /** `l >>> r`. */
   final case class AndThen(l: ArrowIR, r: ArrowIR) extends ArrowIR
 
@@ -76,7 +94,8 @@ object ArrowIR {
     */
   def effectCount(ir: ArrowIR): Int =
     fold(ir)(0) {
-      case (acc, _: Eff) => acc + 1
-      case (acc, _)      => acc
+      case (acc, _: Eff)   => acc + 1
+      case (acc, _: LiftK) => acc + 1
+      case (acc, _)        => acc
     }
 }

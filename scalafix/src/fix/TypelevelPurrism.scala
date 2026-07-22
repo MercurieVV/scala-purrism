@@ -2,12 +2,27 @@ package fix
 
 import scala.meta._
 
+import metaconfig.Configured
 import scalafix.v1._
 
-final class TypelevelPurrism extends SemanticRule("TypelevelPurrism") {
+/** The umbrella rule threads its shared config down to the sub-rules that read
+  * it. `PreferArrow` honours `PreferArrow.aggressive` whether invoked directly
+  * or through this umbrella, so a corpus that opts into aggressive arrow
+  * lifting gets it under `class:fix.TypelevelPurrism` too.
+  */
+final class TypelevelPurrism(preferArrow: PreferArrowConfig)
+    extends SemanticRule("TypelevelPurrism") {
+
+  def this() = this(PreferArrowConfig.default)
+
+  override def withConfiguration(config: Configuration): Configured[Rule] =
+    config.conf
+      .getOrElse("PreferArrow")(PreferArrowConfig.default)
+      .map(new TypelevelPurrism(_))
+
   override def fix(implicit doc: SemanticDocument): Patch =
     new TypeclassWeakening().fix + new PreferKleisli().fix +
-      new PreferArrow().fix +
+      new PreferArrow(preferArrow).fix +
       new PreferCatsSyntax().fix + new SimplifyCatsExpressions().fix +
       new OpaqueTypePropagation().fix
 }
