@@ -166,6 +166,7 @@ final class PropagateOpaqueType(
         // `--semanticdb-targetroots` is prepended to the scalac classpath by
         // the CLI, so the payload location arrives here for free.
         val scalacClasspath = configuration.scalacClasspath.map(_.toNIO)
+        println(s"DEBUG scalacClasspath: ${scalacClasspath.mkString(", ")}")
 
         if (!parsed.autoDiscover.enabled)
           Configured.ok(new PropagateOpaqueType(parsed, scalacClasspath))
@@ -294,19 +295,24 @@ final class PropagateOpaqueType(
   )(implicit doc: SemanticDocument): Patch = {
     def here(boundary: Boundary): Boolean = uri.contains(boundary.at.uri)
 
-    val wraps = result.genesis.filter(here).flatMap { boundary =>
-      PropagateOpaqueType.termAt(boundary.at).collect {
-        case term if !PropagateOpaqueType.isWrappedWith(term, spec.name) =>
-          Patch.replaceTree(
-            term,
-            s"${spec.name}(${PropagateOpaqueType.sourceOf(term)})"
-          )
+    val wraps =
+      result.genesis.filter(here).filter(_.node.path.indices.isEmpty).flatMap {
+        boundary =>
+          PropagateOpaqueType.termAt(boundary.at).collect {
+            case term if !PropagateOpaqueType.isWrappedWith(term, spec.name) =>
+              Patch.addLeft(term, s"${spec.name}(") + Patch.addRight(term, ")")
+          }
       }
-    }
 
     val unwraps = result.leaves.filter(here).flatMap { boundary =>
+      println(
+        s"UNWRAP candidate: ${boundary.node.render} -> ${boundary.counterpart.render} at ${boundary.at}"
+      )
       PropagateOpaqueType.termAt(boundary.at).collect {
         case term if !PropagateOpaqueType.isUnwrapped(term) =>
+          println(
+            s"UNWRAPPING term: $term to ${PropagateOpaqueType.unwrapped(term)}"
+          )
           Patch.replaceTree(term, PropagateOpaqueType.unwrapped(term))
       }
     }
@@ -445,10 +451,13 @@ object PropagateOpaqueType {
         explorerConfig
       )
     )
-    candidates.filterNot(candidate =>
+    val res = candidates.filterNot(candidate =>
       claimedNames.contains(candidate.name) ||
         candidate.seeds.exists(claimedSeeds.contains)
     )
+    println("--- DISCOVERED CANDIDATES ---")
+    res.foreach(c => println(s"Candidate: ${c.name}, seeds: ${c.seeds}"))
+    res
   }
 
   /** Walk a declared type by type-argument index, matching how `TypePath`

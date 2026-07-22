@@ -16,7 +16,7 @@ object Project {
   def organization = "io.github.mercurievv"
   def repositoryOwner = "MercurieVV"
   def repositoryName = "scala-purrism"
-  def publishVersion = "0.5.3"
+  def publishVersion = "0.5.8"
 }
 
 object scalafix extends ScalaModule with SonatypeCentralPublishModule {
