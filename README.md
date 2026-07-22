@@ -105,8 +105,8 @@ to convert — see [Propagating an opaque type](#propagating-an-opaque-type).
 ### Rule Overview
 
 - **`TypeclassWeakening`**: Weaken overly restrictive effect bounds (e.g. `Sync[F]` $\rightarrow$ `Monad[F]`) when only monadic operations are used.
-- **`PreferKleisli`**: Refactor effectful functions into `Kleisli` compositions.
-- **`PreferArrow`**: Prefer point-free `Arrow` composition over unpacking `Kleisli` with `.run`/`.apply` and stitching pieces together by hand. Handles linear chains (`andThen`), maps after run, and fan-out patterns (`&&&`).
+- **`PreferKleisli`**: Refactor effectful functions into `Kleisli` compositions (introduction of the `Kleisli` wrapper and the `.local` input-reshape split).
+- **`PreferArrow`**: Prefer point-free `Arrow` composition over unpacking `Kleisli` with `.run`/`.apply` and stitching the pieces back by hand. An arrow-IR compiler parses the monadic body, normalizes it, gates on a readability budget, and renders `>>>` (linear chains, any length), `.map` (map after run), and `&&&` (fan-out, any arity). It rewrites the interior of a `Kleisli { x => ... }` in place — leaving the signature untouched — as well as lifting `def m(x: A): F[B]` to a `Kleisli` return. Kleisli identity is resolved through type aliases (`-->`, `Flow`, fully-qualified, inferred) via SemanticDB. See [docs/ARROW_PATTERNS.md](docs/ARROW_PATTERNS.md).
 - **`PreferCatsSyntax`**: Replace direct Cats typeclass calls such as `Applicative[F].pure(a)`, `MonadThrow[F].raiseError[A](e)`, `Functor[F].map(fa)(f)`, and `FlatMap[F].flatMap(fa)(f)` with Cats syntax.
 - **`SimplifyCatsExpressions`**: Simplify common Cats and FP expressions using existing combinators, including `.void`, `.as`, `*>`, narrow `.mapN`, `Option(value)`, and `Either.cond`.
 - **`PropagateOpaqueType`**: Replace one value's type with an `opaque type` and follow that value wherever it flows — parameters, fields, returns, container type arguments, `Kleisli` input tuples — wrapping where it is created and unwrapping where it crosses into an API you do not own. Targets are exact SemanticDB symbols rather than names, so unrelated `String`s that merely share a name are untouched. See [Propagating an opaque type](#propagating-an-opaque-type).
@@ -170,6 +170,53 @@ Add "_empty_/Git#ensureBranch().(branchName)" to `widen` to convert it too.
 Whether the two values are really the same concept is a domain question, so the
 rule reports rather than guesses. Adding the named symbol to `widen` pulls it in
 and propagation continues through it.
+
+#### Auto-discovering and propagating in one pass
+
+`PropagateOpaqueType.autoDiscover` runs the same ranking the explorer below
+uses, in-process, and folds the top candidates straight into this rule's own
+`types` — one Scalafix invocation both finds and rewrites, no separate
+explorer run and no intermediate `.conf` file required:
+
+```hocon
+rules = [ PropagateOpaqueType ]
+
+PropagateOpaqueType.types = [
+  { name = "BranchName", seeds = [ "_empty_/TaskRun#branchName." ] }
+]
+
+PropagateOpaqueType.autoDiscover {
+  enabled = true
+  topN = 10
+  basicTypes = [ "scala/Predef.String#", "scala/Int#" ]
+}
+```
+
+| key | default | meaning |
+| --- | --- | --- |
+| `enabled` | `false` | turn discovery on |
+| `topN` | `10` | how many discovered clusters to add |
+| `basicTypes` | `String, Int, Long, Double, Boolean, UUID` | underlying types worth wrapping |
+| `serialize` | `false` | see below — **not supported**, kept only to fail with a pointer to the explorer |
+
+Discovered candidates are **additive** to any hand-written `types`, but a
+hand-written spec always wins a conflict: a discovered candidate is dropped if
+its name or any of its seeds is already claimed by a manual entry. Everything
+that survives is applied together in this rule's one `fix()` pass, exactly as
+several hand-written `types` entries are today — so two discovered clusters
+that touch the same declarations merge (or conflict) the same way two
+hand-written ones would.
+
+That single-pass merge is also its limit: unlike the explorer's own
+recompile-between-candidates loop, nothing here reruns the compiler between
+clusters, so it cannot serialize overlapping edits across files the way
+`ExploreOpaques --target` can. Setting `autoDiscover.serialize = true` makes
+that explicit by failing configuration outright — this module deliberately
+excludes `scalafix-cli`/`-interfaces` so the published rule jar never drags
+the CLI in as a transitive `scalafixDependencies` entry, and that same
+exclusion is what the serialized apply needs. Use [the explorer
+below](#finding-seeds-automatically) instead when a codebase needs several
+overlapping passes.
 
 ### Finding candidates automatically
 

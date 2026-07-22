@@ -1,5 +1,44 @@
 # Kleisli → Arrow rewrite catalogue (`PreferArrow`)
 
+## Status: v2 engine (arrow-IR compiler)
+
+The original catalogue below was the specification for three hand-written
+syntactic matchers. Those matchers fired on **zero** sites in the reference
+corpus `gh-tasks-llm-executor`, because four of their five gates sat upstream of
+pattern matching (return type spelled literally `F[…]`; no type parameters
+allowed; body an un-wrapped `for`/`flatMap`; Kleisli identity by the token
+`Kleisli`). They were replaced by a small arrow-IR compiler
+(`scalafix/src/fix/arrow/`): parse a monadic body into `ArrowIR`, normalize to a
+fixpoint, gate on a readability budget, render `>>>`/`&&&`/`|||`/`.map`/`.local`.
+
+What ships now:
+
+| Shape | Status | Notes |
+|---|---|---|
+| A — linear chain (n≥2) → `>>>` | **shipped** | `for` and desugared `flatMap` forms; renders `>>>` (a `Compose` op), not `andThen`. |
+| B — `k.run(x).map(f)` → `k.map(f)` | **shipped** | Declines when `f` captures the input. |
+| C — fan-out → `&&&`, **any arity** | **shipped** | Arity ≥3 nests as `((a, b), c)` with a flattening `.map`; the arity-2 cap of the old matcher is gone. Branches may read *projections* of the input (`k.run(x.field)` → `k.local(x => x.field)`) and multi-argument **auto-tupled** applications (`k(a, b)` → `k.local(x => (a, b))`). Binding identity is by SemanticDB symbol; the shadowed-input near-miss still warns. |
+| D — ask-merge (`Kleisli.ask &&& k`) | **not shipped** | The IR (`Merge(Id, _)`) exists but the parser does not yet produce it; it is also the shape the readability budget most often declines. |
+| E — `Either` branch → `\|\|\|` | **shipped (clean sub-shape)** | `k.run(x).flatMap { case Left(l) => kl.run(l); case Right(r) => kr.run(r) }` → `k >>> (kl \|\|\| kr)`. Restricted to an `Either` scrutinee with two arms, each a lone Kleisli application of the matched value; a guard, a third case, or a non-Kleisli arm is declined. `Option`/`Boolean` scrutinees are not yet lifted to `Either`. |
+| F, G | **dropped** | Unchanged from the verdicts below. |
+
+Two entry points feed one engine: **body-only** (rewrite the interior of a
+`Kleisli { x => … }` in place, signature untouched — the entry that reaches the
+idiomatic corpus) and **signature-lifting** (`def m(x: A): F[B]` →
+`def m: Kleisli[F, A, B]`). Kleisli identity is `fix.arrow.KleisliType`, which
+dealiases through `-->`, `Flow`, fully-qualified and inferred types via
+SemanticDB — and rejects `-->` used as an abstract type parameter.
+
+The n=2 `composition` path was deleted from `PreferKleisli` (it duplicated
+`PreferArrow` and could double-patch the same span under the umbrella rule);
+`PreferKleisli.kleisliApplyRewrite` now steps aside for single-parameter
+composition-shaped bodies via `leaveToPreferArrow`, so the two rules never emit
+overlapping patches. Verified by `golden/ArrowUmbrellaNoConflict.scala`.
+
+---
+
+## Original catalogue (historical)
+
 Specification only. No rule code and no fixtures ship with this document; the
 subtasks under #4 read the shipped set from here.
 

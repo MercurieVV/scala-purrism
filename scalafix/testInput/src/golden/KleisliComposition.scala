@@ -1,11 +1,11 @@
 /*
-rules = [PreferKleisli]
+rules = [PreferArrow]
 
-# Regression fixture, not a PreferArrow fixture. Pins the existing 2-step
-# `k1.run(x).flatMap(y => k2.run(y))` -> `k1.andThen(k2)` rewrite
-# (TypelevelPurrism.scala:1363) so later PreferArrow/PreferKleisli composition
-# work has a real net: "existing behaviour still passes" is falsifiable
-# against this fixture.
+# The 2-step chain `k1.run(x).flatMap(y => k2.run(y))`, lifted to a Kleisli
+# signature. This used to be `PreferKleisli`'s `composition` path emitting
+# `k1.andThen(k2)`; that path was deleted (it duplicated PreferArrow and could
+# double-patch the same span under the umbrella rule), and PreferArrow now owns
+# it, rendering `k1 >>> k2`. See docs/ARROW_PATTERNS.md.
  */
 package golden
 

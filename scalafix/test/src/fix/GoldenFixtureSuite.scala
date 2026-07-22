@@ -277,7 +277,13 @@ final class GoldenFixtureSuite extends munit.FunSuite {
     assertEquals(PreferKleisli.kleisliRewrite(method), None)
   }
 
-  test("kleisli rewrite composes direct Kleisli apply calls") {
+  test(
+    "kleisli rewrite steps aside for a single-param composition: PreferArrow owns it"
+  ) {
+    // A single-plain-parameter `F[B]` def whose body is a `flatMap` chain is
+    // `PreferArrow`'s to lift, point-free and in one step. `PreferKleisli`
+    // declines so the umbrella rule cannot double-patch the def. See the
+    // executed fixture `golden/KleisliComposition.scala`.
     val method = firstMethod(
       """def loadProfile(id: String): F[Profile] =
         |  fetch(id).flatMap(user => profile(user))""".stripMargin
@@ -285,26 +291,17 @@ final class GoldenFixtureSuite extends munit.FunSuite {
 
     assertEquals(
       PreferKleisli.kleisliRewrite(method, Set("fetch", "profile")),
-      Some(
-        """def loadProfile: Kleisli[F, String, Profile] =
-          |  fetch.andThen(profile)""".stripMargin
-      )
+      None
     )
   }
 
-  test("kleisli rewrite composes explicit Kleisli run calls") {
+  test("kleisli rewrite steps aside for explicit run composition too") {
     val method = firstMethod(
       """def loadProfile(id: String): F[Profile] =
         |  fetch.run(id).flatMap(user => profile.run(user))""".stripMargin
     )
 
-    assertEquals(
-      PreferKleisli.kleisliRewrite(method),
-      Some(
-        """def loadProfile: Kleisli[F, String, Profile] =
-          |  fetch.andThen(profile)""".stripMargin
-      )
-    )
+    assertEquals(PreferKleisli.kleisliRewrite(method), None)
   }
 
   test("kleisli rewrite collapses a direct Kleisli alias") {
@@ -337,7 +334,10 @@ final class GoldenFixtureSuite extends munit.FunSuite {
     )
   }
 
-  test("kleisli rewrite composes inside an existing Kleisli") {
+  test("kleisli rewrite no longer composes inside an existing Kleisli") {
+    // The `flatMap` composition inside a `Kleisli.apply { ... }` body also moved
+    // to `PreferArrow`'s body-only entry. `PreferKleisli` keeps only the
+    // `.local` input-reshape split for such bodies.
     val method = firstMethod(
       """def loadProfile: Kleisli[F, String, Profile] =
         |  Kleisli.apply { id =>
@@ -347,10 +347,7 @@ final class GoldenFixtureSuite extends munit.FunSuite {
 
     assertEquals(
       PreferKleisli.kleisliRewrite(method, Set("fetch", "profile")),
-      Some(
-        """def loadProfile: Kleisli[F, String, Profile] =
-          |  fetch.andThen(profile)""".stripMargin
-      )
+      None
     )
   }
 
