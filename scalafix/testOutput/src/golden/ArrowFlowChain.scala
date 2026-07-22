@@ -1,9 +1,11 @@
+
 package golden
 
 import cats.Monad
 import cats.data.Kleisli
 import cats.syntax.flatMap._
 import cats.syntax.functor._
+import cats.syntax.compose._
 
 final class ChainFlow[F[_]: Monad](
     loadUser: Kleisli[F, String, String],
@@ -11,8 +13,8 @@ final class ChainFlow[F[_]: Monad](
     summarise: Kleisli[F, String, String]
 ) {
   def enrich: Kleisli[F, String, String] =
-  loadUser.andThen(loadOrders).andThen(summarise)
+  loadUser >>> loadOrders >>> summarise
 
   def enrichFor: Kleisli[F, String, String] =
-  loadUser.andThen(loadOrders).andThen(summarise)
+  loadUser >>> loadOrders >>> summarise
 }
