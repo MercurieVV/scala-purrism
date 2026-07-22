@@ -357,6 +357,34 @@ final class KleisliLawSuite extends ScalaCheckSuite {
   }
 
   property(
+    "PreferArrow aggressive: an arm that ignores the input still matches the for, with no reshape at arity 2"
+  ) {
+    forAll {
+      (
+          input: Int,
+          sizes: Map[Int, Option[Int]],
+          sizeFallback: Option[Int],
+          total: Option[Int]
+      ) =>
+        def size(i: Int): Option[Int] = sizes.getOrElse(i, sizeFallback)
+
+        val original: Option[(Int, Int)] =
+          for {
+            s <- size(input)
+            t <- total
+          } yield (s, t)
+
+        // Exactly what aggressive mode emits: the second arm ignores the input,
+        // and `yield (s, t)` is the arms in order, so no trailing `.map`.
+        val refactored: Option[(Int, Int)] =
+          (Kleisli((i: Int) => size(i)) &&& Kleisli((_: Int) => total))
+            .run(input)
+
+        assertEquals(refactored, original)
+    }
+  }
+
+  property(
     "PreferArrow Pattern E: Either branching matches k >>> (onLeft ||| onRight)"
   ) {
     forAll {

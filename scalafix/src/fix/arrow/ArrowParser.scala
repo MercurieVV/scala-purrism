@@ -181,11 +181,16 @@ object ArrowParser {
     // sequencing, which this path deliberately does not fake.
     val independent =
       generators.forall { case (_, rhs) => !referencesAny(rhs, bindingSymbols) }
-    val allReferenceInput =
-      generators.forall { case (_, rhs) =>
+    // At least one generator must be a function of the arrow input. A fan-out
+    // where *no* branch reads the input is a plain `mapN` over constants and
+    // gains nothing from being an arrow; branches that ignore the input are
+    // fine alongside ones that read it -- `Kleisli { _ => c }` is still the same
+    // effect in the same position.
+    val anyReferencesInput =
+      generators.exists { case (_, rhs) =>
         referencesAny(rhs, List(inputSymbol))
       }
-    if (generators.length < 2 || !independent || !allReferenceInput) None
+    if (generators.length < 2 || !independent || !anyReferencesInput) None
     else {
       val arms: List[ArrowIR] =
         generators.map { case (_, rhs) => LiftK(in.name, in.tpe, rhs) }
@@ -197,9 +202,35 @@ object ArrowParser {
         (if (inputRetained) List(in.name) else Nil) ++ generators.map(
           _._1.value
         )
-      Some(Rmap(merged, destructureFunction(names, yieldBody)))
+      // Two arms produce a flat `(a, b)` -- no nesting to unpack -- so a
+      // `yield (a, b)` in that same order is already the arrow's output and the
+      // reshape would be the identity. Emitting it would be noise, and would
+      // also break idempotence-by-inspection for a reader.
+      val armSymbols =
+        (if (inputRetained) List(inputSymbol) else Nil) ++ bindingSymbols
+      val identityReshape =
+        armSymbols.length == 2 && isTupleOf(yieldBody, armSymbols)
+      if (identityReshape) Some(merged)
+      else Some(Rmap(merged, destructureFunction(names, yieldBody)))
     }
   }
+
+  /** `yield (a, b)` written exactly as the arms' own bindings, in arm order --
+    * compared by symbol, so a name that merely *spells* like an arm but
+    * resolves elsewhere is not mistaken for it.
+    */
+  private def isTupleOf(term: Term, symbols: List[Symbol])(implicit
+      doc: SemanticDocument
+  ): Boolean =
+    term match {
+      case Term.Tuple(elements) =>
+        elements.length == symbols.length &&
+        elements.zip(symbols).forall {
+          case (name: Term.Name, expected) => name.symbol == expected
+          case _                           => false
+        }
+      case _ => false
+    }
 
   /** A `{ case ((a, b), c) => body }` that unpacks the left-nested tuple a
     * chain of `&&&` produces, binding each arm's result to the name the source

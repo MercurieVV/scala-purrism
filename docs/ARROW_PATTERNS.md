@@ -313,6 +313,14 @@ What it unlocks, on top of the conservative shapes:
   results, and the trailing `.map` destructures the nested tuple back to the
   original `yield` body.
 - **Eta-collapse.** `Kleisli { x => k.run(x) }` reduces to `k`.
+- **Arms that ignore the input.** Only *one* generator has to be a function of
+  the arrow input; the others may be constant effects (`t <- svc.total`), lifted
+  as `Kleisli { (x: T) => svc.total }`. A fan-out where *no* arm reads the input
+  is still declined — that is a plain `mapN` over constants with nothing
+  arrow-shaped to gain.
+- **No identity reshape.** At arity two the arms already produce a flat
+  `(a, b)`, so a `yield (a, b)` in arm order emits no trailing `.map`. Arity
+  three and up keeps the destructuring `.map`, since `&&&` nests as `((a, b), c)`.
 
 Only independent-generator `for`s qualify: no `val` binder, no guard, and no
 generator that reads another's binding (that genuinely needs `flatMap`, which
@@ -320,4 +328,6 @@ this path never fakes). Correctness is unchanged — independent generators
 commute under the same input and `&&&` on `Kleisli` sequences left-to-right
 exactly as the `for` did (proved in `KleisliLawSuite`). The output is simply
 busier, which is why it is behind a flag. Fixtures: `ArrowBodyAggressiveLift`
-(fires) and `ArrowBodyPlainForDeclined` (identical body, no flag, declined).
+(fires, arity 3 with `ask`), `ArrowBodyAggressiveConstArm` (arity 2, one arm
+ignores the input, no reshape) and `ArrowBodyPlainForDeclined` (identical body,
+no flag, declined).
