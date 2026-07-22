@@ -2,6 +2,8 @@ package fix
 
 import cats.data.Kleisli
 import cats.syntax.arrow._
+import cats.syntax.choice._
+import cats.syntax.compose._
 import munit.ScalaCheckSuite
 import org.scalacheck.Prop.forAll
 
@@ -232,6 +234,96 @@ final class KleisliLawSuite extends ScalaCheckSuite {
 
       assertEquals(refactored, original)
       assertEquals(refactored, None)
+    }
+  }
+
+  property(
+    "PreferArrow arity-3 fan-out matches the for-comprehension, including the tuple nesting"
+  ) {
+    forAll {
+      (
+          input: Int,
+          aOut: Map[Int, Option[Int]],
+          aFallback: Option[Int],
+          bOut: Map[Int, Option[Int]],
+          bFallback: Option[Int],
+          cOut: Map[Int, Option[Int]],
+          cFallback: Option[Int]
+      ) =>
+        val ka: Kleisli[Option, Int, Int] =
+          Kleisli(v => aOut.getOrElse(v, aFallback))
+        val kb: Kleisli[Option, Int, Int] =
+          Kleisli(v => bOut.getOrElse(v, bFallback))
+        val kc: Kleisli[Option, Int, Int] =
+          Kleisli(v => cOut.getOrElse(v, cFallback))
+
+        val original: Option[(Int, Int, Int)] =
+          for {
+            a <- ka.run(input)
+            b <- kb.run(input)
+            c <- kc.run(input)
+          } yield (a, b, c)
+
+        // Exactly what the rule emits: `ka &&& kb &&& kc` nests as `((a, b), c)`,
+        // and the trailing `.map` flattens it back to `(a, b, c)`.
+        val refactored: Option[(Int, Int, Int)] =
+          (ka &&& kb &&& kc).map { case ((a, b), c) => (a, b, c) }.run(input)
+
+        assertEquals(refactored, original)
+    }
+  }
+
+  property(
+    "PreferArrow arity-3 fan-out short-circuits on the middle failure"
+  ) {
+    forAll { (input: Int) =>
+      val ka: Kleisli[Option, Int, Int] = Kleisli(_ => Some(1))
+      val kb: Kleisli[Option, Int, Int] = Kleisli(_ => None)
+      val kc: Kleisli[Option, Int, Int] = Kleisli(_ => Some(3))
+
+      val original: Option[(Int, Int, Int)] =
+        for {
+          a <- ka.run(input)
+          b <- kb.run(input)
+          c <- kc.run(input)
+        } yield (a, b, c)
+      val refactored: Option[(Int, Int, Int)] =
+        (ka &&& kb &&& kc).map { case ((a, b), c) => (a, b, c) }.run(input)
+
+      assertEquals(refactored, original)
+      assertEquals(refactored, None)
+    }
+  }
+
+  property(
+    "PreferArrow Pattern E: Either branching matches k >>> (onLeft ||| onRight)"
+  ) {
+    forAll {
+      (
+          input: Int,
+          classifyOut: Map[Int, Option[Either[Int, String]]],
+          classifyFallback: Option[Either[Int, String]],
+          leftOut: Map[Int, Option[Boolean]],
+          leftFallback: Option[Boolean],
+          rightOut: Map[String, Option[Boolean]],
+          rightFallback: Option[Boolean]
+      ) =>
+        val classify: Kleisli[Option, Int, Either[Int, String]] =
+          Kleisli(v => classifyOut.getOrElse(v, classifyFallback))
+        val onLeft: Kleisli[Option, Int, Boolean] =
+          Kleisli(v => leftOut.getOrElse(v, leftFallback))
+        val onRight: Kleisli[Option, String, Boolean] =
+          Kleisli(v => rightOut.getOrElse(v, rightFallback))
+
+        val original: Option[Boolean] =
+          classify.run(input).flatMap {
+            case Left(code)  => onLeft.run(code)
+            case Right(name) => onRight.run(name)
+          }
+        val refactored: Option[Boolean] =
+          (classify >>> (onLeft ||| onRight)).run(input)
+
+        assertEquals(refactored, original)
     }
   }
 }

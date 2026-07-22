@@ -226,23 +226,22 @@ private[fix] object TypelevelPurrism {
       }
     }
 
+  /** Composition of *existing* Kleislis -- `k1.andThen(k2)` and its
+    * `for`/`flatMap`/fan-out generalisations -- moved to `PreferArrow`, which
+    * owns it and renders it point-free (`>>>`/`&&&`/`|||`). `PreferKleisli`
+    * keeps only *introduction* of Kleisli plus the `.local` input-reshape
+    * split, so the two rules never emit a patch for the same span. See
+    * `docs/ARROW_PATTERNS.md`.
+    *
+    * What remains here is the `.local` split for an already-`Kleisli`-typed def
+    * whose body reshapes its input before delegating -- a shape `PreferArrow`
+    * does not handle.
+    */
   def kleisliCompositionRewrite(
       defn: Defn.Def,
       knownKleislies: Set[String] = Set.empty
   ): Option[String] =
     defn.decltpe.flatMap {
-      case returnType: Type.Apply if isFResult(returnType) =>
-        singlePlainParameter(defn).flatMap { param =>
-          composition(defn.body, param.name.syntax, knownKleislies).map {
-            rewrite =>
-              val modifiers = renderModifiers(defn.mods)
-              val parameterType = param.decltpe.map(_.syntax).getOrElse("")
-              val result = returnType.argClause.values.head
-
-              s"""${modifiers}def ${defn.name.syntax}: Kleisli[${returnType.tpe.syntax}, $parameterType, ${result.syntax}] =
-                 |${indent(rewrite.expression, 2)}""".stripMargin
-          }
-        }
       case returnType: Type.Apply if isKleisliResult(returnType) =>
         compositionBody(defn.body, knownKleislies).map { rewrite =>
           val modifiers = renderModifiers(defn.mods)
@@ -516,7 +515,39 @@ private[fix] object TypelevelPurrism {
           param.default.isEmpty
       ) &&
       selfRecursionIsSafe(defn, params) &&
-      isFResult(returnType)
+      isFResult(returnType) &&
+      !leaveToPreferArrow(defn, params)
+
+  /** A single-plain-parameter `F[B]` def whose body is a composition shape -- a
+    * `for`, a `flatMap` chain, or a `map` after a Kleisli application -- is
+    * `PreferArrow`'s to lift, and it does so point-free in one step. If
+    * `PreferKleisli` also introduced a `Kleisli.apply { ... }` wrapper for it,
+    * the two rules would emit overlapping patches for the same def under the
+    * umbrella rule. So `PreferKleisli` steps aside for exactly this shape;
+    * multi-parameter tupling introductions, which `PreferArrow` does not
+    * handle, are unaffected.
+    */
+  private def leaveToPreferArrow(
+      defn: Defn.Def,
+      params: List[Term.Param]
+  ): Boolean =
+    params.length == 1 && isArrowCompositionShape(defn.body)
+
+  private def isArrowCompositionShape(body: Term): Boolean =
+    body match {
+      case _: Term.ForYield => true
+      case Term.Apply.After_4_6_0(Term.Select(_, Term.Name("flatMap")), _) =>
+        true
+      case Term.Apply.After_4_6_0(Term.Select(receiver, Term.Name("map")), _) =>
+        isSingleArgApplication(receiver)
+      case _ => false
+    }
+
+  private def isSingleArgApplication(term: Term): Boolean =
+    term match {
+      case Term.Apply.After_4_6_0(_, Term.ArgClause(List(_), _)) => true
+      case _                                                     => false
+    }
 
   private def kleisliInputPattern(
       defn: Defn.Def,
@@ -1115,32 +1146,14 @@ private[fix] object TypelevelPurrism {
       .flatten
       .flatten
 
+  /** Only the `.local` input-reshape split remains; the `flatMap`/`andThen`
+    * composition it used to also try now lives in `PreferArrow`.
+    */
   private def compositionBody(
       body: Term,
       knownKleislies: Set[String]
   ): Option[CompositionRewrite] =
-    splitKleisliBody(body, knownKleislies).orElse(
-      flatMapCompositionBody(body, knownKleislies)
-    )
-
-  private def flatMapCompositionBody(
-      body: Term,
-      knownKleislies: Set[String]
-  ): Option[CompositionRewrite] =
-    body match {
-      case applyTerm: Term.Apply =>
-        for {
-          function <- kleisliApplyFunction(applyTerm)
-          param <- singleFunctionParameter(function)
-          rewrite <- composition(
-            function.body,
-            param.name.syntax,
-            knownKleislies
-          )
-        } yield rewrite
-      case _ =>
-        None
-    }
+    splitKleisliBody(body, knownKleislies)
 
   private def kleisliBody(
       applyTerm: Term.Apply,
@@ -1350,28 +1363,6 @@ private[fix] object TypelevelPurrism {
         None
     }
 
-  private def composition(
-      body: Term,
-      inputParameter: String,
-      knownKleislies: Set[String]
-  ): Option[CompositionRewrite] =
-    body match {
-      case applyTerm: Term.Apply =>
-        for {
-          firstCall <- selectQualifier(applyTerm.fun, "flatMap")
-          function <- singleFunctionArgument(applyTerm)
-          midParam <- singleFunctionParameter(function)
-          first <- kleisliCall(firstCall, inputParameter, knownKleislies)
-          second <- kleisliCall(
-            function.body,
-            midParam.name.syntax,
-            knownKleislies
-          )
-        } yield CompositionRewrite(s"$first.andThen($second)")
-      case _ =>
-        None
-    }
-
   private def splitFinalKleisliCall(
       body: Term,
       knownKleislies: Set[String]
@@ -1434,21 +1425,6 @@ private[fix] object TypelevelPurrism {
         stats.map(_.syntax).mkString("\n")
       case other =>
         other.syntax
-    }
-
-  private def kleisliCall(
-      term: Term,
-      argumentName: String,
-      knownKleislies: Set[String]
-  ): Option[String] =
-    term match {
-      case applyTerm: Term.Apply if applyTerm.argClause.values match {
-            case List(Term.Name(name)) => name == argumentName
-            case _                     => false
-          } =>
-        kleisliCallee(applyTerm.fun, knownKleislies)
-      case _ =>
-        None
     }
 
   private[fix] def kleisliCallee(
