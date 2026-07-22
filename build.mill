@@ -1,5 +1,8 @@
-import mill._, scalalib._, javalib._
-import mill.javalib.publish._
+import mill.*
+import scalalib.*
+import javalib.*
+import mill.javalib.publish.*
+import mill.util.VcsVersionModule
 
 object Versions {
   def scala3 = "3.8.4"
@@ -16,21 +19,11 @@ object Project {
   def organization = "io.github.mercurievv"
   def repositoryOwner = "MercurieVV"
   def repositoryName = "scala-purrism"
-  def publishVersion: String = {
-    import scala.sys.process._
-    try {
-      val tag = "git describe --tags --abbrev=0 master".!!.trim
-      if (tag.startsWith("v")) tag.substring(1) else tag
-    } catch {
-      case _: Exception => "0.5.3"
-    }
-  }
 }
 
-object scalafix extends ScalaModule with SonatypeCentralPublishModule {
+object scalafix extends ScalaModule with SonatypeCentralPublishModule with VcsVersionModule {
   def scalaVersion = Versions.scala3
   def artifactName = "scala-purrism-scalafix"
-  def publishVersion = Project.publishVersion
   def pomSettings = PomSettings(
     description =
       "Scalafix semantic rules for refactoring Typelevel Scala code toward pure, polymorphic Cats and Cats Effect style.",
