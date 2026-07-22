@@ -240,7 +240,11 @@ object PreferArrow {
             val signature =
               s"""${renderModifiers(
                   defn.mods
-                )}def ${defn.name.syntax}: Kleisli[$effectType, $parameterType, $resultType] =
+                )}def ${defn.name.syntax}${typeParamSyntax(
+                  defn
+                )}${implicitClauseSyntax(
+                  defn
+                )}: Kleisli[$effectType, $parameterType, $resultType] =
                  |  $rendered""".stripMargin
             Patch.replaceTree(defn, signature) +
               Patch.addGlobalImport(Symbol("cats/data/Kleisli#")) +
@@ -254,6 +258,32 @@ object PreferArrow {
               .getOrElse(Patch.empty)
         }
     }
+
+  /** The def's own type parameters, kept verbatim.
+    *
+    * Dropping them is not cosmetic: the effect constructor of the new
+    * `Kleisli[F, A, B]` return type is almost always one of them, so a lifted
+    * `def progress[F[_]: Sync](m: String): F[Unit]` that loses its clause
+    * becomes `def progress: Kleisli[F, String, Unit]` with `F` unbound, and the
+    * project stops compiling.
+    */
+  private def typeParamSyntax(defn: Defn.Def): String =
+    defn.paramClauseGroups.headOption
+      .map(_.tparamClause)
+      .filter(_.values.nonEmpty)
+      .map(_.syntax)
+      .getOrElse("")
+
+  /** The `implicit`/`using` clauses, kept after the rewritten def's now-absent
+    * explicit clause. A context bound desugars into one of these, so the same
+    * unbound-`F` failure follows from dropping them.
+    */
+  private def implicitClauseSyntax(defn: Defn.Def): String =
+    defn.paramClauseGroups.headOption.toList
+      .flatMap(_.paramClauses)
+      .filter(_.mod.nonEmpty)
+      .map(_.syntax)
+      .mkString
 
   /** One plain value parameter and nothing else in the clause. Type parameters
     * on the def are allowed -- `def m[F[_]: Sync](x: A): F[B]` is the norm, not
