@@ -94,24 +94,38 @@ object TypeclassWeakening {
     TypelevelPurrism.typeclassNamesStillUsed(tree, weakenings)
 }
 
-final class PreferKleisli(config: PreferKleisliConfig)
-    extends SemanticRule("PreferKleisli") {
+final class PreferKleisli(
+    config: PreferKleisliConfig,
+    classpath: List[java.nio.file.Path]
+) extends SemanticRule("PreferKleisli") {
 
-  def this() = this(PreferKleisliConfig.default)
+  def this() = this(PreferKleisliConfig.default, Nil)
 
   override def withConfiguration(
       configuration: Configuration
   ): Configured[Rule] =
     configuration.conf
       .getOrElse("PreferKleisli")(PreferKleisliConfig.default)
-      .map(new PreferKleisli(_))
+      // `--semanticdb-targetroots` is prepended to the scalac classpath by the
+      // CLI, so the payload location -- and through it the sourceroot --
+      // arrives here without a second configuration key.
+      .map(
+        new PreferKleisli(_, configuration.scalacClasspath.map(_.toNIO))
+      )
 
   /** Built once per rule instance, not per file: the project-wide scan parses
     * every source, and a rule instance outlives the documents it is applied to.
     */
   private lazy val scope: KleisliLiftScope =
-    config.crossFileRoot.fold(KleisliLiftScope.empty) { root =>
-      KleisliLiftScope.build(java.nio.file.Paths.get(root).toAbsolutePath)
+    if (!config.crossFile) KleisliLiftScope.empty
+    else {
+      // `fix` alone would resolve to this class's own `fix` method.
+      val index = _root_.fix.opaque.SemanticdbIndex.load(classpath)
+      val root = config.crossFileRoot
+        .map(java.nio.file.Paths.get(_).toAbsolutePath)
+        .getOrElse(PropagateOpaqueType.inferSourceroot(index, classpath))
+
+      KleisliLiftScope.build(root, index)
     }
 
   override def fix(implicit doc: SemanticDocument): Patch = {
@@ -153,6 +167,7 @@ final class PreferKleisli(config: PreferKleisliConfig)
   */
 final case class PreferKleisliConfig(
     fileLocalOnly: Boolean = false,
+    crossFile: Boolean = false,
     crossFileRoot: Option[String] = None
 )
 
@@ -163,10 +178,12 @@ object PreferKleisliConfig {
     metaconfig.ConfDecoder.from { conf =>
       conf
         .getOrElse("fileLocalOnly")(default.fileLocalOnly)
+        .product(conf.getOrElse("crossFile")(default.crossFile))
         .product(conf.getOrElse("crossFileRoot")(""))
-        .map { case (fileLocalOnly, crossFileRoot) =>
+        .map { case ((fileLocalOnly, crossFile), crossFileRoot) =>
           PreferKleisliConfig(
             fileLocalOnly,
+            crossFile,
             Option(crossFileRoot).filter(_.nonEmpty)
           )
         }
@@ -214,7 +231,9 @@ object PreferKleisli {
   def tupledCallPatches(tree: Tree, defn: Defn.Def): Patch =
     TypelevelPurrism.tupledCallPatches(tree, defn)
 
-  def scopedCallPatches(tree: Tree, scope: KleisliLiftScope): Patch =
+  def scopedCallPatches(tree: Tree, scope: KleisliLiftScope)(implicit
+      doc: SemanticDocument
+  ): Patch =
     TypelevelPurrism.scopedCallPatches(tree, scope)
 
   def rewritePlan(
@@ -222,7 +241,7 @@ object PreferKleisli {
       knownKleislies: Set[String],
       fileLocalOnly: Boolean,
       scope: KleisliLiftScope
-  ): List[(Defn.Def, String)] =
+  )(implicit doc: SemanticDocument): List[(Defn.Def, String)] =
     TypelevelPurrism.kleisliRewritePlan(
       tree,
       knownKleislies,
@@ -440,12 +459,7 @@ private[fix] object TypelevelPurrism {
       knownKleislies: Set[String],
       fileLocalOnly: Boolean
   ): List[(Defn.Def, String)] =
-    kleisliRewritePlan(
-      tree,
-      knownKleislies,
-      fileLocalOnly,
-      KleisliLiftScope.empty
-    )
+    planWithoutScope(tree, knownKleislies, fileLocalOnly)
 
   /** With a [[KleisliLiftScope]], a def is lifted only if the project-wide scan
     * also cleared it -- which is what lets a *public* def be lifted at all,
@@ -456,14 +470,21 @@ private[fix] object TypelevelPurrism {
       knownKleislies: Set[String],
       fileLocalOnly: Boolean,
       scope: KleisliLiftScope
-  ): List[(Defn.Def, String)] = if (!scope.isEmpty)
-    // The scope already applied every filter below, over all the sources at
-    // once. Re-applying them here per file could decline a def whose call sites
-    // other files have already re-split.
-    rewriteCandidates(tree)
-      .filter(defn => scope.shapeOf(defn.name.value).isDefined)
-      .flatMap(defn => kleisliRewrite(defn, knownKleislies).map(defn -> _))
-  else {
+  )(implicit doc: SemanticDocument): List[(Defn.Def, String)] =
+    if (scope.isEmpty) planWithoutScope(tree, knownKleislies, fileLocalOnly)
+    else
+      // The scope already applied every filter the scope-free path applies,
+      // over all the sources at once. Re-applying them here per file could
+      // decline a def whose call sites other files have already re-split.
+      rewriteCandidates(tree)
+        .filter(defn => scope.shapeOf(defn.name.symbol.value).isDefined)
+        .flatMap(defn => kleisliRewrite(defn, knownKleislies).map(defn -> _))
+
+  private def planWithoutScope(
+      tree: Tree,
+      knownKleislies: Set[String],
+      fileLocalOnly: Boolean
+  ): List[(Defn.Def, String)] = {
     val candidateRewrites =
       rewriteCandidates(tree)
         .filter(defn => !fileLocalOnly || isFileLocal(defn))
@@ -550,7 +571,7 @@ private[fix] object TypelevelPurrism {
     * name -- what a *caller* needs to know, and a caller in another file has
     * only the name to go on.
     */
-  private def liftCandidates(tree: Tree): List[(String, LiftShape, Defn.Def)] =
+  def liftCandidates(tree: Tree): List[(String, LiftShape, Defn.Def)] =
     rewriteCandidates(tree).flatMap { defn =>
       for {
         params <- plainParameters(defn)
@@ -566,6 +587,22 @@ private[fix] object TypelevelPurrism {
         defn
       )
     }
+
+  /** Whether the name occupying a source position is being *referenced* rather
+    * than called -- the position-addressed form of the value-use check, for
+    * callers that have a SemanticDB occurrence and need to know what the AST
+    * says about it. A position holding no name at all is not a value use.
+    */
+  def isValueReferenceAt(tree: Tree, line: Int, column: Int): Boolean =
+    tree.collect {
+      case name: Term.Name
+          if name.pos.startLine == line && name.pos.startColumn == column &&
+            !isCalleePosition(name) && !isDefinitionName(name) =>
+        ()
+    }.nonEmpty
+
+  def placeholderCallSites(tree: Tree, defn: Defn.Def): Boolean =
+    hasPlaceholderCallSite(tree, defn)
 
   /** The project-wide verdict: which names may be lifted, and how their
     * arguments split.
@@ -625,12 +662,14 @@ private[fix] object TypelevelPurrism {
     * project-wide scope, which is the only thing a document knows about a
     * callee it does not define.
     */
-  def scopedCallPatches(tree: Tree, scope: KleisliLiftScope): Patch =
+  def scopedCallPatches(tree: Tree, scope: KleisliLiftScope)(implicit
+      doc: SemanticDocument
+  ): Patch =
     if (scope.isEmpty) Patch.empty
     else
       tree.collect { case applyTerm: Term.Apply =>
         val arguments = applyTerm.argClause.values
-        callName(applyTerm.fun)
+        calleeSymbol(applyTerm.fun)
           .flatMap(scope.shapeOf)
           .filter(shape =>
             shape.arity == arguments.length && shape.arity > 0 &&
@@ -1854,12 +1893,25 @@ private[fix] object TypelevelPurrism {
     * caller still passing the old argument list.
     */
   private def callName(term: Term): Option[String] =
+    calleeNameTerm(term).map(_.value)
+
+  /** The name a call is dispatched on, under any `Select`/type-application
+    * wrapping -- the node whose symbol identifies the callee.
+    */
+  private def calleeNameTerm(term: Term): Option[Term.Name] =
     term match {
-      case Term.Name(value)                   => Some(value)
-      case Term.Select(_, name)               => Some(name.value)
-      case Term.ApplyType.After_4_6_0(fun, _) => callName(fun)
+      case name: Term.Name                    => Some(name)
+      case Term.Select(_, name)               => Some(name)
+      case Term.ApplyType.After_4_6_0(fun, _) => calleeNameTerm(fun)
       case _                                  => None
     }
+
+  private def calleeSymbol(
+      term: Term
+  )(implicit doc: SemanticDocument): Option[String] =
+    calleeNameTerm(term)
+      .map(_.symbol.value)
+      .filter(symbol => symbol.nonEmpty && !symbol.startsWith("local"))
 
   private def tupledArguments(arguments: List[Term]): String =
     arguments.map(_.syntax).mkString("((", ", ", "))")
