@@ -21,6 +21,15 @@ final class PreferArrowConfigSuite extends munit.FunSuite {
     assertEquals(decode(conf).aggressive, true)
   }
 
+  test("reportSkips is off by default and reads independently of aggressive") {
+    assertEquals(PreferArrowConfig.default.reportSkips, false)
+    val conf =
+      Conf.Obj("PreferArrow" -> Conf.Obj("reportSkips" -> Conf.Bool(true)))
+    val decoded = decode(conf)
+    assertEquals(decoded.reportSkips, true)
+    assertEquals(decoded.aggressive, false)
+  }
+
   test("absent PreferArrow key falls back to the conservative default") {
     val conf = Conf.Obj("SomethingElse" -> Conf.Bool(true))
     assertEquals(decode(conf).aggressive, false)

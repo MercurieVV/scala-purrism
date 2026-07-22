@@ -84,7 +84,21 @@ final case class ArrowBudgetDiagnostic(
   * point-free output for wider coverage. Off by default, so the conservative
   * budget governs unless a project asks otherwise.
   */
-final case class PreferArrowConfig(aggressive: Boolean = false)
+/** @param reportSkips
+  *   report every Kleisli body the parser did not recognise at all, with the
+  *   shape it stopped on.
+  *
+  * A body the readability budget declines already reports itself
+  * ([[ArrowBudgetDiagnostic]]); a body the *parser* never understood is silent,
+  * and the two are indistinguishable from the outside -- which is how a corpus
+  * ends up with fifty untouched Kleislis and no evidence why. Off by default:
+  * this is a census instrument, one warning per unrecognised body, not
+  * something to leave on in a build.
+  */
+final case class PreferArrowConfig(
+    aggressive: Boolean = false,
+    reportSkips: Boolean = false
+)
 
 object PreferArrowConfig {
   val default: PreferArrowConfig = PreferArrowConfig()
@@ -92,8 +106,23 @@ object PreferArrowConfig {
     ConfDecoder.from { conf =>
       conf
         .getOrElse("aggressive")(default.aggressive)
-        .map(PreferArrowConfig(_))
+        .product(conf.getOrElse("reportSkips")(default.reportSkips))
+        .map(PreferArrowConfig.apply.tupled)
     }
+}
+
+/** A Kleisli body the parser did not recognise, labelled with the shape it
+  * stopped on, so a corpus can be counted by cause instead of guessed at.
+  * Emitted only under `PreferArrow.reportSkips`.
+  */
+final case class ArrowSkipDiagnostic(
+    override val position: scala.meta.inputs.Position,
+    shape: String
+) extends Diagnostic {
+  override def message: String =
+    s"PreferArrow did not recognise this Kleisli body: $shape."
+  override def severity: scalafix.lint.LintSeverity =
+    scalafix.lint.LintSeverity.Warning
 }
 
 final class PreferArrow(
@@ -143,9 +172,9 @@ final class PreferArrow(
     KleisliScope.install(scope)
     doc.tree.collect {
       case applyTerm: Term.Apply if KleisliType.isKleisliApply(applyTerm) =>
-        PreferArrow.rewriteBody(applyTerm, aggressive)
+        PreferArrow.rewriteBody(applyTerm, config)
       case defn: Defn.Def if !liftVetoed.contains(defn.name.symbol.value) =>
-        PreferArrow.rewriteSignature(defn, aggressive)
+        PreferArrow.rewriteSignature(defn, config)
     }.asPatch
   }
 }
@@ -195,7 +224,7 @@ object PreferArrow {
 
   def rewriteBody(
       applyTerm: Term.Apply,
-      aggressive: Boolean
+      config: PreferArrowConfig
   )(implicit doc: SemanticDocument): Patch =
     kleisliLambda(applyTerm) match {
       case None => Patch.empty
@@ -213,7 +242,7 @@ object PreferArrow {
               enclosingKleisliEffectType(applyTerm)
             )
           )
-        compile(fn.body, inputSymbol, input, aggressive) match {
+        compile(fn.body, inputSymbol, input, config.aggressive) match {
           case Compiled.Emit(rendered, imports) =>
             Patch.replaceTree(applyTerm, rendered) +
               imports.map(Patch.addGlobalImport).asPatch
@@ -223,15 +252,44 @@ object PreferArrow {
             ArrowParser
               .shadowedInput(fn.body, inputParam.value, inputSymbol)
               .map(pos => Patch.lint(FanOutShadowedInputDiagnostic(pos)))
-              .getOrElse(Patch.empty)
+              .getOrElse(skipReport(applyTerm.pos, fn.body, config))
         }
+    }
+
+  /** Names the shape an unrecognised body stopped on, coarsely enough to count
+    * a corpus by cause. Deliberately syntactic: the point is to say which
+    * *entry* the parser wanted and did not get, not to re-derive its reasons.
+    */
+  private def skipReport(
+      pos: scala.meta.inputs.Position,
+      body: Term,
+      config: PreferArrowConfig
+  ): Patch =
+    if (!config.reportSkips) Patch.empty
+    else Patch.lint(ArrowSkipDiagnostic(pos, skipShape(body)))
+
+  private def skipShape(body: Term): String =
+    body match {
+      case _: Term.ForYield => "for-comprehension the parser could not flatten"
+      case _: Term.Match    => "match expression"
+      case _: Term.If       => "if/else"
+      case _: Term.Try      => "try/catch"
+      case _: Term.Block    => "block with statements, not a single expression"
+      case _: Term.Function => "function literal"
+      case _: Term.NewAnonymous | _: Term.New => "constructor call"
+      case Term.Apply.After_4_6_0(Term.Select(_, name), _) =>
+        s"call chain ending in .${name.value}"
+      case _: Term.Apply  => "plain application"
+      case _: Term.Select => "field or nullary selection"
+      case _: Term.Name   => "bare name"
+      case other          => other.getClass.getSimpleName
     }
 
   // ---- signature-lifting entry --------------------------------------------
 
   def rewriteSignature(
       defn: Defn.Def,
-      aggressive: Boolean
+      config: PreferArrowConfig
   )(implicit doc: SemanticDocument): Patch =
     (for {
       param <- singlePlainParameter(defn)
@@ -251,7 +309,7 @@ object PreferArrow {
           defn.body,
           param.name.symbol,
           inputOf(param, effectType),
-          aggressive
+          config.aggressive
         ) match {
           case Compiled.Emit(rendered, imports) =>
             val parameterType = param.decltpe.map(_.syntax).getOrElse("")
