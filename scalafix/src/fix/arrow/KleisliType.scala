@@ -32,7 +32,18 @@ object KleisliType {
   private val MaxDealiasDepth = 16
 
   def isKleisli(term: Term)(implicit doc: SemanticDocument): Boolean =
-    semanticType(term).exists(resolvesToKleisli(_, 0))
+    semanticType(term) match {
+      case Some(tpe) => resolvesToKleisli(tpe, 0)
+      case None      => crossFile(term.symbol).exists(_.returnsKleisli)
+    }
+
+  /** The payload-backed answer for a symbol scalafix's symbol table cannot
+    * describe -- which is every symbol declared in another file. Consulted only
+    * when `info` came back empty, so a signature scalafix *did* resolve stays
+    * authoritative. See [[KleisliScope]] for why `info` is empty at all.
+    */
+  private def crossFile(symbol: Symbol): Option[KleisliDecl] =
+    if (symbol.isNone) None else KleisliScope.current.declOf(symbol.value)
 
   /** Whether the term *evaluates to* a Kleisli -- including a term that had to
     * be applied to get there, such as `GitHub.comment(progress)` where
@@ -59,13 +70,17 @@ object KleisliType {
         case Term.ApplyType.After_4_6_0(fun, _) => go(fun, applied)
         case Term.Apply.After_4_6_0(fun, _)     => go(fun, applied + 1)
         case head =>
-          head.symbol.info.map(_.signature).exists {
-            case ValueSignature(tpe) =>
+          head.symbol.info.map(_.signature) match {
+            case Some(ValueSignature(tpe)) =>
               applied == 0 && resolvesToKleisli(tpe, 0)
-            case MethodSignature(_, parameterLists, tpe) =>
+            case Some(MethodSignature(_, parameterLists, tpe)) =>
               applied == explicitClauseCount(parameterLists) &&
               resolvesToKleisli(tpe, 0)
-            case _ => false
+            case Some(_) => false
+            case None =>
+              crossFile(head.symbol).exists(decl =>
+                decl.returnsKleisli && applied == decl.explicitClauses
+              )
           }
       }
 

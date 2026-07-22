@@ -10,19 +10,24 @@ import scalafix.v1._
   * or through this umbrella, so a corpus that opts into aggressive arrow
   * lifting gets it under `class:fix.TypelevelPurrism` too.
   */
-final class TypelevelPurrism(preferArrow: PreferArrowConfig)
-    extends SemanticRule("TypelevelPurrism") {
+final class TypelevelPurrism(
+    preferArrow: PreferArrowConfig,
+    classpath: List[java.nio.file.Path]
+) extends SemanticRule("TypelevelPurrism") {
 
-  def this() = this(PreferArrowConfig.default)
+  def this() = this(PreferArrowConfig.default, Nil)
 
   override def withConfiguration(config: Configuration): Configured[Rule] =
     config.conf
       .getOrElse("PreferArrow")(PreferArrowConfig.default)
-      .map(new TypelevelPurrism(_))
+      // The classpath carries the SemanticDB payloads `PreferArrow` needs to
+      // recognise a Kleisli declared in another file; dropping it here would
+      // silently make the umbrella weaker than the rule run on its own.
+      .map(new TypelevelPurrism(_, config.scalacClasspath.map(_.toNIO)))
 
   override def fix(implicit doc: SemanticDocument): Patch =
     new TypeclassWeakening().fix + new PreferKleisli().fix +
-      new PreferArrow(preferArrow).fix +
+      new PreferArrow(preferArrow, classpath).fix +
       new PreferCatsSyntax().fix + new SimplifyCatsExpressions().fix +
       new OpaqueTypePropagation().fix
 }

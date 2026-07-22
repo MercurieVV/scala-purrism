@@ -10,6 +10,7 @@ import fix.arrow.ArrowIR
 import fix.arrow.ArrowNormalize
 import fix.arrow.ArrowParser
 import fix.arrow.ArrowRender
+import fix.arrow.KleisliScope
 import fix.arrow.KleisliType
 import fix.arrow.ReadabilityBudget
 
@@ -95,10 +96,12 @@ object PreferArrowConfig {
     }
 }
 
-final class PreferArrow(config: PreferArrowConfig)
-    extends SemanticRule("PreferArrow") {
+final class PreferArrow(
+    config: PreferArrowConfig,
+    classpath: List[java.nio.file.Path]
+) extends SemanticRule("PreferArrow") {
 
-  def this() = this(PreferArrowConfig.default)
+  def this() = this(PreferArrowConfig.default, Nil)
 
   private val aggressive: Boolean = config.aggressive
 
@@ -107,15 +110,26 @@ final class PreferArrow(config: PreferArrowConfig)
   ): Configured[Rule] =
     configuration.conf
       .getOrElse("PreferArrow")(PreferArrowConfig.default)
-      .map(new PreferArrow(_))
+      // `--semanticdb-targetroots` is prepended to the scalac classpath by the
+      // CLI, so the payloads arrive here without a second configuration key --
+      // the same route `PreferKleisli` takes to its cross-file scope.
+      .map(new PreferArrow(_, configuration.scalacClasspath.map(_.toNIO)))
 
-  override def fix(implicit doc: SemanticDocument): Patch =
+  /** Built once per rule instance, not per file: the scan parses every payload
+    * in the project, and a rule instance outlives the documents it is applied
+    * to.
+    */
+  private lazy val scope: KleisliScope = KleisliScope.load(classpath)
+
+  override def fix(implicit doc: SemanticDocument): Patch = {
+    KleisliScope.install(scope)
     doc.tree.collect {
       case applyTerm: Term.Apply if KleisliType.isKleisliApply(applyTerm) =>
         PreferArrow.rewriteBody(applyTerm, aggressive)
       case defn: Defn.Def =>
         PreferArrow.rewriteSignature(defn, aggressive)
     }.asPatch
+  }
 }
 
 object PreferArrow {

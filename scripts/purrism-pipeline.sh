@@ -82,25 +82,17 @@ resolve_classpath() {
   printf '%s' "${out[*]}"
 }
 
-# KNOWN LIMITATION -- cross-file symbol information is not available.
+# `--semanticdb-targetroots` is load-bearing beyond locating the payloads for
+# scalafix itself: the CLI prepends it to the scalac classpath, and both rules
+# read the payloads from there directly.
 #
-# `SemanticDocument.info(symbol)` answers only for symbols *declared in the file
-# being rewritten*. For anything declared elsewhere it returns nothing, so a
-# rule asking "is this callee a Kleisli?" gets "no" for every callee one file
-# over, and declines. That is indistinguishable, from the outside, from a rule
-# that correctly found nothing -- which is why this is recorded here rather than
-# left to be rediscovered.
-#
-# Measured on gh-tasks-llm-executor: an identical body rewrites when its callee
-# is in the same file and is declined when the callee moves to another file.
-# Passing scalafix `--classpath` -- the compiled classes directory, the
-# semanticdb targetroot, and the two merged so `META-INF/semanticdb` sits inside
-# the classes entry -- did not restore it in any combination.
-#
-# Consequence: `PreferArrow` fires on same-file compositions only. `PreferKleisli`
-# is unaffected; it reads the SemanticDB payloads directly (see KleisliLiftScope)
-# rather than going through the symbol table, which is what lets its cross-file
-# mode work at all.
+# They have to. `SemanticDocument.info(symbol)` answers only for symbols
+# *declared in the file being rewritten* -- scalafix resolves everything else out
+# of classfiles, and a Scala 3 classfile carries its signature as TASTy, which
+# the classfile-to-SemanticDB converter cannot decode. So a rule asking "is this
+# callee a Kleisli?" through the symbol table gets "no" for every callee one file
+# over. `PreferKleisli` sidesteps that via KleisliLiftScope and `PreferArrow` via
+# KleisliScope; without the targetroot both silently fall back to same-file-only.
 run_stage() {
   local rule="$1"
   shift

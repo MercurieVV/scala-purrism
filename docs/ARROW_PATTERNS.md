@@ -360,3 +360,38 @@ ignores the input, no reshape), `ArrowBodyDiscardLeading` (`*>`, one named
 generator), `ArrowBodyDiscardTrailing` (`&&&` then `flatTap`),
 `ArrowBodyDiscardDeclined` (both refused shapes, no output file) and
 `ArrowBodyPlainForDeclined` (identical body, no flag, declined).
+
+## Cross-file callees
+
+A callee declared in another file used to be invisible, and the failure was
+silent: the body stayed wrapped and looked exactly like a body the rule had
+correctly declined.
+
+The cause is structural, not configuration. `SemanticDocument.info(symbol)`
+answers from scalafix's symbol table, which resolves anything outside the
+current file out of *classfiles* — and a Scala 3 classfile carries its signature
+as TASTy, which the classfile-to-SemanticDB converter cannot decode. So `info`
+came back empty, `KleisliType` read that as "not a Kleisli", and every
+composition that crossed a file boundary was declined. Passing scalafix
+`--classpath` does not help, in any combination of classes directory and
+semanticdb targetroot.
+
+`fix.arrow.KleisliScope` closes it by reading the compiler's own `.semanticdb`
+payloads — which *do* carry full Scala 3 signatures — and folding them into a
+project-wide map of `symbol -> (returns a Kleisli?, explicit parameter clauses)`.
+`KleisliType` consults it only when `info` is empty, so a signature scalafix did
+resolve stays authoritative. This is the same move `PreferKleisli` already makes
+for its cross-file lift scope (`fix.KleisliLiftScope`).
+
+The payload roots arrive via `Configuration.scalacClasspath`, which the CLI
+populates from `--semanticdb-targetroots`; no extra configuration key exists and
+none is needed. Aliases are followed through the payload's own type
+representation, with the same alias-versus-abstract-type discriminator
+`KleisliType` uses — an alias records its right-hand side as both bounds — so the
+corpus's `ProgramArrows[-->[_, _]]` type parameter is still not confused with the
+`-->` Kleisli alias that shares its spelling.
+
+Fixtures: `crossfile/ArrowCrossFileStore.scala` declares the callee and is left
+untouched; `crossfile/ArrowCrossFileCaller.scala` holds a body byte-identical in
+shape to one in `ArrowBodyLocalProjection.scala`, and is what proves the two now
+rewrite alike.
