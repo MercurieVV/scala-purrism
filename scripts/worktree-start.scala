@@ -12,42 +12,22 @@ object WorktreeStart:
       sys.exit(1)
 
     val branch = args.head
-    val repoRoot = os.Path(
-      os.proc("git", "rev-parse", "--show-toplevel").call().out.text().trim
-    )
-
+    val repoRoot = os.Path(os.proc("git", "rev-parse", "--show-toplevel").call().out.text().trim)
+    
     // Detect default branch
-    val base =
-      try {
-        val raw = os
-          .proc(
-            "git",
-            "symbolic-ref",
-            "--quiet",
-            "--short",
-            "refs/remotes/origin/HEAD"
-          )
-          .call(cwd = repoRoot)
-          .out
-          .text()
-          .trim
-        raw.stripPrefix("origin/")
-      } catch {
-        case _: Exception => "main"
-      }
+    val base = try {
+      val raw = os.proc("git", "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD").call(cwd = repoRoot).out.text().trim
+      raw.stripPrefix("origin/")
+    } catch {
+      case _: Exception => "main"
+    }
 
-    val finalBase =
-      if os
-          .proc("git", "show-ref", "--verify", "--quiet", s"refs/heads/$base")
-          .call(cwd = repoRoot, check = false)
-          .exitCode == 0
-      then base
-      else if os
-          .proc("git", "show-ref", "--verify", "--quiet", "refs/heads/master")
-          .call(cwd = repoRoot, check = false)
-          .exitCode == 0
-      then "master"
-      else "main"
+    val finalBase = if os.proc("git", "show-ref", "--verify", "--quiet", s"refs/heads/$base").call(cwd = repoRoot, check = false).exitCode == 0 then
+      base
+    else if os.proc("git", "show-ref", "--verify", "--quiet", "refs/heads/master").call(cwd = repoRoot, check = false).exitCode == 0 then
+      "master"
+    else
+      "main"
 
     val wt = repoRoot / ".worktrees" / branch
 
@@ -57,29 +37,18 @@ object WorktreeStart:
 
     println("Fetching latest changes from origin...")
     try {
-      os.proc("git", "fetch", "origin", finalBase, "--quiet")
-        .call(cwd = repoRoot)
+      os.proc("git", "fetch", "origin", finalBase, "--quiet").call(cwd = repoRoot)
     } catch {
       case _: Exception => // ignore fetch failures
     }
 
     println(s"Creating branch '$branch' off '$finalBase'...")
-    val branchCreated = os
-      .proc("git", "branch", branch, s"origin/$finalBase")
-      .call(cwd = repoRoot, check = false)
-      .exitCode == 0 ||
-      os.proc("git", "branch", branch, finalBase)
-        .call(cwd = repoRoot, check = false)
-        .exitCode == 0
+    val branchCreated = os.proc("git", "branch", branch, s"origin/$finalBase").call(cwd = repoRoot, check = false).exitCode == 0 ||
+                        os.proc("git", "branch", branch, finalBase).call(cwd = repoRoot, check = false).exitCode == 0
 
     println(s"Adding git worktree at '$wt'...")
-    val wtAdded = os
-      .proc("git", "worktree", "add", "-b", branch, wt.toString, finalBase)
-      .call(cwd = repoRoot, check = false)
-      .exitCode == 0 ||
-      os.proc("git", "worktree", "add", wt.toString, branch)
-        .call(cwd = repoRoot, check = false)
-        .exitCode == 0
+    val wtAdded = os.proc("git", "worktree", "add", "-b", branch, wt.toString, finalBase).call(cwd = repoRoot, check = false).exitCode == 0 ||
+                  os.proc("git", "worktree", "add", wt.toString, branch).call(cwd = repoRoot, check = false).exitCode == 0
 
     if !wtAdded then
       println("Error: Failed to add git worktree")
@@ -101,15 +70,11 @@ object WorktreeStart:
       os.makeDir.all(dest / os.up)
       os.copy.over(f, dest)
 
-    println(
-      "========================================================================"
-    )
+    println("========================================================================")
     println("Worktree created successfully!")
     println(s"  Path: $wt")
     println(s"  Branch: $branch")
     println("")
     println("To switch to your new worktree, run:")
     println(s"  cd $wt")
-    println(
-      "========================================================================"
-    )
+    println("========================================================================")
