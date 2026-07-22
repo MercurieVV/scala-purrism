@@ -289,3 +289,109 @@ where nothing runs. Minimum:
   be violated in real code: A/binding used twice, B/`f` captures the input,
   C/same spelling but different binding. A negative fixture that produces no
   output file is the cheapest way to pin "the rule correctly does nothing".
+
+## Aggressive mode (`PreferArrow.aggressive`, opt-in, off by default)
+
+The conservative budget only fires where point-free is at least as readable as
+the source. Real monadic codebases often keep the input around in the `yield`
+and call *plain* effectful methods (not existing Kleislis) in each generator —
+shapes where the point-free form is *correct* but busier. `PreferArrow.aggressive
+= true` opts a project into rewriting those anyway.
+
+```hocon
+PreferArrow.aggressive = true
+```
+
+What it unlocks, on top of the conservative shapes:
+
+- **Plain-`F` lifting.** A generator `b <- svc.thing(x.a, x.b)` whose right-hand
+  side is an ordinary `F`-returning call is lifted in place into
+  `Kleisli { (x: T) => svc.thing(x.a, x.b) }`, so independent generators can fan
+  out even though none of them was a Kleisli to begin with.
+- **Input retention via `Kleisli.ask`.** When the `yield` still references the
+  arrow input, a leading `Kleisli.ask[F, A]` carries it alongside the fanned-out
+  results, and the trailing `.map` destructures the nested tuple back to the
+  original `yield` body.
+- **Eta-collapse.** `Kleisli { x => k.run(x) }` reduces to `k`.
+- **Arms that ignore the input.** Only *one* generator has to be a function of
+  the arrow input; the others may be constant effects (`t <- svc.total`), lifted
+  as `Kleisli { (x: T) => svc.total }`. A fan-out where *no* arm reads the input
+  is still declined — that is a plain `mapN` over constants with nothing
+  arrow-shaped to gain.
+- **No identity reshape.** At arity one or two the arms already produce the
+  arrow's output directly, so a `yield` naming them in arm order emits no
+  trailing `.map`. Arity three and up keeps the destructuring `.map`, since
+  `&&&` nests as `((a, b), c)`.
+- **Discard generators — `*>` and `flatTap`.** A `_ <- log(...)` is not a
+  fan-out arm: its result is thrown away, so tupling it and projecting it back
+  out is pure waste. Two positions are recognised:
+  - **Leading** (`_ <- ...` before the named generators) renders as
+    `Kleisli { (x: T) => log(...) } *> <rest>`. `*>` needs only `Apply[F]` —
+    strictly weaker than the `Monad[F]` an `&&&` costs — feeds both sides the
+    same input, and preserves the `for`'s order and short-circuiting.
+  - **Trailing** (`_ <- ...` after them, reading their results) renders as
+    `<arms>.flatTap { case (a, b) => Kleisli.liftF(record(a)) }`. `flatTap`
+    discards the *value*, not the effect, so a failure in the tap still fails
+    the arrow. The tap uses `Kleisli.liftF` rather than a typed lambda because
+    the receiver has already fixed the expected type there; a leading discard
+    cannot, since as the left operand of `*>` it is what the input type is
+    inferred *from*.
+
+  A discard counts towards the "at least two effects" floor, so a single named
+  generator behind a `_ <- log(...)` is enough to fire.
+
+Only independent-generator `for`s qualify: no `val` binder, no guard, and no
+generator that reads another's binding (that genuinely needs `flatMap`, which
+this path never fakes). Two discard shapes are refused outright:
+
+- a discard *between* two named generators — `&&&` feeds both arms the same
+  input and has no position to run an effect in between, so emitting anything
+  would mean re-ordering it against a neighbour;
+- a trailing discard that reads the *arrow input* — it is rendered inside
+  `.flatTap`, where only the arms' results are bound, and threading the input in
+  as well costs more plumbing than the `for` it replaces.
+
+Correctness is unchanged — independent generators commute under the same input
+and `&&&` on `Kleisli` sequences left-to-right exactly as the `for` did (proved
+in `KleisliLawSuite`, including the two discard shapes). The output is simply
+busier, which is why it is behind a flag. Fixtures: `ArrowBodyAggressiveLift`
+(fires, arity 3 with `ask`), `ArrowBodyAggressiveConstArm` (arity 2, one arm
+ignores the input, no reshape), `ArrowBodyDiscardLeading` (`*>`, one named
+generator), `ArrowBodyDiscardTrailing` (`&&&` then `flatTap`),
+`ArrowBodyDiscardDeclined` (both refused shapes, no output file) and
+`ArrowBodyPlainForDeclined` (identical body, no flag, declined).
+
+## Cross-file callees
+
+A callee declared in another file used to be invisible, and the failure was
+silent: the body stayed wrapped and looked exactly like a body the rule had
+correctly declined.
+
+The cause is structural, not configuration. `SemanticDocument.info(symbol)`
+answers from scalafix's symbol table, which resolves anything outside the
+current file out of *classfiles* — and a Scala 3 classfile carries its signature
+as TASTy, which the classfile-to-SemanticDB converter cannot decode. So `info`
+came back empty, `KleisliType` read that as "not a Kleisli", and every
+composition that crossed a file boundary was declined. Passing scalafix
+`--classpath` does not help, in any combination of classes directory and
+semanticdb targetroot.
+
+`fix.arrow.KleisliScope` closes it by reading the compiler's own `.semanticdb`
+payloads — which *do* carry full Scala 3 signatures — and folding them into a
+project-wide map of `symbol -> (returns a Kleisli?, explicit parameter clauses)`.
+`KleisliType` consults it only when `info` is empty, so a signature scalafix did
+resolve stays authoritative. This is the same move `PreferKleisli` already makes
+for its cross-file lift scope (`fix.KleisliLiftScope`).
+
+The payload roots arrive via `Configuration.scalacClasspath`, which the CLI
+populates from `--semanticdb-targetroots`; no extra configuration key exists and
+none is needed. Aliases are followed through the payload's own type
+representation, with the same alias-versus-abstract-type discriminator
+`KleisliType` uses — an alias records its right-hand side as both bounds — so the
+corpus's `ProgramArrows[-->[_, _]]` type parameter is still not confused with the
+`-->` Kleisli alias that shares its spelling.
+
+Fixtures: `crossfile/ArrowCrossFileStore.scala` declares the callee and is left
+untouched; `crossfile/ArrowCrossFileCaller.scala` holds a body byte-identical in
+shape to one in `ArrowBodyLocalProjection.scala`, and is what proves the two now
+rewrite alike.

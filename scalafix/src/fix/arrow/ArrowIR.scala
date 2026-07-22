@@ -31,6 +31,24 @@ object ArrowIR {
   /** A Kleisli-typed leaf: the receiver expression, e.g. `loadUser`. */
   final case class Eff(callee: Term) extends ArrowIR
 
+  /** A plain effectful expression lifted into a Kleisli *in place* --
+    * `Kleisli { (p: T) => body }` -- where `body` is an `F`-returning
+    * expression that is a function of the arrow input `p`. Distinct from
+    * [[Eff]] (which names an existing Kleisli value) and [[Lift]] (a pure
+    * `A => B` via `Kleisli.pure`): here the effect is inline and would not
+    * otherwise be a Kleisli at all. Produced only in aggressive mode, where a
+    * `for` generator that calls a plain effectful method is lifted so the
+    * independent generators can fan out with `&&&`.
+    */
+  final case class LiftK(param: String, tpe: String, body: Term) extends ArrowIR
+
+  /** A typed `Kleisli.ask[F, A]` -- the arrow that returns its own input. Used
+    * in aggressive mode to retain the input alongside fanned-out results when
+    * the `yield` still references it. Carries both types because bare
+    * `Kleisli.ask` does not infer them inside an `&&&`.
+    */
+  final case class Ask(effect: String, inputTpe: String) extends ArrowIR
+
   /** `l >>> r`. */
   final case class AndThen(l: ArrowIR, r: ArrowIR) extends ArrowIR
 
@@ -40,11 +58,42 @@ object ArrowIR {
   /** `l ||| r` -- an `Either`-typed input routed to one arrow or the other. */
   final case class Choice(l: ArrowIR, r: ArrowIR) extends ArrowIR
 
+  /** `l *> r` -- both arrows fed the same input, left's result discarded.
+    *
+    * The shape a `for` writes as a discard generator, `_ <- log(...)`, ahead of
+    * the work whose result it keeps. `*>` needs only `Apply[F]`, weaker than
+    * the `Monad[F]` an `&&&` fan-out costs, and it feeds the same input to both
+    * sides -- so the whole `ask &&& … .map(_._2)` plumbing that would otherwise
+    * be needed to carry the kept value past the discarded one disappears.
+    */
+  final case class ProductR(l: ArrowIR, r: ArrowIR) extends ArrowIR
+
+  /** `a.flatTap { <binders> => tap }` -- run `tap` on `a`'s result and keep
+    * `a`'s result.
+    *
+    * The mirror of [[ProductR]]: a discard generator *after* the work, whose
+    * right-hand side reads what the work produced. `binders` names the arms `a`
+    * produces, in arm order, so the tap can refer to them exactly as the source
+    * `for` did; more than one arm is destructured out of the left-nested tuple
+    * an `&&&` chain yields.
+    */
+  final case class FlatTap(a: ArrowIR, binders: List[String], tap: ArrowIR)
+      extends ArrowIR
+
   /** `a.local(fn)` -- reshape the input with the pure `fn` before `a`. */
   final case class Local(fn: Term, a: ArrowIR) extends ArrowIR
 
   /** `a.map(fn)` -- reshape the output of `a` with the pure `fn`. */
   final case class Rmap(a: ArrowIR, fn: Term) extends ArrowIR
+
+  /** `a.as(value)` -- replace `a`'s output with a constant.
+    *
+    * Kept distinct from `Rmap(a, _ => value)` so the rewrite prints back the
+    * combinator the source used. Peeling it matters more than printing it: a
+    * body like `k(x.a, x.b).as(summary)` is a `.local` reshape wearing a hat,
+    * and without recognising the `as` the whole site is declined.
+    */
+  final case class As(a: ArrowIR, value: Term) extends ArrowIR
 
   /** A subtree the parser could not analyse. Never survives the budget. */
   final case class Opaque(term: Term) extends ArrowIR
@@ -55,12 +104,15 @@ object ArrowIR {
   def fold[A](ir: ArrowIR)(z: A)(op: (A, ArrowIR) => A): A = {
     val here = op(z, ir)
     ir match {
-      case AndThen(l, r) => fold(r)(fold(l)(here)(op))(op)
-      case Merge(l, r)   => fold(r)(fold(l)(here)(op))(op)
-      case Choice(l, r)  => fold(r)(fold(l)(here)(op))(op)
-      case Local(_, a)   => fold(a)(here)(op)
-      case Rmap(a, _)    => fold(a)(here)(op)
-      case _             => here
+      case AndThen(l, r)    => fold(r)(fold(l)(here)(op))(op)
+      case Merge(l, r)      => fold(r)(fold(l)(here)(op))(op)
+      case Choice(l, r)     => fold(r)(fold(l)(here)(op))(op)
+      case ProductR(l, r)   => fold(r)(fold(l)(here)(op))(op)
+      case FlatTap(a, _, t) => fold(t)(fold(a)(here)(op))(op)
+      case Local(_, a)      => fold(a)(here)(op)
+      case Rmap(a, _)       => fold(a)(here)(op)
+      case As(a, _)         => fold(a)(here)(op)
+      case _                => here
     }
   }
 
@@ -76,7 +128,8 @@ object ArrowIR {
     */
   def effectCount(ir: ArrowIR): Int =
     fold(ir)(0) {
-      case (acc, _: Eff) => acc + 1
-      case (acc, _)      => acc
+      case (acc, _: Eff)   => acc + 1
+      case (acc, _: LiftK) => acc + 1
+      case (acc, _)        => acc
     }
 }

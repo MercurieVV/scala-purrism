@@ -44,30 +44,125 @@ object ArrowParser {
     * Both are needed to emit a projected fan-out; without them, projected
     * branches are not offered.
     */
-  final case class Input(name: String, tpe: String)
+  final case class Input(
+      name: String,
+      tpe: String,
+      effect: Option[String] = None
+  )
 
   def parse(
       body: Term,
       inputSymbol: Symbol
   )(implicit doc: SemanticDocument): Option[ArrowIR] =
-    parse(body, inputSymbol, None)
+    parse(body, inputSymbol, None, aggressive = false)
 
   def parse(
       body: Term,
       inputSymbol: Symbol,
       input: Option[Input]
   )(implicit doc: SemanticDocument): Option[ArrowIR] =
-    peelTrailingMap(body) match {
-      // `<effects>.map(fn)` -- pattern B and the tail of a chain that ends in a
-      // pure reshape. Parse the effect part, then reshape its output.
-      case Some((inner, fn)) =>
-        // The reshape must not close over the arrow input; point-free output
-        // has no name to bind it to, so a capturing `map` would be dropped.
-        if (referencesAny(fn, List(inputSymbol))) None
-        else parseSpine(inner, inputSymbol, input).map(Rmap(_, fn))
+    parse(body, inputSymbol, input, aggressive = false)
+
+  def parse(
+      body: Term,
+      inputSymbol: Symbol,
+      input: Option[Input],
+      aggressive: Boolean
+  )(implicit doc: SemanticDocument): Option[ArrowIR] =
+    peelTrailingReshape(body) match {
+      // `<effects>.map(fn)` / `<effects>.as(value)` -- pattern B and the tail
+      // of a chain that ends in a pure reshape.
+      case Some((inner, reshape)) =>
+        if (!referencesAny(reshape.term, List(inputSymbol)))
+          parseSpine(inner, inputSymbol, input, aggressive)
+            .map(reshape.applyTo)
+        else
+          // The reshape closes over the arrow input, which point-free output
+          // has no name for -- unless the input is deliberately carried along.
+          // A leading `Kleisli.ask` does exactly that, at the cost of a tuple
+          // and a destructuring reshape, so it is offered in aggressive mode
+          // only. Conservative mode declines, as it did before.
+          for {
+            in <- input if aggressive
+            effect <- in.effect
+            retained <- retainingReshape(in.name, reshape)
+            ir <- parseSpine(inner, inputSymbol, input, aggressive)
+          } yield Rmap(Merge(Ask(effect, in.tpe), ir), retained)
       case None =>
-        parseSpine(body, inputSymbol, input)
+        parseSpine(body, inputSymbol, input, aggressive)
     }
+
+  /** A pure reshape sitting at the tail of an effectful body. */
+  private sealed trait Reshape {
+
+    /** The expression the reshape is written with, whose free names decide
+      * whether it closes over the arrow input.
+      */
+    def term: Term
+    def applyTo(ir: ArrowIR): ArrowIR
+  }
+
+  private object Reshape {
+    final case class Mapped(fn: Term) extends Reshape {
+      def term: Term = fn
+      def applyTo(ir: ArrowIR): ArrowIR = Rmap(ir, fn)
+    }
+    final case class Constant(value: Term) extends Reshape {
+      def term: Term = value
+      def applyTo(ir: ArrowIR): ArrowIR = As(ir, value)
+    }
+  }
+
+  private def peelTrailingReshape(
+      term: Term
+  )(implicit doc: SemanticDocument): Option[(Term, Reshape)] =
+    peelTrailingMap(term)
+      .map { case (inner, fn) => (inner, Reshape.Mapped(fn)) }
+      .orElse(peelTrailingAs(term).map { case (inner, value) =>
+        (inner, Reshape.Constant(value))
+      })
+
+  /** The destructuring reshape that goes with a leading `Kleisli.ask`:
+    * `{ case (input, result) => ... }`, rebinding the arrow input under the
+    * name the source used so the captured expression carries over verbatim.
+    *
+    * A `.as(value)` discards the effect's result, so its slot is a wildcard. A
+    * `.map(fn)` keeps it, and its lambda's own parameter becomes the second
+    * binder -- which is what lets the lambda *body* be reused as written. A
+    * `.map` whose argument is not a single-parameter lambda (a placeholder, an
+    * eta-expanded method) has no parameter to rebind, so it is declined rather
+    * than wrapped in a synthetic application.
+    */
+  private def retainingReshape(
+      inputName: String,
+      reshape: Reshape
+  ): Option[Term] = {
+    val slot: Option[(Pat, Term)] = reshape match {
+      case Reshape.Constant(value) => Some((Pat.Wildcard(), value))
+      case Reshape.Mapped(fn: Term.Function) =>
+        fn.paramClause.values match {
+          case List(param) =>
+            param.name match {
+              case name: Term.Name => Some((Pat.Var(name), fn.body))
+              case _               => None
+            }
+          case _ => None
+        }
+      case _ => None
+    }
+
+    slot.map { case (resultPat, body) =>
+      Term.PartialFunction(
+        List(
+          Case(
+            Pat.Tuple(List(Pat.Var(Term.Name(inputName)), resultPat)),
+            None,
+            body
+          )
+        )
+      )
+    }
+  }
 
   /** Splits `receiver.map(fn)` into `(receiver, fn)` when `fn` is a function
     * literal or placeholder and `receiver` is not itself already a Kleisli's
@@ -87,16 +182,250 @@ object ArrowParser {
         None
     }
 
+  /** Splits `receiver.as(value)` into `(receiver, value)`. Unlike the `.map`
+    * peel this needs no "receiver is not already a Kleisli" guard: if the
+    * receiver *is* a bare Kleisli there is nothing left for the spine parser to
+    * find, so the site declines on its own and no no-op edit is emitted.
+    */
+  private def peelTrailingAs(term: Term): Option[(Term, Term)] =
+    term match {
+      case Term.Apply.After_4_6_0(
+            Term.Select(receiver, Term.Name("as")),
+            Term.ArgClause(List(value), _)
+          ) =>
+        Some((receiver, value))
+      case _ =>
+        None
+    }
+
   private def parseSpine(
+      body: Term,
+      inputSymbol: Symbol,
+      input: Option[Input],
+      aggressive: Boolean
+  )(implicit doc: SemanticDocument): Option[ArrowIR] =
+    choiceArrow(body, inputSymbol).orElse {
+      val (steps, yieldTerm) = spine(body)
+      val conservative =
+        if (steps.isEmpty) bareEffect(body, inputSymbol, input)
+        else classify(steps, yieldTerm, inputSymbol, input)
+      conservative.orElse(
+        if (aggressive) aggressiveFor(body, inputSymbol, input) else None
+      )
+    }
+
+  /** Aggressive fan-out (opt-in via `PreferArrow.aggressive`). Where the
+    * conservative paths decline because a generator calls a *plain* effectful
+    * method rather than an existing Kleisli -- `dc <- GitHub.dep(x.a, x.b)` --
+    * lift each generator's right-hand side into `Kleisli { (x: T) => rhs }` and
+    * fan the independent generators out with `&&&`. When the `yield` still
+    * references the input, retain it with a leading `Kleisli.ask`. The result
+    * is provably equivalent (independent generators commute under the same
+    * input; `&&&` on `Kleisli` sequences left-then-right exactly as the `for`
+    * did) but often busier than the source -- which is why it is gated behind
+    * the flag rather than on by default.
+    *
+    * Restricted to a `for` of plain generators: no `val` binders, no guards, no
+    * generator depending on another's binding (that needs `flatMap`, not
+    * `&&&`). Requires the input's name, type and effect, since the lifted
+    * lambdas and the typed `ask` all need them.
+    */
+  private def aggressiveFor(
       body: Term,
       inputSymbol: Symbol,
       input: Option[Input]
   )(implicit doc: SemanticDocument): Option[ArrowIR] =
-    choiceArrow(body, inputSymbol).orElse {
-      val (steps, yieldTerm) = spine(body)
-      if (steps.isEmpty) bareEffect(body, inputSymbol)
-      else classify(steps, yieldTerm, inputSymbol, input)
+    for {
+      in <- input
+      effect <- in.effect
+      gens <- body match {
+        case Term.ForYield.After_4_9_9(enums, yieldBody) =>
+          splitGenerators(enums.enums).map((_, yieldBody))
+        case _ => None
+      }
+      (split, yieldBody) = gens
+      ir <- buildAggressiveFanOut(
+        split,
+        yieldBody,
+        inputSymbol,
+        in,
+        effect
+      )
+    } yield ir
+
+  /** A `for` split into the discard generators that run before the work, the
+    * named generators themselves, and the discard generators that run after.
+    */
+  private final case class Split(
+      leading: List[Term],
+      named: List[(Term.Name, Term)],
+      trailing: List[Term]
+  )
+
+  /** Every enumerator is a bare generator -- `name <- rhs` or `_ <- rhs` -- and
+    * the discards form a prefix and a suffix around the named ones. Any `val`
+    * binder or guard makes this `None`, as does a discard *between* two named
+    * generators: `&&&` feeds both its arms the same input and has no position
+    * to put an interleaved effect in, and reordering it around a neighbour
+    * would change the sequence the `for` specified.
+    */
+  private def splitGenerators(enums: List[Enumerator]): Option[Split] = {
+    val classified = traverse(enums) {
+      case Enumerator.Generator(Pat.Var(name), rhs)  => Some(Right((name, rhs)))
+      case Enumerator.Generator(Pat.Wildcard(), rhs) => Some(Left(rhs))
+      case _                                         => None
     }
+
+    classified.flatMap { items =>
+      val leading = items.takeWhile(_.isLeft).collect { case Left(rhs) => rhs }
+      val rest = items.drop(leading.length)
+      val named = rest.takeWhile(_.isRight).collect { case Right(pair) => pair }
+      val tail = rest.drop(named.length)
+
+      // Anything after the first trailing discard must also be a discard;
+      // a named generator there means an interleaved effect.
+      Option.when(tail.forall(_.isLeft))(
+        Split(leading, named, tail.collect { case Left(rhs) => rhs })
+      )
+    }
+  }
+
+  private def buildAggressiveFanOut(
+      split: Split,
+      yieldBody: Term,
+      inputSymbol: Symbol,
+      in: Input,
+      effect: String
+  )(implicit doc: SemanticDocument): Option[ArrowIR] = {
+    val generators = split.named
+    val bindingSymbols = generators.map(_._1.symbol)
+    // Fan-out demands the generators be mutually independent: no right-hand
+    // side may reference another generator's binding, and every one must be a
+    // function of the arrow input (so lifting it into `Kleisli { x => rhs }` is
+    // meaningful). A generator referencing a prior binding needs `flatMap`
+    // sequencing, which this path deliberately does not fake.
+    val independent =
+      generators.forall { case (_, rhs) =>
+        !referencesAny(rhs, bindingSymbols)
+      } &&
+        // A leading discard runs before any binding exists, so it cannot read
+        // one either.
+        split.leading.forall(rhs => !referencesAny(rhs, bindingSymbols))
+    // At least one generator must be a function of the arrow input. A fan-out
+    // where *no* branch reads the input is a plain `mapN` over constants and
+    // gains nothing from being an arrow; branches that ignore the input are
+    // fine alongside ones that read it -- `Kleisli { _ => c }` is still the same
+    // effect in the same position.
+    val anyReferencesInput =
+      (split.leading ++ generators.map(_._2)).exists(rhs =>
+        referencesAny(rhs, List(inputSymbol))
+      )
+    // A trailing discard is rendered inside `.flatTap`, where the arrow input
+    // is out of scope -- only the arms' results are bound there. One that reads
+    // the input would need the input threaded through the tuple as well, which
+    // costs more plumbing than the `for` it replaces, so it is declined.
+    val trailingClosed =
+      split.trailing.forall(rhs => !referencesAny(rhs, List(inputSymbol)))
+    // Two effects is the point of the exercise; one is not a composition. A
+    // discard counts, so a single named generator behind a `_ <- log(...)` is
+    // enough -- that shape is exactly what `*>` exists for.
+    val effectArms =
+      split.leading.length + generators.length + split.trailing.length
+    if (
+      generators.isEmpty || effectArms < 2 || !independent ||
+      !anyReferencesInput || !trailingClosed
+    ) None
+    else {
+      val arms: List[ArrowIR] =
+        generators.map { case (_, rhs) => LiftK(in.name, in.tpe, rhs) }
+      val inputRetained = referencesAny(yieldBody, List(inputSymbol))
+      val allArms =
+        if (inputRetained) Ask(effect, in.tpe) :: arms else arms
+      val merged = allArms.reduceLeft(Merge(_, _))
+      val names =
+        (if (inputRetained) List(in.name) else Nil) ++ generators.map(
+          _._1.value
+        )
+      // `flatTap` keeps the value it taps, so several trailing discards stack
+      // with the same binders and the reshape below still sees the arms.
+      val tapped = split.trailing.foldLeft(merged) { (acc, rhs) =>
+        FlatTap(acc, names, Eff(liftF(rhs)))
+      }
+      // A single arm produces its own value, two produce a flat `(a, b)` -- in
+      // neither case is there nesting to unpack, so a `yield` that names the
+      // arms in arm order is already the arrow's output and the reshape would
+      // be the identity. Emitting it would be noise, and would also break
+      // idempotence-by-inspection for a reader.
+      val armSymbols =
+        (if (inputRetained) List(inputSymbol) else Nil) ++ bindingSymbols
+      val reshaped =
+        if (isIdentityYield(yieldBody, armSymbols)) tapped
+        else Rmap(tapped, destructureFunction(names, yieldBody))
+      // Leading discards keep their source order ahead of the work. They are
+      // lifted with an explicit parameter type rather than `Kleisli.liftF`
+      // because as the *left* operand of `*>` they are what the input type is
+      // inferred from, and `liftF` there would leave it unconstrained.
+      Some(split.leading.foldRight(reshaped) { (rhs, acc) =>
+        ProductR(LiftK(in.name, in.tpe, rhs), acc)
+      })
+    }
+  }
+
+  /** `Kleisli.liftF(rhs)` -- a plain `F[_]` as an arrow that ignores its input.
+    * Only emitted where the expected type is already known (inside a
+    * `.flatTap`), since `liftF` infers its input type from context.
+    */
+  private def liftF(rhs: Term): Term =
+    Term.Apply.After_4_6_0(
+      Term.Select(Term.Name("Kleisli"), Term.Name("liftF")),
+      Term.ArgClause(List(rhs))
+    )
+
+  /** A `yield` that just names the arms, in arm order -- so the reshape it
+    * would produce is the identity. Only the un-nested arities: beyond two arms
+    * the arrow's output is a left-nested tuple and a flat `yield (a, b, c)` is
+    * a genuine reshape.
+    */
+  private def isIdentityYield(term: Term, symbols: List[Symbol])(implicit
+      doc: SemanticDocument
+  ): Boolean =
+    symbols match {
+      case List(only) =>
+        term match {
+          case name: Term.Name => name.symbol == only
+          case _               => false
+        }
+      case List(_, _) => isTupleOf(term, symbols)
+      case _          => false
+    }
+
+  /** `yield (a, b)` written exactly as the arms' own bindings, in arm order --
+    * compared by symbol, so a name that merely *spells* like an arm but
+    * resolves elsewhere is not mistaken for it.
+    */
+  private def isTupleOf(term: Term, symbols: List[Symbol])(implicit
+      doc: SemanticDocument
+  ): Boolean =
+    term match {
+      case Term.Tuple(elements) =>
+        elements.length == symbols.length &&
+        elements.zip(symbols).forall {
+          case (name: Term.Name, expected) => name.symbol == expected
+          case _                           => false
+        }
+      case _ => false
+    }
+
+  /** A `{ case ((a, b), c) => body }` that unpacks the left-nested tuple a
+    * chain of `&&&` produces, binding each arm's result to the name the source
+    * `for` used, so the original `yield` body can be reused verbatim.
+    */
+  private def destructureFunction(names: List[String], body: Term): Term = {
+    val nested = names
+      .map(n => Pat.Var(Term.Name(n)): Pat)
+      .reduceLeft((acc, p) => Pat.Tuple(List(acc, p)))
+    Term.PartialFunction(List(Case(nested, None, body)))
+  }
 
   /** The clean `ArrowChoice` shape: a Kleisli producing an `Either` whose two
     * arms are each a Kleisli applied to the matched value --
@@ -198,14 +527,27 @@ object ArrowParser {
     */
   private def bareEffect(
       body: Term,
-      inputSymbol: Symbol
+      inputSymbol: Symbol,
+      input: Option[Input]
   )(implicit doc: SemanticDocument): Option[ArrowIR] =
-    runArgument(body) match {
-      case Some((callee, arg))
-          if arg.symbol == inputSymbol && KleisliType.isKleisli(callee) =>
-        Some(Eff(callee))
-      case _ =>
-        None
+    runArgAny(body).flatMap { case (callee, arg) =>
+      if (!KleisliType.isKleisliValue(callee)) None
+      else if (arg.symbol == inputSymbol) Some(Eff(callee))
+      // The Kleisli is fed a *projection* of the arrow input --
+      // `k((split.run.context.root, split.run.task))` -- which is exactly what
+      // `.local` expresses, so the surrounding `Kleisli { split => ... }` can
+      // go. Only a lone fan-out branch used to get this treatment; a body that
+      // *is* the single call was left wrapped, which is the common shape once
+      // `PreferKleisli` has lifted the callee.
+      else if (
+        argRoot(arg).contains(inputSymbol) &&
+        // A function argument is a combinator's own lambda (`k.local(f)`), not
+        // a projection of the input -- and re-wrapping our own output would
+        // break idempotence.
+        !arg.is[Term.Function]
+      )
+        input.map(in => Local(projectionLambda(in, arg), Eff(callee)))
+      else None
     }
 
   /** Flattens a monadic body into its effect steps and its trailing value.
@@ -559,29 +901,38 @@ object ArrowParser {
         case _: Term.Name =>
           Some(Eff(callee))
         case projection =>
-          // The projection lambda's parameter is annotated with the input type
-          // -- `(request: Request) => request.path` -- because `Kleisli.local`
-          // would otherwise infer the new input type as `Any`. Without the
-          // input type in hand, a projected branch is not offered.
-          input.map { in =>
-            val projectionFn = Term.Function(
-              Term.ParamClause(
-                List(
-                  Term.Param(
-                    Nil,
-                    Term.Name(in.name),
-                    Some(Type.Name(in.tpe)),
-                    None
-                  )
-                ),
-                None
-              ),
-              projection
-            )
-            Local(projectionFn, Eff(callee))
-          }
+          input.map(in => Local(projectionLambda(in, projection), Eff(callee)))
       }
     }
+
+  /** `(request: Request) => request.path` -- the lambda a `.local` reshape
+    * needs. The parameter is annotated with the input type because
+    * `Kleisli.local` would otherwise infer the new input type as `Any`, so
+    * without the input type in hand a projected reshape is not offered at all.
+    * The parameter reuses the source's own name for the input, which is what
+    * lets the projection expression be carried over verbatim.
+    */
+  private def projectionLambda(in: Input, projection: Term): Term.Function =
+    Term.Function(
+      Term.ParamClause(
+        List(Term.Param(Nil, Term.Name(in.name), Some(inputType(in)), None)),
+        None
+      ),
+      projection
+    )
+
+  /** The input type as a `Type`, parsed rather than wrapped in a `Type.Name`.
+    * `Type.Name("(Int, String)")` is not an identifier, so the prettyprinter
+    * quotes it into `` `(Int, String)` `` -- which does not compile. Tuple and
+    * applied input types are the norm once `PreferKleisli` has tupled a
+    * multi-parameter def, so this is the common case, not an edge one.
+    */
+  private def inputType(in: Input): Type =
+    dialects
+      .Scala3(in.tpe)
+      .parse[Type]
+      .toOption
+      .getOrElse(Type.Name(in.tpe))
 
   /** `yield (a, b, c)` in generator order reshapes to nothing (`None`); any
     * other tuple or expression reshapes with a `map`. `&&&` nests its output as

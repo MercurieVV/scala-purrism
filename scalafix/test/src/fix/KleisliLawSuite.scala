@@ -1,9 +1,11 @@
 package fix
 
 import cats.data.Kleisli
+import cats.syntax.apply._
 import cats.syntax.arrow._
 import cats.syntax.choice._
 import cats.syntax.compose._
+import cats.syntax.flatMap._
 import munit.ScalaCheckSuite
 import org.scalacheck.Prop.forAll
 
@@ -296,6 +298,95 @@ final class KleisliLawSuite extends ScalaCheckSuite {
   }
 
   property(
+    "PreferArrow aggressive: ask &&& liftK fan-out matches the input-capturing for"
+  ) {
+    forAll {
+      (
+          input: Int,
+          aOut: Map[Int, Option[Int]],
+          aFallback: Option[Int],
+          bOut: Map[Int, Option[String]],
+          bFallback: Option[String]
+      ) =>
+        // Plain effectful functions of the input -- not Kleislis -- exactly the
+        // shape aggressive mode lifts. The `yield` captures the input too, so
+        // the point-free form must retain it with a leading `Kleisli.ask`.
+        def effA(i: Int): Option[Int] = aOut.getOrElse(i, aFallback)
+        def effB(i: Int): Option[String] = bOut.getOrElse(i, bFallback)
+
+        val original: Option[(Int, Int, String)] =
+          for {
+            a <- effA(input)
+            b <- effB(input)
+          } yield (input, a, b)
+
+        // Exactly what aggressive mode emits: each generator lifted into a
+        // `Kleisli`, fanned out with `&&&`, the input kept by `Kleisli.ask`,
+        // and the nested tuple destructured back in a trailing `.map`.
+        val refactored: Option[(Int, Int, String)] =
+          (Kleisli.ask[Option, Int]
+            &&& Kleisli((i: Int) => effA(i))
+            &&& Kleisli((i: Int) => effB(i)))
+            .map { case ((i, a), b) => (i, a, b) }
+            .run(input)
+
+        assertEquals(refactored, original)
+    }
+  }
+
+  property(
+    "PreferArrow aggressive: ask &&& liftK fan-out short-circuits on the first failure"
+  ) {
+    forAll { (input: Int) =>
+      def effA(i: Int): Option[Int] = None
+      def effB(i: Int): Option[String] = Some(i.toString)
+
+      val original: Option[(Int, Int, String)] =
+        for {
+          a <- effA(input)
+          b <- effB(input)
+        } yield (input, a, b)
+      val refactored: Option[(Int, Int, String)] =
+        (Kleisli.ask[Option, Int]
+          &&& Kleisli((i: Int) => effA(i))
+          &&& Kleisli((i: Int) => effB(i)))
+          .map { case ((i, a), b) => (i, a, b) }
+          .run(input)
+
+      assertEquals(refactored, original)
+      assertEquals(refactored, None)
+    }
+  }
+
+  property(
+    "PreferArrow aggressive: an arm that ignores the input still matches the for, with no reshape at arity 2"
+  ) {
+    forAll {
+      (
+          input: Int,
+          sizes: Map[Int, Option[Int]],
+          sizeFallback: Option[Int],
+          total: Option[Int]
+      ) =>
+        def size(i: Int): Option[Int] = sizes.getOrElse(i, sizeFallback)
+
+        val original: Option[(Int, Int)] =
+          for {
+            s <- size(input)
+            t <- total
+          } yield (s, t)
+
+        // Exactly what aggressive mode emits: the second arm ignores the input,
+        // and `yield (s, t)` is the arms in order, so no trailing `.map`.
+        val refactored: Option[(Int, Int)] =
+          (Kleisli((i: Int) => size(i)) &&& Kleisli((_: Int) => total))
+            .run(input)
+
+        assertEquals(refactored, original)
+    }
+  }
+
+  property(
     "PreferArrow Pattern E: Either branching matches k >>> (onLeft ||| onRight)"
   ) {
     forAll {
@@ -322,6 +413,78 @@ final class KleisliLawSuite extends ScalaCheckSuite {
           }
         val refactored: Option[Boolean] =
           (classify >>> (onLeft ||| onRight)).run(input)
+
+        assertEquals(refactored, original)
+    }
+  }
+
+  property(
+    "PreferArrow aggressive: a leading discard generator matches announce *> work"
+  ) {
+    forAll {
+      (
+          input: Int,
+          announced: Map[Int, Option[Unit]],
+          announceFallback: Option[Unit],
+          sizes: Map[Int, Option[Int]],
+          sizeFallback: Option[Int]
+      ) =>
+        def announce(i: Int): Option[Unit] =
+          announced.getOrElse(i, announceFallback)
+        def size(i: Int): Option[Int] = sizes.getOrElse(i, sizeFallback)
+
+        val original: Option[Int] =
+          for {
+            _ <- announce(input)
+            s <- size(input)
+          } yield s
+
+        // What aggressive mode emits for a leading `_ <- ...`: both sides are
+        // fed the same input, the left result is dropped, and short-circuiting
+        // still happens on the left first -- which is why a `None` from
+        // `announce` must suppress `size` here exactly as it does in the `for`.
+        val refactored: Option[Int] =
+          (Kleisli((i: Int) => announce(i)) *> Kleisli((i: Int) => size(i)))
+            .run(input)
+
+        assertEquals(refactored, original)
+    }
+  }
+
+  property(
+    "PreferArrow aggressive: a trailing discard generator matches (a &&& b).flatTap(...)"
+  ) {
+    forAll {
+      (
+          input: Int,
+          sizes: Map[Int, Option[Int]],
+          sizeFallback: Option[Int],
+          actives: Map[Int, Option[Boolean]],
+          activeFallback: Option[Boolean],
+          records: Map[Int, Option[Unit]],
+          recordFallback: Option[Unit]
+      ) =>
+        def size(i: Int): Option[Int] = sizes.getOrElse(i, sizeFallback)
+        def active(i: Int): Option[Boolean] =
+          actives.getOrElse(i, activeFallback)
+        def record(s: Int): Option[Unit] = records.getOrElse(s, recordFallback)
+
+        val original: Option[(Int, Boolean)] =
+          for {
+            s <- size(input)
+            a <- active(input)
+            _ <- record(s)
+          } yield (s, a)
+
+        // The tap runs last and keeps the fanned-out pair, so a `None` from
+        // `record` still fails the whole arrow -- `flatTap` discards the
+        // *value*, not the effect.
+        val refactored: Option[(Int, Boolean)] =
+          (Kleisli((i: Int) => size(i)) &&& Kleisli((i: Int) => active(i)))
+            .flatTap { case (s, _) =>
+              Kleisli.liftF[Option, Int, Unit](record(s))
+            }
+            .run(input)
 
         assertEquals(refactored, original)
     }
