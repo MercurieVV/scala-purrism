@@ -171,6 +171,53 @@ Whether the two values are really the same concept is a domain question, so the
 rule reports rather than guesses. Adding the named symbol to `widen` pulls it in
 and propagation continues through it.
 
+#### Auto-discovering and propagating in one pass
+
+`PropagateOpaqueType.autoDiscover` runs the same ranking the explorer below
+uses, in-process, and folds the top candidates straight into this rule's own
+`types` — one Scalafix invocation both finds and rewrites, no separate
+explorer run and no intermediate `.conf` file required:
+
+```hocon
+rules = [ PropagateOpaqueType ]
+
+PropagateOpaqueType.types = [
+  { name = "BranchName", seeds = [ "_empty_/TaskRun#branchName." ] }
+]
+
+PropagateOpaqueType.autoDiscover {
+  enabled = true
+  topN = 10
+  basicTypes = [ "scala/Predef.String#", "scala/Int#" ]
+}
+```
+
+| key | default | meaning |
+| --- | --- | --- |
+| `enabled` | `false` | turn discovery on |
+| `topN` | `10` | how many discovered clusters to add |
+| `basicTypes` | `String, Int, Long, Double, Boolean, UUID` | underlying types worth wrapping |
+| `serialize` | `false` | see below — **not supported**, kept only to fail with a pointer to the explorer |
+
+Discovered candidates are **additive** to any hand-written `types`, but a
+hand-written spec always wins a conflict: a discovered candidate is dropped if
+its name or any of its seeds is already claimed by a manual entry. Everything
+that survives is applied together in this rule's one `fix()` pass, exactly as
+several hand-written `types` entries are today — so two discovered clusters
+that touch the same declarations merge (or conflict) the same way two
+hand-written ones would.
+
+That single-pass merge is also its limit: unlike the explorer's own
+recompile-between-candidates loop, nothing here reruns the compiler between
+clusters, so it cannot serialize overlapping edits across files the way
+`ExploreOpaques --target` can. Setting `autoDiscover.serialize = true` makes
+that explicit by failing configuration outright — this module deliberately
+excludes `scalafix-cli`/`-interfaces` so the published rule jar never drags
+the CLI in as a transitive `scalafixDependencies` entry, and that same
+exclusion is what the serialized apply needs. Use [the explorer
+below](#finding-seeds-automatically) instead when a codebase needs several
+overlapping passes.
+
 ### Finding candidates automatically
 
 Hand-picking seeds does not scale to a whole codebase, so the explorer picks
