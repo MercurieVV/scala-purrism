@@ -134,16 +134,44 @@ rules = [
 ]
 ```
 
-Every rule except `PropagateOpaqueType` is config-free — listing it in `rules`
-is the whole setup.
+Every rule except `PropagateOpaqueType` runs with no configuration — listing it
+in `rules` is the whole setup. `PreferKleisli` and `PreferArrow` each have one
+optional opt-in flag, described below.
+
+### The two-stage pipeline
+
+`PreferKleisli` and `PreferArrow` compose, but **not in a single scalafix run**.
+`PreferArrow` reads the SemanticDB payload to decide what is a `Kleisli`; after
+`PreferKleisli` re-shapes a signature, that payload describes the *old* one. So
+a project-wide refactoring is three steps:
+
+```bash
+scalafix --rules PreferKleisli ...   # lift effectful defs to Kleisli
+<recompile>                          # refresh SemanticDB for the new signatures
+scalafix --rules PreferArrow ...     # compose the lifted Kleislis into arrows
+```
+
+Running both rules in one invocation is not wrong, it is just weaker:
+`PreferArrow` will not see anything `PreferKleisli` lifted in that same pass.
+
+`scripts/purrism-pipeline.sh` drives all three steps against a target project:
+
+```bash
+scripts/purrism-pipeline.sh ../my-project [rule-version]
+```
+
+It writes a default `.scalafix-pipeline.conf` (both opt-in flags on) if none
+exists, recompiles between stages, and passes only the files the compiler
+emitted a payload for — a `.scala` script that is not part of the build would
+otherwise fail the whole run with "SemanticDB not found".
 
 ## Rules
 
 | rule | what it does | configuration |
 | --- | --- | --- |
 | [`TypeclassWeakening`](#typeclassweakening) | weaken over-strong effect bounds | none |
-| [`PreferKleisli`](#preferkleisli) | effectful functions → `Kleisli` | none |
-| [`PreferArrow`](#preferarrow) | `Kleisli` bodies → point-free `>>>`, `.map`, `&&&` | none |
+| [`PreferKleisli`](#preferkleisli) | effectful functions → `Kleisli` | optional — `crossFile` |
+| [`PreferArrow`](#preferarrow) | `Kleisli` bodies → point-free `>>>`, `.map`, `&&&` | optional — `aggressive` |
 | [`PreferCatsSyntax`](#prefercatssyntax) | typeclass calls → Cats syntax | none |
 | [`SimplifyCatsExpressions`](#simplifycatsexpressions) | collapse expressions into existing combinators | none |
 | [`PropagateOpaqueType`](#propagateopaquetype) | propagate an `opaque type` through the program | required — seeds |
@@ -160,7 +188,30 @@ monadic operations are used.
 Refactors effectful functions into `Kleisli` compositions — introduction of the
 `Kleisli` wrapper, and the `.local` input-reshape split.
 
-**Configuration:** none. Add `PreferKleisli` to `rules`.
+`def m[F[_]: Sync](a: A, b: B): F[R]` becomes
+`def m[F[_]: Sync]: Kleisli[F, (A, B), R]`, and its call sites are re-split to
+match. A parameter that is an *effect callback* — a function whose result
+mentions the effect, `progress: String => F[Unit]` — is not data flowing through
+the arrow, so it stays a leading parameter list rather than joining the tuple:
+`m(progress)((a, b))`.
+
+**Configuration:**
+
+```hocon
+PreferKleisli.crossFile = true    # default false
+```
+
+Scalafix rewrites one document at a time, so by default only defs whose callers
+are guaranteed to be in the same file are lifted. `crossFile = true` reads the
+SemanticDB payload for the whole project up front and decides once, for every
+symbol, whether it may be lifted and how its arguments split — which is what
+allows a **public** def to be re-shaped, with callers in other files following.
+Turn it on for a whole-project run; leave it off for single-file work.
+
+Three shapes are always refused, because a re-shape would outrun its call sites:
+a def passed *unapplied* anywhere (`Kleisli` does not conform to a function
+type), a def whose body calls another def being re-shaped (deferred to a later
+run), and a def with a placeholder call site.
 
 ### PreferArrow
 
@@ -175,8 +226,24 @@ signature untouched — as well as lifting `def m(x: A): F[B]` to a `Kleisli`
 return. Kleisli identity is resolved through type aliases (`-->`, `Flow`,
 fully-qualified, inferred) via SemanticDB.
 
-**Configuration:** none; the readability budget is fixed. Add `PreferArrow` to
-`rules`. Pattern catalogue: [docs/ARROW_PATTERNS.md](docs/ARROW_PATTERNS.md).
+**Configuration:**
+
+```hocon
+PreferArrow.aggressive = true     # default false
+```
+
+By default the readability budget declines any rewrite whose point-free form
+would read worse than the source — a declined site is a correct outcome, not a
+failure. `aggressive = true` relaxes it: generators calling *plain* `F`-returning
+methods are lifted in place into `Kleisli { x => ... }` so they can fan out with
+`&&&`, and a `yield` that still needs the input keeps it via a leading
+`Kleisli.ask`. Discard generators (`_ <- log(...)`) are kept out of the fan-out
+and rendered as `*>` before the work or `.flatTap` after it, so their thrown-away
+results cost no tupling. The result is provably equivalent but busier than the
+source, which is why it is opt-in.
+
+Pattern catalogue and the aggressive-mode rules:
+[docs/ARROW_PATTERNS.md](docs/ARROW_PATTERNS.md).
 
 ### PreferCatsSyntax
 

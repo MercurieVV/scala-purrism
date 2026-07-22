@@ -31,11 +31,18 @@ object ArrowNormalize {
       case AndThen(a, Lift(f)) => Rmap(step(a), f)
       case AndThen(Lift(f), a) => Local(f, step(a))
 
-      case AndThen(l, r) => AndThen(step(l), step(r))
-      case Merge(l, r)   => Merge(step(l), step(r))
-      case Choice(l, r)  => Choice(step(l), step(r))
-      case Local(f, a)   => Local(f, step(a))
-      case Rmap(a, f)    => Rmap(step(a), f)
-      case leaf          => leaf
+      // `*>` is associative, so right-associating gives it one spine too and
+      // keeps the printed form free of redundant grouping.
+      case ProductR(ProductR(a, b), c) => step(ProductR(a, ProductR(b, c)))
+
+      case AndThen(l, r)            => AndThen(step(l), step(r))
+      case Merge(l, r)              => Merge(step(l), step(r))
+      case Choice(l, r)             => Choice(step(l), step(r))
+      case ProductR(l, r)           => ProductR(step(l), step(r))
+      case FlatTap(a, binders, tap) => FlatTap(step(a), binders, step(tap))
+      case Local(f, a)              => Local(f, step(a))
+      case Rmap(a, f)               => Rmap(step(a), f)
+      case As(a, v)                 => As(step(a), v)
+      case leaf                     => leaf
     }
 }

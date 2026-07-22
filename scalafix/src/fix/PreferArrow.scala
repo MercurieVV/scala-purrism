@@ -2,12 +2,15 @@ package fix
 
 import scala.meta._
 
+import metaconfig.ConfDecoder
+import metaconfig.Configured
 import scalafix.v1._
 
 import fix.arrow.ArrowIR
 import fix.arrow.ArrowNormalize
 import fix.arrow.ArrowParser
 import fix.arrow.ArrowRender
+import fix.arrow.KleisliScope
 import fix.arrow.KleisliType
 import fix.arrow.ReadabilityBudget
 
@@ -76,15 +79,104 @@ final case class ArrowBudgetDiagnostic(
   * never by matching the token `Kleisli` or an alias spelling, per
   * `docs/RULES.md`.
   */
-final class PreferArrow extends SemanticRule("PreferArrow") {
+/** `PreferArrow.aggressive = true` opts a codebase into lifting plain effectful
+  * `for` generators into Kleislis and fanning them out, accepting busier
+  * point-free output for wider coverage. Off by default, so the conservative
+  * budget governs unless a project asks otherwise.
+  */
+/** @param reportSkips
+  *   report every Kleisli body the parser did not recognise at all, with the
+  *   shape it stopped on.
+  *
+  * A body the readability budget declines already reports itself
+  * ([[ArrowBudgetDiagnostic]]); a body the *parser* never understood is silent,
+  * and the two are indistinguishable from the outside -- which is how a corpus
+  * ends up with fifty untouched Kleislis and no evidence why. Off by default:
+  * this is a census instrument, one warning per unrecognised body, not
+  * something to leave on in a build.
+  */
+final case class PreferArrowConfig(
+    aggressive: Boolean = false,
+    reportSkips: Boolean = false
+)
 
-  override def fix(implicit doc: SemanticDocument): Patch =
+object PreferArrowConfig {
+  val default: PreferArrowConfig = PreferArrowConfig()
+  implicit val decoder: ConfDecoder[PreferArrowConfig] =
+    ConfDecoder.from { conf =>
+      conf
+        .getOrElse("aggressive")(default.aggressive)
+        .product(conf.getOrElse("reportSkips")(default.reportSkips))
+        .map(PreferArrowConfig.apply.tupled)
+    }
+}
+
+/** A Kleisli body the parser did not recognise, labelled with the shape it
+  * stopped on, so a corpus can be counted by cause instead of guessed at.
+  * Emitted only under `PreferArrow.reportSkips`.
+  */
+final case class ArrowSkipDiagnostic(
+    override val position: scala.meta.inputs.Position,
+    shape: String
+) extends Diagnostic {
+  override def message: String =
+    s"PreferArrow did not recognise this Kleisli body: $shape."
+  override def severity: scalafix.lint.LintSeverity =
+    scalafix.lint.LintSeverity.Warning
+}
+
+final class PreferArrow(
+    config: PreferArrowConfig,
+    classpath: List[java.nio.file.Path]
+) extends SemanticRule("PreferArrow") {
+
+  def this() = this(PreferArrowConfig.default, Nil)
+
+  private val aggressive: Boolean = config.aggressive
+
+  override def withConfiguration(
+      configuration: Configuration
+  ): Configured[Rule] =
+    configuration.conf
+      .getOrElse("PreferArrow")(PreferArrowConfig.default)
+      // `--semanticdb-targetroots` is prepended to the scalac classpath by the
+      // CLI, so the payloads arrive here without a second configuration key --
+      // the same route `PreferKleisli` takes to its cross-file scope.
+      .map(new PreferArrow(_, configuration.scalacClasspath.map(_.toNIO)))
+
+  /** Built once per rule instance, not per file: the scan parses every payload
+    * in the project, and a rule instance outlives the documents it is applied
+    * to.
+    */
+  private lazy val scope: KleisliScope = KleisliScope.load(classpath)
+
+  /** Defs the project hands over unapplied somewhere, which therefore cannot
+    * become Kleislis -- see [[KleisliLiftScope.valueReferences]]. Signature
+    * lifting changes a declaration other files call, so the veto has to be
+    * computed from the whole project; a per-file view cannot see the reference.
+    *
+    * The body-only entry needs no such check: it rewrites inside an expression
+    * and leaves every signature exactly as it was.
+    */
+  private lazy val liftVetoed: Set[String] =
+    if (classpath.isEmpty) Set.empty
+    else {
+      val index = _root_.fix.opaque.SemanticdbIndex.load(classpath)
+      KleisliLiftScope.valueReferences(
+        PropagateOpaqueType.inferSourceroot(index, classpath),
+        index
+      )
+    }
+
+  override def fix(implicit doc: SemanticDocument): Patch = {
+    KleisliScope.install(scope)
     doc.tree.collect {
       case applyTerm: Term.Apply if KleisliType.isKleisliApply(applyTerm) =>
-        PreferArrow.rewriteBody(applyTerm)
-      case defn: Defn.Def =>
-        PreferArrow.rewriteSignature(defn)
+        PreferArrow.rewriteBody(applyTerm, config)
+      case defn: Defn.Def if !liftVetoed.contains(defn.name.symbol.value) =>
+        PreferArrow.rewriteSignature(defn, config)
     }.asPatch
+  }
 }
 
 object PreferArrow {
@@ -106,6 +198,8 @@ object PreferArrow {
   private val ComposeSyntaxImporter: Importer = catsSyntaxImporter("compose")
   private val ArrowSyntaxImporter: Importer = catsSyntaxImporter("arrow")
   private val ChoiceSyntaxImporter: Importer = catsSyntaxImporter("choice")
+  private val ApplySyntaxImporter: Importer = catsSyntaxImporter("apply")
+  private val FlatMapSyntaxImporter: Importer = catsSyntaxImporter("flatMap")
 
   private def renderModifiers(mods: List[Mod]): String =
     mods.map(_.syntax + " ").mkString
@@ -129,7 +223,8 @@ object PreferArrow {
   // ---- body-only entry ----------------------------------------------------
 
   def rewriteBody(
-      applyTerm: Term.Apply
+      applyTerm: Term.Apply,
+      config: PreferArrowConfig
   )(implicit doc: SemanticDocument): Patch =
     kleisliLambda(applyTerm) match {
       case None => Patch.empty
@@ -140,8 +235,14 @@ object PreferArrow {
         val input = param.decltpe
           .map(_.syntax)
           .orElse(enclosingKleisliInputType(applyTerm))
-          .map(tpe => ArrowParser.Input(inputParam.value, tpe))
-        compile(fn.body, inputSymbol, input) match {
+          .map(tpe =>
+            ArrowParser.Input(
+              inputParam.value,
+              tpe,
+              enclosingKleisliEffectType(applyTerm)
+            )
+          )
+        compile(fn.body, inputSymbol, input, config.aggressive) match {
           case Compiled.Emit(rendered, imports) =>
             Patch.replaceTree(applyTerm, rendered) +
               imports.map(Patch.addGlobalImport).asPatch
@@ -151,14 +252,92 @@ object PreferArrow {
             ArrowParser
               .shadowedInput(fn.body, inputParam.value, inputSymbol)
               .map(pos => Patch.lint(FanOutShadowedInputDiagnostic(pos)))
-              .getOrElse(Patch.empty)
+              .getOrElse(skipReport(applyTerm.pos, fn.body, config))
         }
+    }
+
+  /** Names the shape an unrecognised body stopped on, coarsely enough to count
+    * a corpus by cause. Deliberately syntactic: the point is to say which
+    * *entry* the parser wanted and did not get, not to re-derive its reasons.
+    */
+  private def skipReport(
+      pos: scala.meta.inputs.Position,
+      body: Term,
+      config: PreferArrowConfig
+  )(implicit doc: SemanticDocument): Patch =
+    if (!config.reportSkips) Patch.empty
+    else
+      Patch.lint(
+        ArrowSkipDiagnostic(
+          pos,
+          s"${skipShape(body)}, ${effectSteps(body)} effect steps"
+        )
+      )
+
+  /** How many effects a body sequences, counted syntactically.
+    *
+    * This is the number that decides whether an unrecognised body is worth
+    * teaching the parser about at all. A body with fewer than two effect steps
+    * has no composition to express -- `Kleisli { x => f(x).pure[F] }` is pure
+    * computation with a single lift, and point-free would be strictly worse --
+    * so it is a *correct* skip, not a missed one. Without this figure a census
+    * counts those together with genuine misses and overstates the opportunity,
+    * which is exactly what the first run of `reportSkips` did.
+    *
+    * Counted are bind points, not types: `for` generators, the `flatMap`-family
+    * selections, the sequencing operators, and applications of a Kleisli. A
+    * syntactic proxy is the right instrument here -- it is being used to rank
+    * shapes for attention, and an approximate rank costs nothing if it is
+    * wrong, whereas an inference pass would cost a great deal to be exact.
+    */
+  private def effectSteps(body: Term)(implicit doc: SemanticDocument): Int =
+    body.collect {
+      case Term.ForYield.After_4_9_9(enumerators, _) =>
+        enumerators.enums.count(_.is[Enumerator.Generator])
+      case Term.Select(_, Term.Name("flatMap" | "flatTap" | "productR")) => 1
+      case infix: Term.ApplyInfix
+          if Set("*>", ">>", "&&&", ">>>", "|||").contains(infix.op.value) =>
+        1
+      case applyTerm: Term.Apply if isKleisliApplication(applyTerm) => 1
+    }.sum
+
+  /** A Kleisli being *run* -- `k(x)`, `k.run(x)`, `k.apply(x)`. The wrapping
+    * `Kleisli { ... }` constructor itself is not one, or every body would count
+    * its own wrapper.
+    */
+  private def isKleisliApplication(
+      applyTerm: Term.Apply
+  )(implicit doc: SemanticDocument): Boolean =
+    !KleisliType.isKleisliApply(applyTerm) && {
+      val callee = applyTerm.fun match {
+        case Term.Select(receiver, Term.Name("run" | "apply")) => receiver
+        case other                                             => other
+      }
+      KleisliType.isKleisliValue(callee)
+    }
+
+  private def skipShape(body: Term): String =
+    body match {
+      case _: Term.ForYield => "for-comprehension the parser could not flatten"
+      case _: Term.Match    => "match expression"
+      case _: Term.If       => "if/else"
+      case _: Term.Try      => "try/catch"
+      case _: Term.Block    => "block with statements, not a single expression"
+      case _: Term.Function => "function literal"
+      case _: Term.NewAnonymous | _: Term.New => "constructor call"
+      case Term.Apply.After_4_6_0(Term.Select(_, name), _) =>
+        s"call chain ending in .${name.value}"
+      case _: Term.Apply  => "plain application"
+      case _: Term.Select => "field or nullary selection"
+      case _: Term.Name   => "bare name"
+      case other          => other.getClass.getSimpleName
     }
 
   // ---- signature-lifting entry --------------------------------------------
 
   def rewriteSignature(
-      defn: Defn.Def
+      defn: Defn.Def,
+      config: PreferArrowConfig
   )(implicit doc: SemanticDocument): Patch =
     (for {
       param <- singlePlainParameter(defn)
@@ -174,13 +353,22 @@ object PreferArrow {
     } yield (param, effect._1, effect._2)) match {
       case None => Patch.empty
       case Some((param, effectType, resultType)) =>
-        compile(defn.body, param.name.symbol, inputOf(param)) match {
+        compile(
+          defn.body,
+          param.name.symbol,
+          inputOf(param, effectType),
+          config.aggressive
+        ) match {
           case Compiled.Emit(rendered, imports) =>
             val parameterType = param.decltpe.map(_.syntax).getOrElse("")
             val signature =
               s"""${renderModifiers(
                   defn.mods
-                )}def ${defn.name.syntax}: Kleisli[$effectType, $parameterType, $resultType] =
+                )}def ${defn.name.syntax}${typeParamSyntax(
+                  defn
+                )}${implicitClauseSyntax(
+                  defn
+                )}: Kleisli[$effectType, $parameterType, $resultType] =
                  |  $rendered""".stripMargin
             Patch.replaceTree(defn, signature) +
               Patch.addGlobalImport(Symbol("cats/data/Kleisli#")) +
@@ -194,6 +382,32 @@ object PreferArrow {
               .getOrElse(Patch.empty)
         }
     }
+
+  /** The def's own type parameters, kept verbatim.
+    *
+    * Dropping them is not cosmetic: the effect constructor of the new
+    * `Kleisli[F, A, B]` return type is almost always one of them, so a lifted
+    * `def progress[F[_]: Sync](m: String): F[Unit]` that loses its clause
+    * becomes `def progress: Kleisli[F, String, Unit]` with `F` unbound, and the
+    * project stops compiling.
+    */
+  private def typeParamSyntax(defn: Defn.Def): String =
+    defn.paramClauseGroups.headOption
+      .map(_.tparamClause)
+      .filter(_.values.nonEmpty)
+      .map(_.syntax)
+      .getOrElse("")
+
+  /** The `implicit`/`using` clauses, kept after the rewritten def's now-absent
+    * explicit clause. A context bound desugars into one of these, so the same
+    * unbound-`F` failure follows from dropping them.
+    */
+  private def implicitClauseSyntax(defn: Defn.Def): String =
+    defn.paramClauseGroups.headOption.toList
+      .flatMap(_.paramClauses)
+      .filter(_.mod.nonEmpty)
+      .map(_.syntax)
+      .mkString
 
   /** One plain value parameter and nothing else in the clause. Type parameters
     * on the def are allowed -- `def m[F[_]: Sync](x: A): F[B]` is the norm, not
@@ -238,8 +452,13 @@ object PreferArrow {
   /** The input type for a `def m(x: A): F[B]` signature-lifting candidate --
     * the parameter's own declared type.
     */
-  private def inputOf(param: Term.Param): Option[ArrowParser.Input] =
-    param.decltpe.map(tpe => ArrowParser.Input(param.name.value, tpe.syntax))
+  private def inputOf(
+      param: Term.Param,
+      effectType: String
+  ): Option[ArrowParser.Input] =
+    param.decltpe.map(tpe =>
+      ArrowParser.Input(param.name.value, tpe.syntax, Some(effectType))
+    )
 
   /** The input type of a `Kleisli { x => ... }` body, read from the second type
     * argument of the enclosing declaration's `Kleisli[F, A, B]` return type
@@ -250,6 +469,34 @@ object PreferArrow {
     applyTerm.parent
       .flatMap(enclosingDeclType)
       .flatMap(kleisliInputArg)
+
+  /** The `F` in a written `Kleisli[F, A, B]` / `-->[F, A, B]` / `Flow[F][A, B]`
+    * enclosing return type -- the effect constructor, needed to emit a typed
+    * `Kleisli.ask[F, A]` in aggressive mode.
+    */
+  private def enclosingKleisliEffectType(
+      applyTerm: Term.Apply
+  ): Option[String] =
+    applyTerm.parent
+      .flatMap(enclosingDeclType)
+      .flatMap(kleisliEffectArg)
+
+  private def kleisliEffectArg(tpe: Type): Option[String] =
+    tpe match {
+      case applied: Type.Apply =>
+        (applied.tpe, applied.argClause.values) match {
+          // `Kleisli[F, A, B]` / `-->[F, A, B]` -- the effect is the first arg.
+          case (_, List(f, _, _)) => Some(f.syntax)
+          // `Flow[F][A, B]` -- the effect is the alias's own argument.
+          case (inner: Type.Apply, List(_, _)) =>
+            inner.argClause.values match {
+              case List(f) => Some(f.syntax)
+              case _       => None
+            }
+          case _ => None
+        }
+      case _ => None
+    }
 
   private def enclosingDeclType(tree: Tree): Option[Type] =
     tree match {
@@ -281,9 +528,10 @@ object PreferArrow {
   private def compile(
       body: Term,
       inputSymbol: Symbol,
-      input: Option[ArrowParser.Input] = None
+      input: Option[ArrowParser.Input],
+      aggressive: Boolean
   )(implicit doc: SemanticDocument): Compiled =
-    ArrowParser.parse(body, inputSymbol, input) match {
+    ArrowParser.parse(body, inputSymbol, input, aggressive) match {
       case None => Compiled.Skip
       case Some(rawIr) =>
         val ir = ArrowNormalize(rawIr)
@@ -291,7 +539,8 @@ object PreferArrow {
         ReadabilityBudget.verdict(
           ir,
           rendered.length,
-          body.syntax.length
+          body.syntax.length,
+          aggressive
         ) match {
           case ReadabilityBudget.Accept =>
             Compiled.Emit(rendered, syntaxImports(ir))
@@ -303,15 +552,28 @@ object PreferArrow {
   /** The cats syntax imports the rendered arrow needs, one per operator family,
     * since the packages are independent: `>>>` is `cats.syntax.compose._`,
     * `&&&` is `cats.syntax.arrow._`, and `|||` is `cats.syntax.choice._`. A
-    * tree that mixes them needs each.
+    * tree that mixes them needs each: `*>` is `cats.syntax.apply._` and
+    * `flatTap` is `cats.syntax.flatMap._`.
+    *
+    * Already-present imports are dropped. `Patch.addGlobalImport` deduplicates
+    * the `Symbol` overload but not the `Importer` one, and these packages are
+    * routinely imported by the very `for`-comprehension being rewritten --
+    * `flatMap` in particular -- so without this the rewrite emits the same
+    * wildcard import twice.
     */
-  private def syntaxImports(ir: ArrowIR): List[Importer] = {
+  private def syntaxImports(ir: ArrowIR)(implicit
+      doc: SemanticDocument
+  ): List[Importer] = {
     def has(pred: PartialFunction[ArrowIR, Unit]): Boolean =
       ArrowIR.fold(ir)(false)((acc, node) => acc || pred.isDefinedAt(node))
+    val present =
+      doc.tree.collect { case importer: Importer => importer.syntax }.toSet
     List(
       Option.when(has { case _: ArrowIR.AndThen => })(ComposeSyntaxImporter),
       Option.when(has { case _: ArrowIR.Merge => })(ArrowSyntaxImporter),
-      Option.when(has { case _: ArrowIR.Choice => })(ChoiceSyntaxImporter)
-    ).flatten
+      Option.when(has { case _: ArrowIR.Choice => })(ChoiceSyntaxImporter),
+      Option.when(has { case _: ArrowIR.ProductR => })(ApplySyntaxImporter),
+      Option.when(has { case _: ArrowIR.FlatTap => })(FlatMapSyntaxImporter)
+    ).flatten.filterNot(importer => present.contains(importer.syntax))
   }
 }
