@@ -30,8 +30,8 @@ object app extends ScalaModule {
 }
 
 object docs extends ScalaModule {
-  def scalaVersion = "3.3.4"
-  def ivyDeps = Agg(ivy"org.scalameta::mdoc:2.9.0")
+  def scalaVersion = "3.3.8"
+  def ivyDeps = Agg(ivy"org.scalameta::mdoc:2.9.1")
 }
 
 def prePush() = T.command {

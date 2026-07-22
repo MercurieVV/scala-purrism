@@ -144,7 +144,6 @@ object GitPreCommit:
               res.exitCode
           else 0
 
-
       if lintExit != 0 then
         println("\n[ERROR] Code linting check failed!")
         println("Please run linting to fix it:")

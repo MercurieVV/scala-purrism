@@ -55,3 +55,4 @@ executor.log
 stdout.log
 prompt.txt
 /.gh-tasks-llm-executor/
+.worktrees/
