@@ -69,20 +69,111 @@ final class GraphBuilder(index: SemanticdbIndex, sourceroot: Path) {
           }
         }.flatten
 
-        val valEdges = tree.collect {
-          case Defn.Val(_, List(Pat.Var(name)), _, rhs) =>
-            ctx.symbolOf(name).toList.flatMap { valSymbol =>
-              tailExpressions(rhs).flatMap { tail =>
-                ctx.valueNode(tail).map { source =>
+        val valEdges = tree.collect { case Defn.Val(_, pats, _, rhs) =>
+          tailExpressions(rhs).flatMap { tail =>
+            ctx.valueNode(tail).toList.flatMap { sourceNode =>
+              pats.flatMap(pat => patternEdges(pat, sourceNode, ctx))
+            }
+          }
+        }.flatten
+
+        val defaultParamEdges = tree.collect { case param: Term.Param =>
+          (ctx.symbolOf(param.name), param.default) match {
+            case (Some(paramSymbol), Some(defaultTerm)) =>
+              ctx
+                .valueNode(defaultTerm)
+                .map { source =>
                   Edge(
                     source,
-                    Node(valSymbol, TypePath.root),
-                    EdgeKind.InferredVal,
-                    ctx.provenanceOf(tail)
+                    Node(paramSymbol, TypePath.root),
+                    EdgeKind.ArgToParam,
+                    ctx.provenanceOf(defaultTerm)
                   )
                 }
+                .toList
+            case _ => Nil
+          }
+        }.flatten
+
+        val matchEdges = tree.collect { case Term.Match(scrutinee, cases) =>
+          ctx.valueNode(scrutinee).toList.flatMap { sourceNode =>
+            cases.flatMap(c => patternEdges(c.pat, sourceNode, ctx))
+          }
+        }.flatten
+
+        val generatorEdges = tree.collect {
+          case Enumerator.Generator(pat, rhs) =>
+            ctx.valueNode(rhs).toList.flatMap { sourceNode =>
+              patternEdges(
+                pat,
+                Node(sourceNode.symbol, sourceNode.path / 0),
+                ctx
+              )
+            }
+        }.flatten
+
+        val receiverEdges = tree.collect {
+          case select @ Term.Select(qual, name) =>
+            ctx.symbolOf(name).toList.flatMap { calleeSymbol =>
+              if (index.isProject(calleeSymbol)) Nil
+              else {
+                ctx
+                  .valueNode(qual)
+                  .map { source =>
+                    Edge(
+                      source,
+                      Node(s"foreign:$calleeSymbol:this", TypePath.root),
+                      EdgeKind.ArgToParam,
+                      ctx.provenanceOf(qual)
+                    )
+                  }
+                  .toList
               }
             }
+          case infix @ Term.ApplyInfix(lhs, op, _, _) =>
+            ctx.symbolOf(op).toList.flatMap { calleeSymbol =>
+              if (index.isProject(calleeSymbol)) Nil
+              else {
+                ctx
+                  .valueNode(lhs)
+                  .map { source =>
+                    Edge(
+                      source,
+                      Node(s"foreign:$calleeSymbol:this", TypePath.root),
+                      EdgeKind.ArgToParam,
+                      ctx.provenanceOf(lhs)
+                    )
+                  }
+                  .toList
+              }
+            }
+        }.flatten
+
+        val controlFlowEdges = tree.collect {
+          case Term.If(cond, _, _) =>
+            ctx
+              .valueNode(cond)
+              .map { source =>
+                Edge(
+                  source,
+                  Node("foreign:if:cond", TypePath.root),
+                  EdgeKind.ArgToParam,
+                  ctx.provenanceOf(cond)
+                )
+              }
+              .toList
+          case Term.While(cond, _) =>
+            ctx
+              .valueNode(cond)
+              .map { source =>
+                Edge(
+                  source,
+                  Node("foreign:while:cond", TypePath.root),
+                  EdgeKind.ArgToParam,
+                  ctx.provenanceOf(cond)
+                )
+              }
+              .toList
         }.flatten
 
         val kleisliEdges =
@@ -99,6 +190,31 @@ final class GraphBuilder(index: SemanticdbIndex, sourceroot: Path) {
             kleisliApplicationEdges(apply, ctx)
           }.flatten
 
+        val kleisliReturnEdges = tree.collect {
+          case apply @ Term.Apply(fun, args) if isKleisliConstructor(fun) =>
+            val applyNode = ctx.expressionNode(apply)
+            val terms: List[Term] = args.flatMap {
+              case Term.PartialFunction(cases) =>
+                cases.flatMap(c => tailExpressions(c.body)).collect {
+                  case t: Term => t
+                }
+              case Term.Function(_, body) =>
+                tailExpressions(body).collect { case t: Term => t }
+              case _ =>
+                Nil
+            }
+            terms.flatMap { retTerm =>
+              ctx.valueNode(retTerm).map { retNode =>
+                Edge(
+                  Node(retNode.symbol, retNode.path / 0),
+                  Node(applyNode.symbol, applyNode.path / 2),
+                  EdgeKind.HktPassthrough,
+                  ctx.provenanceOf(retTerm)
+                )
+              }
+            }
+        }.flatten
+
         val reshapes = tree.collect { case apply: Term.Apply =>
           reshapeGraph(apply, ctx)
         }
@@ -107,8 +223,10 @@ final class GraphBuilder(index: SemanticdbIndex, sourceroot: Path) {
         }.flatten
 
         Graph(
-          edges = callEdges ++ returnEdges ++ valEdges ++ kleisliEdges ++
-            reshapes.flatMap(_.edges) ++ hktEdges,
+          edges =
+            callEdges ++ returnEdges ++ valEdges ++ kleisliEdges ++ kleisliReturnEdges ++
+              reshapes.flatMap(_.edges) ++ hktEdges ++ defaultParamEdges ++
+              matchEdges ++ generatorEdges ++ receiverEdges ++ controlFlowEdges,
           syntheticTypes = reshapes.flatMap(_.syntheticTypes).toMap
         )
       }
@@ -157,12 +275,21 @@ final class GraphBuilder(index: SemanticdbIndex, sourceroot: Path) {
         pattern <- lambdaPatterns
         (slot, boundName) <- tupleSlotNames(pattern)
         boundSymbol <- ctx.symbolOf(boundName).toList
-      } yield Edge(
-        Node(owner, TypePath(List(slot))),
-        Node(boundSymbol, TypePath.root),
-        EdgeKind.Reshape,
-        ctx.provenanceOf(boundName)
-      )
+        edge <- List(
+          Edge(
+            Node(owner, TypePath(List(slot))),
+            Node(boundSymbol, TypePath.root),
+            EdgeKind.Reshape,
+            ctx.provenanceOf(boundName)
+          ),
+          Edge(
+            Node(boundSymbol, TypePath.root),
+            Node(owner, TypePath(List(slot))),
+            EdgeKind.Reshape,
+            ctx.provenanceOf(boundName)
+          )
+        )
+      } yield edge
 
       // ...and the tuple the lambda returns flows into the wrapped arrow.
       val outputEdges = for {
@@ -174,12 +301,21 @@ final class GraphBuilder(index: SemanticdbIndex, sourceroot: Path) {
           case single               => List(single -> 0)
         }
         source <- ctx.valueNode(element).toList
-      } yield Edge(
-        source,
-        Node(targetSymbol, TypePath(List(index0, slot))),
-        EdgeKind.Reshape,
-        ctx.provenanceOf(element)
-      )
+        edge <- List(
+          Edge(
+            source,
+            Node(targetSymbol, TypePath(List(index0, slot))),
+            EdgeKind.Reshape,
+            ctx.provenanceOf(element)
+          ),
+          Edge(
+            Node(targetSymbol, TypePath(List(index0, slot))),
+            source,
+            EdgeKind.Reshape,
+            ctx.provenanceOf(element)
+          )
+        )
+      } yield edge
 
       Graph(binderEdges ++ outputEdges, synthetics.toMap)
 
@@ -197,12 +333,26 @@ final class GraphBuilder(index: SemanticdbIndex, sourceroot: Path) {
     case _                             => Nil
   }
 
+  private def localPlaceholders(tree: Tree): List[Term.Placeholder] = {
+    def loop(t: Tree): List[Term.Placeholder] = t match {
+      case p: Term.Placeholder => List(p)
+      case _: Term.Function | _: Term.AnonymousFunction |
+          _: Term.PartialFunction =>
+        Nil
+      case other => other.children.flatMap(loop)
+    }
+    tree.children.flatMap(loop)
+  }
+
   private def lambdaBodies(term: Term): List[Term] = term match {
     case Term.PartialFunction(cases) =>
       cases.flatMap(c => tailExpressions(c.body))
     case Term.Function(_, body)        => tailExpressions(body)
+    case Term.AnonymousFunction(body)  => lambdaBodies(body)
     case Term.Block(List(inner: Term)) => lambdaBodies(inner)
-    case _                             => Nil
+    case other =>
+      val hasPlaceholder = localPlaceholders(other).nonEmpty
+      if (hasPlaceholder) List(other) else Nil
   }
 
   /** Values threaded unchanged through a container: `map`, `traverse_`, `fold`
@@ -219,10 +369,17 @@ final class GraphBuilder(index: SemanticdbIndex, sourceroot: Path) {
   ): List[Edge] = apply.fun match {
     case Term.Select(receiver, Term.Name(method))
         if GraphBuilder.PassthroughMethods.contains(method) =>
-      val payload =
-        ctx.valueNode(receiver).map(node => Node(node.symbol, node.path / 0))
+      val receiverNode = ctx.valueNode(receiver)
+      val applyNode = ctx.expressionNode(apply)
+      if (ctx.uri.contains("github.scala") && apply.toString.contains("body")) {
+        println(
+          s"DEBUG passthroughEdges for: $apply, method: $method, receiver: $receiver, receiverNode: $receiverNode"
+        )
+      }
 
-      payload.toList.flatMap { source =>
+      val payload = receiverNode.map(node => Node(node.symbol, node.path / 0))
+
+      val inboundEdges = payload.toList.flatMap { source =>
         apply.argClause.values.toList.flatMap { argument =>
           val namedBinders = argument match {
             case Term.Function(params, _) =>
@@ -239,9 +396,15 @@ final class GraphBuilder(index: SemanticdbIndex, sourceroot: Path) {
             )
           )
 
+          val partialFunctionEdges = argument match {
+            case Term.PartialFunction(cases) =>
+              cases.flatMap(c => patternEdges(c.pat, source, ctx))
+            case _ => Nil
+          }
+
           // `f(a, _, c)`: the placeholder occupies one of f's parameters.
-          val placeholderEdges = argument.collect {
-            case placeholder: Term.Placeholder =>
+          val placeholderEdges = localPlaceholders(argument).flatMap {
+            placeholder =>
               placeholderParameter(placeholder, argument, ctx).map { param =>
                 Edge(
                   source,
@@ -250,11 +413,107 @@ final class GraphBuilder(index: SemanticdbIndex, sourceroot: Path) {
                   ctx.provenanceOf(placeholder)
                 )
               }
-          }.flatten
+          }
 
-          namedEdges ++ placeholderEdges
+          val lambdaPlaceholderEdges = localPlaceholders(argument).map {
+            placeholder =>
+              Edge(
+                source,
+                ctx.expressionNode(placeholder),
+                EdgeKind.HktPassthrough,
+                ctx.provenanceOf(placeholder)
+              )
+          }
+
+          val methodRefEdges = argument match {
+            case _: Term.Name | _: Term.Select =>
+              val callee = ctx.calleeSymbol(argument)
+              val params = callee.toList.flatMap(index.parameterSymbols)
+              params.headOption.map { param =>
+                Edge(
+                  source,
+                  Node(param, TypePath.root),
+                  EdgeKind.ArgToParam,
+                  ctx.provenanceOf(argument)
+                )
+              }.toList
+            case _ => Nil
+          }
+
+          namedEdges ++ partialFunctionEdges ++ placeholderEdges ++ lambdaPlaceholderEdges ++ methodRefEdges
         }
       }
+
+      val returnEdges = if (method == "map" || method == "traverse") {
+        apply.argClause.values.toList.flatMap { argument =>
+          val bodies = lambdaBodies(argument)
+          if (bodies.nonEmpty) {
+            bodies.flatMap { retTerm =>
+              ctx.valueNode(retTerm).map { retNode =>
+                Edge(
+                  retNode,
+                  Node(applyNode.symbol, applyNode.path / 0),
+                  EdgeKind.HktPassthrough,
+                  ctx.provenanceOf(retTerm)
+                )
+              }
+            }
+          } else {
+            argument match {
+              case _: Term.Name | _: Term.Select =>
+                ctx.calleeSymbol(argument).toList.map { calleeSymbol =>
+                  Edge(
+                    Node(calleeSymbol, TypePath.root),
+                    Node(applyNode.symbol, applyNode.path / 0),
+                    EdgeKind.HktPassthrough,
+                    ctx.provenanceOf(argument)
+                  )
+                }
+              case _ => Nil
+            }
+          }
+        }
+      } else if (method == "flatMap" || method == "flatTraverse") {
+        apply.argClause.values.toList.flatMap { argument =>
+          val bodies = lambdaBodies(argument)
+          if (bodies.nonEmpty) {
+            bodies.flatMap { retTerm =>
+              ctx.valueNode(retTerm).map { retNode =>
+                Edge(
+                  Node(retNode.symbol, retNode.path / 0),
+                  Node(applyNode.symbol, applyNode.path / 0),
+                  EdgeKind.HktPassthrough,
+                  ctx.provenanceOf(retTerm)
+                )
+              }
+            }
+          } else {
+            argument match {
+              case _: Term.Name | _: Term.Select =>
+                ctx.calleeSymbol(argument).toList.map { calleeSymbol =>
+                  Edge(
+                    Node(calleeSymbol, TypePath.root / 0),
+                    Node(applyNode.symbol, applyNode.path / 0),
+                    EdgeKind.HktPassthrough,
+                    ctx.provenanceOf(argument)
+                  )
+                }
+              case _ => Nil
+            }
+          }
+        }
+      } else {
+        receiverNode.toList.map { recNode =>
+          Edge(
+            Node(recNode.symbol, recNode.path / 0),
+            Node(applyNode.symbol, applyNode.path / 0),
+            EdgeKind.HktPassthrough,
+            ctx.provenanceOf(apply)
+          )
+        }
+      }
+
+      inboundEdges ++ returnEdges
 
     case _ => Nil
   }
@@ -614,19 +873,28 @@ final class GraphBuilder(index: SemanticdbIndex, sourceroot: Path) {
       case name: Term.Name =>
         Some(
           symbolOf(name)
+            .filter(index.isProject)
             .map(Node(_, TypePath.root))
             .getOrElse(expressionNode(term))
         )
       case select @ Term.Select(_, name) =>
+        val sym = symbolOf(name)
+        if (uri.contains("github.scala") && select.toString.contains("body")) {
+          println(
+            s"DEBUG valueNode for select: $select, name: $name, symbolOf: $sym, isProject: ${sym.exists(index.isProject)}"
+          )
+        }
         Some(
-          symbolOf(name)
+          sym
+            .filter(index.isProject)
             .map(Node(_, TypePath.root))
             .getOrElse(expressionNode(select))
         )
       case apply: Term.Apply =>
-        // A call's value is its callee's return, unless the callee is unknown.
+        // A call's value is its callee's return, unless the callee is unknown or foreign.
         Some(
           calleeSymbol(apply.fun)
+            .filter(index.isProject)
             .map(Node(_, TypePath.root))
             .getOrElse(expressionNode(apply))
         )
@@ -638,9 +906,65 @@ final class GraphBuilder(index: SemanticdbIndex, sourceroot: Path) {
       */
     def expressionNode(term: Tree): Node =
       Node(
-        s"expr:$uri:${term.pos.startLine}:${term.pos.startColumn}",
+        s"expr:$uri:${term.pos.startLine}:${term.pos.startColumn}:${term.pos.endLine}:${term.pos.endColumn}",
         TypePath.root
       )
+  }
+
+  private def patternEdges(
+      pat: Pat,
+      sourceNode: Node,
+      ctx: DocumentContext
+  ): List[Edge] = pat match {
+    case Pat.Var(name) =>
+      ctx.symbolOf(name).toList.map { varSymbol =>
+        Edge(
+          sourceNode,
+          Node(varSymbol, TypePath.root),
+          EdgeKind.ArgToParam,
+          ctx.provenanceOf(name)
+        )
+      }
+
+    case Pat.Typed(lhs, _) =>
+      patternEdges(lhs, sourceNode, ctx)
+
+    case Pat.Bind(lhs, rhs) =>
+      patternEdges(lhs, sourceNode, ctx) ++ patternEdges(rhs, sourceNode, ctx)
+
+    case Pat.Tuple(elements) =>
+      elements.zipWithIndex.flatMap { case (element, i) =>
+        patternEdges(element, Node(sourceNode.symbol, sourceNode.path / i), ctx)
+      }
+
+    case Pat.Extract(fun, args) =>
+      val callee = ctx.calleeSymbol(fun)
+      val params = callee.toList.flatMap(index.parameterSymbols)
+      if (params.nonEmpty) {
+        params.zip(args.values).flatMap { case (param, arg) =>
+          patternEdges(arg, Node(param, TypePath.root), ctx)
+        }
+      } else {
+        args.values.zipWithIndex.flatMap { case (arg, i) =>
+          patternEdges(arg, Node(sourceNode.symbol, sourceNode.path / i), ctx)
+        }
+      }
+
+    case Pat.ExtractInfix(lhs, op, rhs) =>
+      val callee = ctx.calleeSymbol(op)
+      val params = callee.toList.flatMap(index.parameterSymbols)
+      val args = lhs :: rhs
+      if (params.nonEmpty) {
+        params.zip(args).flatMap { case (param, arg) =>
+          patternEdges(arg, Node(param, TypePath.root), ctx)
+        }
+      } else {
+        args.zipWithIndex.flatMap { case (arg, i) =>
+          patternEdges(arg, Node(sourceNode.symbol, sourceNode.path / i), ctx)
+        }
+      }
+
+    case _ => Nil
   }
 }
 
@@ -676,7 +1000,12 @@ object GraphBuilder {
     "exists",
     "forall",
     "getOrElse",
-    "orElse"
+    "orElse",
+    "local",
+    "handleErrorWith",
+    "as",
+    "void",
+    "attempt"
   )
 
   /** Origin lookup that understands the synthetic node symbols above. */

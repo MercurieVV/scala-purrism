@@ -22,8 +22,8 @@ class OpaqueCandidateExplorerSuite extends munit.FunSuite {
     // The `Branch#name` flow is the widest one in `testInput`, so it heads the
     // ranking. Asserting the concrete cluster -- not merely "something is
     // first" -- is what makes this a regression test for the metric.
-    assertEquals(top.name, "Name")
-    assertEquals(top.owner, "golden/Branch#")
+    assertEquals(top.name, "BranchName")
+    assertEquals(top.owner, "golden/Run#")
     assertEquals(top.underlying, "scala/Predef.String#")
     assert(
       candidates.tail.forall(_.size <= top.size),

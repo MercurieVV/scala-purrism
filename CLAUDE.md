@@ -9,4 +9,4 @@ Follow the shared, LLM-agnostic project docs:
 ## Scala Code Rules
 @SCALA_SEMANTIC_RULES.md
 @scala_rules.md
-@PROJECTT.md
+@docs/PROJECT.md

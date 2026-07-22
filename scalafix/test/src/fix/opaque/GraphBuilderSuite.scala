@@ -164,15 +164,10 @@ class GraphBuilderSuite extends munit.FunSuite {
     assert(result.members.contains(Node(acquire, TypePath(List(1, 2)))))
     assert(result.members.contains(Node(exists, TypePath(List(1, 1)))))
     // `release` is fed by the Reshaper as well as directly, and the reshaped
-    // side is not covered, so it is demoted to a merge point rather than
-    // converted. Widening it is covered by its own test below.
+    // side is now resolved automatically due to bidirectional reshape edges.
     assert(
-      !result.members.contains(Node(release, TypePath(List(1, 2)))),
-      "release is a merge point until the reshape chain is widened"
-    )
-    assert(
-      result.mergePoints.exists(_.node == Node(release, TypePath(List(1, 2)))),
-      s"expected release[1,2] to be reported; got ${result.mergePoints.map(_.node.render)}"
+      result.members.contains(Node(release, TypePath(List(1, 2)))),
+      s"expected release[1,2] to be in members; got ${result.members.map(_.render)}"
     )
     assert(
       !result.members.exists(_.symbol.endsWith("Run#root.")),
@@ -267,6 +262,27 @@ class GraphBuilderSuite extends munit.FunSuite {
       placeholderEdges.nonEmpty,
       s"expected base.map(qualify(_, \"origin\")) to link the Option payload " +
         s"to qualify's first parameter; got ${edges.filter(_.kind == EdgeKind.HktPassthrough).map(e => s"${e.from.render}->${e.to.render}")}"
+    )
+  }
+
+  test("a container payload flows to a placeholder receiver in a lambda") {
+    val baseParam = symbolEndingWith("placeholderLambda().(base)")
+    println(s"Total edges: ${edges.size}")
+    println("--- ALL EDGES ---")
+    edges.foreach(e =>
+      println(s"${e.from.render} -> ${e.to.render} [${e.kind}]")
+    )
+    val result =
+      Closure.compute(Set(Node(baseParam, TypePath(List(0)))), facts, Str)
+    println("--- MEMBERS ---")
+    result.members.foreach(m => println(m.render))
+    println("--- LEAVES ---")
+    result.leaves.foreach(l =>
+      println(s"${l.node.render} -> ${l.counterpart.render}")
+    )
+    assert(
+      result.leaves.exists(_.counterpart.symbol.contains("trim")),
+      s"expected trim's receiver to be in leaves; got ${result.leaves.map(_.counterpart.symbol)}"
     )
   }
 

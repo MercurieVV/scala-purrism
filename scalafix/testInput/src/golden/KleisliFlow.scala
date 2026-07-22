@@ -52,6 +52,9 @@ final class Passthrough {
 
   def placeholder(base: Option[String]): Option[String] =
     base.map(qualify(_, "origin"))
+
+  def placeholderLambda(base: Option[String]): Option[String] =
+    base.map(_.trim)
 }
 
 final class Caller[F[_]](worktrees: Worktrees[F]) {
