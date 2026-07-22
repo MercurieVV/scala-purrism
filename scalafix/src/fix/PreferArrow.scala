@@ -264,9 +264,57 @@ object PreferArrow {
       pos: scala.meta.inputs.Position,
       body: Term,
       config: PreferArrowConfig
-  ): Patch =
+  )(implicit doc: SemanticDocument): Patch =
     if (!config.reportSkips) Patch.empty
-    else Patch.lint(ArrowSkipDiagnostic(pos, skipShape(body)))
+    else
+      Patch.lint(
+        ArrowSkipDiagnostic(
+          pos,
+          s"${skipShape(body)}, ${effectSteps(body)} effect steps"
+        )
+      )
+
+  /** How many effects a body sequences, counted syntactically.
+    *
+    * This is the number that decides whether an unrecognised body is worth
+    * teaching the parser about at all. A body with fewer than two effect steps
+    * has no composition to express -- `Kleisli { x => f(x).pure[F] }` is pure
+    * computation with a single lift, and point-free would be strictly worse --
+    * so it is a *correct* skip, not a missed one. Without this figure a census
+    * counts those together with genuine misses and overstates the opportunity,
+    * which is exactly what the first run of `reportSkips` did.
+    *
+    * Counted are bind points, not types: `for` generators, the `flatMap`-family
+    * selections, the sequencing operators, and applications of a Kleisli. A
+    * syntactic proxy is the right instrument here -- it is being used to rank
+    * shapes for attention, and an approximate rank costs nothing if it is
+    * wrong, whereas an inference pass would cost a great deal to be exact.
+    */
+  private def effectSteps(body: Term)(implicit doc: SemanticDocument): Int =
+    body.collect {
+      case Term.ForYield.After_4_9_9(enumerators, _) =>
+        enumerators.enums.count(_.is[Enumerator.Generator])
+      case Term.Select(_, Term.Name("flatMap" | "flatTap" | "productR")) => 1
+      case infix: Term.ApplyInfix
+          if Set("*>", ">>", "&&&", ">>>", "|||").contains(infix.op.value) =>
+        1
+      case applyTerm: Term.Apply if isKleisliApplication(applyTerm) => 1
+    }.sum
+
+  /** A Kleisli being *run* -- `k(x)`, `k.run(x)`, `k.apply(x)`. The wrapping
+    * `Kleisli { ... }` constructor itself is not one, or every body would count
+    * its own wrapper.
+    */
+  private def isKleisliApplication(
+      applyTerm: Term.Apply
+  )(implicit doc: SemanticDocument): Boolean =
+    !KleisliType.isKleisliApply(applyTerm) && {
+      val callee = applyTerm.fun match {
+        case Term.Select(receiver, Term.Name("run" | "apply")) => receiver
+        case other                                             => other
+      }
+      KleisliType.isKleisliValue(callee)
+    }
 
   private def skipShape(body: Term): String =
     body match {
