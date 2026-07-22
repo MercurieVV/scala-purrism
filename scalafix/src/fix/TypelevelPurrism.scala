@@ -94,10 +94,25 @@ object TypeclassWeakening {
     TypelevelPurrism.typeclassNamesStillUsed(tree, weakenings)
 }
 
-final class PreferKleisli extends SemanticRule("PreferKleisli") {
+final class PreferKleisli(config: PreferKleisliConfig)
+    extends SemanticRule("PreferKleisli") {
+
+  def this() = this(PreferKleisliConfig.default)
+
+  override def withConfiguration(
+      configuration: Configuration
+  ): Configured[Rule] =
+    configuration.conf
+      .getOrElse("PreferKleisli")(PreferKleisliConfig.default)
+      .map(new PreferKleisli(_))
+
   override def fix(implicit doc: SemanticDocument): Patch = {
     val knownKleislies = PreferKleisli.collectKleisliNames(doc.tree)
-    val rewrites = PreferKleisli.rewritePlan(doc.tree, knownKleislies)
+    val rewrites = PreferKleisli.rewritePlan(
+      doc.tree,
+      knownKleislies,
+      config.fileLocalOnly
+    )
 
     rewrites.map { case (defn, rewritten) =>
       kleisliPatch(defn, rewritten)
@@ -115,6 +130,23 @@ final class PreferKleisli extends SemanticRule("PreferKleisli") {
     Patch.addGlobalImport(Symbol("cats/data/Kleisli#")) +
       Patch.replaceTree(defn, rewritten) +
       PreferKleisli.tupledCallPatches(doc.tree, defn)
+}
+
+/** `fileLocalOnly` limits parameter re-shaping to `private` defs, whose call
+  * sites are all in the file scalafix is currently rewriting. See
+  * `TypelevelPurrism.kleisliRewritePlan`.
+  */
+final case class PreferKleisliConfig(fileLocalOnly: Boolean = false)
+
+object PreferKleisliConfig {
+  val default: PreferKleisliConfig = PreferKleisliConfig()
+
+  implicit val decoder: metaconfig.ConfDecoder[PreferKleisliConfig] =
+    metaconfig.ConfDecoder.from { conf =>
+      conf
+        .getOrElse("fileLocalOnly")(default.fileLocalOnly)
+        .map(PreferKleisliConfig(_))
+    }
 }
 
 object PreferKleisli {
@@ -147,6 +179,13 @@ object PreferKleisli {
       knownKleislies: Set[String] = Set.empty
   ): List[(Defn.Def, String)] =
     TypelevelPurrism.kleisliRewritePlan(tree, knownKleislies)
+
+  def rewritePlan(
+      tree: Tree,
+      knownKleislies: Set[String],
+      fileLocalOnly: Boolean
+  ): List[(Defn.Def, String)] =
+    TypelevelPurrism.kleisliRewritePlan(tree, knownKleislies, fileLocalOnly)
 
   def tupledCallPatches(tree: Tree, defn: Defn.Def): Patch =
     TypelevelPurrism.tupledCallPatches(tree, defn)
@@ -215,7 +254,11 @@ private[fix] object TypelevelPurrism {
             val parameterType = param.decltpe.map(_.syntax).getOrElse("")
             val result = returnType.argClause.values.head
 
-            s"""${modifiers}def ${defn.name.syntax}${typeParamSyntax(defn)}${implicitClauseSyntax(defn)}: Kleisli[${returnType.tpe.syntax}, $parameterType, ${result.syntax}] =
+            s"""${modifiers}def ${defn.name.syntax}${typeParamSyntax(
+                defn
+              )}${implicitClauseSyntax(
+                defn
+              )}: Kleisli[${returnType.tpe.syntax}, $parameterType, ${result.syntax}] =
                |  ${call.callee}""".stripMargin
           }
         }
@@ -225,13 +268,11 @@ private[fix] object TypelevelPurrism {
 
   private def kleisliApplyRewrite(defn: Defn.Def): Option[String] =
     plainParameters(defn).flatMap { params =>
-      defn.decltpe
-        .collect {
-          case returnType: Type.Apply
-              if isKleisliCandidate(defn, params, returnType) =>
-            renderKleisliApply(defn, params, returnType)
-        }
-        .flatten
+      defn.decltpe.collect {
+        case returnType: Type.Apply
+            if isKleisliCandidate(defn, params, returnType) =>
+          renderKleisliApply(defn, params, returnType)
+      }.flatten
     }
 
   private def renderKleisliApply(
@@ -339,11 +380,32 @@ private[fix] object TypelevelPurrism {
   def kleisliRewritePlan(
       tree: Tree,
       knownKleislies: Set[String] = Set.empty
+  ): List[(Defn.Def, String)] =
+    kleisliRewritePlan(tree, knownKleislies, fileLocalOnly = false)
+
+  /** Re-shaping a def's parameters is only safe if every call site can be
+    * re-shaped with it. Scalafix rewrites one document at a time, so
+    * `tupledCallPatches` can only reach callers in the *same file*: rewriting a
+    * public def whose callers live elsewhere leaves those callers passing the
+    * old argument list, and the project no longer compiles.
+    *
+    * `fileLocalOnly` restricts the rewrite to defs that cannot have an
+    * out-of-file caller -- `private` ones. It is off by default, which keeps
+    * the rule's behaviour on single-file inputs (every golden fixture) intact;
+    * a whole-project run should turn it on until a cross-file call-site pass
+    * exists.
+    */
+  def kleisliRewritePlan(
+      tree: Tree,
+      knownKleislies: Set[String],
+      fileLocalOnly: Boolean
   ): List[(Defn.Def, String)] = {
     val candidateRewrites =
-      rewriteCandidates(tree).flatMap { defn =>
-        kleisliRewrite(defn, knownKleislies).map(defn -> _)
-      }
+      rewriteCandidates(tree)
+        .filter(defn => !fileLocalOnly || isFileLocal(defn))
+        .flatMap { defn =>
+          kleisliRewrite(defn, knownKleislies).map(defn -> _)
+        }
     val rewrites =
       candidateRewrites.filterNot { case (defn, _) =>
         plainParameters(defn).exists(_.length > 1) &&
@@ -355,11 +417,61 @@ private[fix] object TypelevelPurrism {
           defn.name.value
       }.toSet
 
-    rewrites.filterNot { case (defn, _) =>
-      plainParameters(defn).exists(_.length > 1) &&
-      callsAnyMethod(defn.body, tupledRewriteNames - defn.name.value)
-    }
+    // A def whose body calls another def that is being re-shaped is deferred to
+    // a later run. Its replacement text embeds a copy of the body, while the
+    // callee's call-site patch edits the *original* body's argument clause --
+    // two patches over one span, which scalafix concatenates rather than
+    // rejects, producing `Kleisli.apply { m => log(a, m, c) }((a, m, c))`.
+    // The arity condition this once carried made the guard one-sided: a
+    // single-parameter def calling a tupled one slipped through and was
+    // corrupted exactly that way.
+    rewrites
+      .filterNot { case (defn, _) =>
+        callsAnyMethod(defn.body, tupledRewriteNames - defn.name.value)
+      }
+      // A def that is also passed *unapplied* -- `acquire(root, n, progress)`
+      // hands `progress` over as a `String => F[Unit]` -- cannot become a
+      // Kleisli: `Kleisli[F, String, Unit]` does not conform to a function
+      // type, and only applications are re-shaped. Such a def is left alone.
+      .filterNot { case (defn, _) => usedAsValue(tree, defn) }
   }
+
+  /** An occurrence of the def's name that is not the callee of an application:
+    * the def is being passed as a value rather than called.
+    */
+  private def usedAsValue(tree: Tree, defn: Defn.Def): Boolean = {
+    val name = defn.name.value
+
+    // `GitHub.userAnswer(...)` and `userAnswer[F](...)` are calls; the name sits
+    // under a `Select`/`ApplyType` that is itself the callee, so those wrappers
+    // are followed upwards rather than accepted on sight.
+    def isCalleePosition(term: Tree): Boolean =
+      term.parent.exists {
+        case apply: Term.Apply     => apply.fun eq term
+        case apply: Term.ApplyType => isCalleePosition(apply)
+        case select: Term.Select =>
+          (select.name eq term) && isCalleePosition(select)
+        case _ => false
+      }
+
+    tree.collect {
+      case candidate: Term.Name
+          if candidate.value == name &&
+            !(candidate eq defn.name) &&
+            !isCalleePosition(candidate) =>
+        ()
+    }.nonEmpty
+  }
+
+  /** A def no other file can call: `private`, or `private[this]`. A
+    * `private[pkg]` def is *not* file-local -- the package can span files.
+    */
+  private def isFileLocal(defn: Defn.Def): Boolean =
+    defn.mods.exists {
+      case Mod.Private(Name.Anonymous()) => true
+      case Mod.Private(Term.This(_))     => true
+      case _                             => false
+    }
 
   def tupledCallPatches(tree: Tree, defn: Defn.Def): Patch =
     plainParameters(defn).filter(_.length > 1).fold(Patch.empty) { params =>
@@ -369,9 +481,8 @@ private[fix] object TypelevelPurrism {
         defn.decltpe.collect { case returnType: Type.Apply =>
           returnType.tpe.syntax
         }
-      val callbackFlags = effectName.toList.flatMap(effect =>
-        params.map(param => isEffectCallback(param, effect))
-      )
+      val callbackFlags = effectName.toList
+        .flatMap(effect => params.map(param => isEffectCallback(param, effect)))
 
       tree.collect {
         case applyTerm: Term.Apply
@@ -1539,11 +1650,18 @@ private[fix] object TypelevelPurrism {
       case _                => false
     }
 
+  /** The method name a call's callee refers to. An explicit type application
+    * (`claim[F](...)`) is transparent here: it is the same method, and since
+    * method-level polymorphic defs are now rewritten, nearly every call site of
+    * one is spelled that way. Missing them left the callee re-shaped and the
+    * caller still passing the old argument list.
+    */
   private def callName(term: Term): Option[String] =
     term match {
-      case Term.Name(value)     => Some(value)
-      case Term.Select(_, name) => Some(name.value)
-      case _                    => None
+      case Term.Name(value)                   => Some(value)
+      case Term.Select(_, name)               => Some(name.value)
+      case Term.ApplyType.After_4_6_0(fun, _) => callName(fun)
+      case _                                  => None
     }
 
   private def tupledArguments(arguments: List[Term]): String =
