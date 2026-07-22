@@ -1,6 +1,6 @@
 #!/usr/bin/env scala-cli
 
-//> using scala 3.3.8
+//> using scala 3.8.4
 //> using dep com.lihaoyi::os-lib:0.11.8
 
 import os._
@@ -13,10 +13,7 @@ object GitPrePush:
 
     val buildTool =
       if os.exists(repoRoot / "build.sbt") then "sbt"
-      else if os.exists(repoRoot / "build.mill") || os.exists(
-          repoRoot / "build.sc"
-        )
-      then "mill"
+      else if os.exists(repoRoot / "build.sc") then "mill"
       else "scala-cli"
 
     println("=== Git Pre-Push Verification Checks ===")
@@ -33,7 +30,12 @@ object GitPrePush:
         os.proc(cmd).call(cwd = repoRoot, check = false).exitCode
 
       case "mill" =>
-        os.proc("mill", "scalafix.test").call(cwd = repoRoot, check = false).exitCode
+        val buildScContent = os.read(repoRoot / "build.sc")
+        val cmd =
+          if buildScContent.contains("def prePush") then
+            Seq("mill", "app.prePush")
+          else Seq("mill", "app.test")
+        os.proc(cmd).call(cwd = repoRoot, check = false).exitCode
 
       case "scala-cli" =>
         os.proc("scala-cli", "test", ".")
@@ -43,5 +45,16 @@ object GitPrePush:
     if exitCode != 0 then
       println("\n[ERROR] Pre-push verification failed! Push aborted.")
       sys.exit(1)
+
+    val stainlessScript = repoRoot / "scripts" / "stainless-verify.sh"
+    if os.exists(stainlessScript) then
+      println("Running Stainless formal verification...")
+      val stainlessExit = os
+        .proc("bash", stainlessScript.toString)
+        .call(cwd = repoRoot, check = false)
+        .exitCode
+      if stainlessExit != 0 then
+        println("\n[ERROR] Stainless verification failed! Push aborted.")
+        sys.exit(1)
 
     println("✓ All pre-push checks passed successfully!")

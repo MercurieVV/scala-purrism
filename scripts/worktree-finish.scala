@@ -1,6 +1,6 @@
 #!/usr/bin/env scala-cli
 
-//> using scala 3.3.8
+//> using scala 3.8.4
 //> using dep com.lihaoyi::os-lib:0.11.8
 
 import os._

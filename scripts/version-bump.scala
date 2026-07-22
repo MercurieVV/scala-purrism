@@ -1,6 +1,6 @@
 #!/usr/bin/env scala-cli
 
-//> using scala 3.3.8
+//> using scala 3.8.4
 //> using dep com.lihaoyi::os-lib:0.11.8
 
 import os._
@@ -20,7 +20,6 @@ object VersionBump:
       os.proc("git", "rev-parse", "--show-toplevel").call().out.text().trim
     )
     val buildSbt = repoRoot / "build.sbt"
-    val buildMill = repoRoot / "build.mill"
     val buildSc = repoRoot / "build.sc"
     val projectScala = repoRoot / "project.scala"
 
@@ -35,10 +34,9 @@ object VersionBump:
       regex.findFirstMatchIn(content).foreach { m =>
         currentVersionOpt = Some(m.group(1))
       }
-    else if os.exists(buildMill) || os.exists(buildSc) then
-      val buildFile = if os.exists(buildMill) then buildMill else buildSc
-      targetFileOpt = Some(buildFile)
-      content = os.read(buildFile)
+    else if os.exists(buildSc) then
+      targetFileOpt = Some(buildSc)
+      content = os.read(buildSc)
       val regex = "(?i)def\\s*publishVersion\\s*=\\s*\"(.*?)\"".r
       val regex2 = "(?i)val\\s*version\\s*=\\s*\"(.*?)\"".r
       regex
@@ -72,25 +70,20 @@ object VersionBump:
           (defaultVer, buildSbt)
         else
           println(
-            "Error: Could not locate build.sbt, build.mill, build.sc, or project.scala to find version"
+            "Error: Could not locate build.sbt, build.sc, or project.scala to find version"
           )
           sys.exit(1)
 
     println(s"Current version: $currentVersion")
 
-    val semver = "^(\\d+)\\.(\\d+)\\.(\\d+)(?:[-+].*)?$".r
-    val parts = currentVersion match
-      case semver(major, minor, patch) =>
-        Some((major.toInt, minor.toInt, patch.toInt))
-      case _ => None
-
-    if parts.isEmpty then
+    val parts = currentVersion.split('.').flatMap(_.toIntOption)
+    if parts.length < 3 then
       println(
         s"Error: Version '$currentVersion' is not in standard semantic versioning format (X.Y.Z)"
       )
       sys.exit(1)
 
-    val (major, minor, patch) = parts.get
+    val Array(major, minor, patch) = parts.take(3)
     val nextVersion = bumpType match
       case "major" => s"${major + 1}.0.0"
       case "minor" => s"$major.${minor + 1}.0"
@@ -104,7 +97,7 @@ object VersionBump:
           "version\\s*:=\\s*\".*?\"",
           s"version := \"$nextVersion\""
         )
-      case f if f == buildMill || f == buildSc =>
+      case f if f == buildSc =>
         if content.contains("def publishVersion") then
           content.replaceFirst(
             "def\\s*publishVersion\\s*=\\s*\".*?\"",

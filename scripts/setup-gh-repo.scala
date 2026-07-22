@@ -17,7 +17,10 @@ object SetupGhRepo:
         List("PGP_SECRET_KEY", "PGP_SECRET", "PGP_PRIVATE_KEY", "PGP_KEY"),
         normalize = base64EncodePgpKeyIfNeeded
       ),
-      ReleaseSecret("MILL_PGP_PASSPHRASE", List("PGP_SECRET_KEY_PASSWORD", "PGP_PASSPHRASE"))
+      ReleaseSecret(
+        "MILL_PGP_PASSPHRASE",
+        List("PGP_SECRET_KEY_PASSWORD", "PGP_PASSPHRASE")
+      )
     )
 
   final case class ReleaseSecret(
@@ -33,8 +36,7 @@ object SetupGhRepo:
       opItemName: Option[String],
       opGpgItem: Option[String],
       opGpgItemName: Option[String],
-      opSonatypeItem: Option[String]
-      ,
+      opSonatypeItem: Option[String],
       opSonatypeItemName: Option[String],
       opFallbackItemNames: List[String],
       verbose: Boolean
@@ -56,7 +58,9 @@ object SetupGhRepo:
         requireCommand("git")
 
         val repo = config.repo.orElse(inferRepo()).getOrElse {
-          Console.err.println("REPO is empty: pass --repo OWNER/REPO or run from a GitHub-backed git checkout.")
+          Console.err.println(
+            "REPO is empty: pass --repo OWNER/REPO or run from a GitHub-backed git checkout."
+          )
           sys.exit(1)
         }
 
@@ -65,53 +69,87 @@ object SetupGhRepo:
             Console.err.println(missingValueMessage(secret))
             sys.exit(1)
           }
-          os.proc("gh", "secret", "set", secret.name, "--repo", repo, "--body", value)
-            .call(env = ghNoPagerEnv)
+          os.proc(
+            "gh",
+            "secret",
+            "set",
+            secret.name,
+            "--repo",
+            repo,
+            "--body",
+            value
+          ).call(env = ghNoPagerEnv)
           println(s"Set repo secret ${secret.name}")
         }
 
-        val vulnerabilityAlerts = os.proc(
-          "gh",
-          "api",
-          "-H",
-          "Accept: application/vnd.github+json",
-          "--method",
-          "PUT",
-          s"/repos/$repo/vulnerability-alerts"
-        ).call(check = false, stdout = os.Pipe, stderr = os.Pipe, env = ghNoPagerEnv)
+        val vulnerabilityAlerts = os
+          .proc(
+            "gh",
+            "api",
+            "-H",
+            "Accept: application/vnd.github+json",
+            "--method",
+            "PUT",
+            s"/repos/$repo/vulnerability-alerts"
+          )
+          .call(
+            check = false,
+            stdout = os.Pipe,
+            stderr = os.Pipe,
+            env = ghNoPagerEnv
+          )
 
         if vulnerabilityAlerts.exitCode != 0 then
           Console.err.print(vulnerabilityAlerts.err.text())
           sys.exit(vulnerabilityAlerts.exitCode)
 
         println("Enabled vulnerability alerts and dependency graph")
-        println(s"Done. Repo $repo is ready for tag-driven Maven Central releases.")
+        println(
+          s"Done. Repo $repo is ready for tag-driven Maven Central releases."
+        )
 
   private def parse(args: List[String]): Either[String, Config] =
     def loop(rest: List[String], config: Config): Either[String, Config] =
       rest match
-        case Nil => Right(config)
+        case Nil                      => Right(config)
         case ("-h" | "--help") :: Nil => Right(config)
-        case "--repo" :: value :: tail => loop(tail, config.copy(repo = nonEmpty(value)))
-        case "--op-vault" :: value :: tail => loop(tail, config.copy(opVault = nonEmpty(value)))
-        case "--op-item" :: value :: tail => loop(tail, config.copy(opItem = nonEmpty(value)))
-        case "--op-item-name" :: value :: tail => loop(tail, config.copy(opItemName = nonEmpty(value)))
-        case "--op-gpg-item" :: value :: tail => loop(tail, config.copy(opGpgItem = nonEmpty(value)))
-        case "--op-gpg-item-name" :: value :: tail => loop(tail, config.copy(opGpgItemName = nonEmpty(value)))
-        case "--op-sonatype-item" :: value :: tail => loop(tail, config.copy(opSonatypeItem = nonEmpty(value)))
-        case "--op-sonatype-item-name" :: value :: tail => loop(tail, config.copy(opSonatypeItemName = nonEmpty(value)))
+        case "--repo" :: value :: tail =>
+          loop(tail, config.copy(repo = nonEmpty(value)))
+        case "--op-vault" :: value :: tail =>
+          loop(tail, config.copy(opVault = nonEmpty(value)))
+        case "--op-item" :: value :: tail =>
+          loop(tail, config.copy(opItem = nonEmpty(value)))
+        case "--op-item-name" :: value :: tail =>
+          loop(tail, config.copy(opItemName = nonEmpty(value)))
+        case "--op-gpg-item" :: value :: tail =>
+          loop(tail, config.copy(opGpgItem = nonEmpty(value)))
+        case "--op-gpg-item-name" :: value :: tail =>
+          loop(tail, config.copy(opGpgItemName = nonEmpty(value)))
+        case "--op-sonatype-item" :: value :: tail =>
+          loop(tail, config.copy(opSonatypeItem = nonEmpty(value)))
+        case "--op-sonatype-item-name" :: value :: tail =>
+          loop(tail, config.copy(opSonatypeItemName = nonEmpty(value)))
         case "--op-fallback-item" :: value :: tail =>
-          loop(tail, config.copy(opFallbackItemNames = config.opFallbackItemNames ++ nonEmpty(value).toList))
-        case "--verbose" :: tail => loop(tail, config.copy(verbose = true))
-        case "--repo" :: Nil => Left("Missing value for --repo")
-        case "--op-vault" :: Nil => Left("Missing value for --op-vault")
-        case "--op-item" :: Nil => Left("Missing value for --op-item")
+          loop(
+            tail,
+            config.copy(opFallbackItemNames =
+              config.opFallbackItemNames ++ nonEmpty(value).toList
+            )
+          )
+        case "--verbose" :: tail     => loop(tail, config.copy(verbose = true))
+        case "--repo" :: Nil         => Left("Missing value for --repo")
+        case "--op-vault" :: Nil     => Left("Missing value for --op-vault")
+        case "--op-item" :: Nil      => Left("Missing value for --op-item")
         case "--op-item-name" :: Nil => Left("Missing value for --op-item-name")
-        case "--op-gpg-item" :: Nil => Left("Missing value for --op-gpg-item")
-        case "--op-gpg-item-name" :: Nil => Left("Missing value for --op-gpg-item-name")
-        case "--op-sonatype-item" :: Nil => Left("Missing value for --op-sonatype-item")
-        case "--op-sonatype-item-name" :: Nil => Left("Missing value for --op-sonatype-item-name")
-        case "--op-fallback-item" :: Nil => Left("Missing value for --op-fallback-item")
+        case "--op-gpg-item" :: Nil  => Left("Missing value for --op-gpg-item")
+        case "--op-gpg-item-name" :: Nil =>
+          Left("Missing value for --op-gpg-item-name")
+        case "--op-sonatype-item" :: Nil =>
+          Left("Missing value for --op-sonatype-item")
+        case "--op-sonatype-item-name" :: Nil =>
+          Left("Missing value for --op-sonatype-item-name")
+        case "--op-fallback-item" :: Nil =>
+          Left("Missing value for --op-fallback-item")
         case unknown :: _ => Left(s"Unknown argument: $unknown")
 
     loop(
@@ -130,7 +168,10 @@ object SetupGhRepo:
       )
     )
 
-  private def resolveSecret(secret: ReleaseSecret, config: Config): Option[String] =
+  private def resolveSecret(
+      secret: ReleaseSecret,
+      config: Config
+  ): Option[String] =
     (secret.name :: secret.fallbackNames)
       .to(LazyList)
       .flatMap(name => resolveValue(name, config))
@@ -139,9 +180,21 @@ object SetupGhRepo:
 
   private def resolveValue(name: String, config: Config): Option[String] =
     env(name)
-      .orElse(env(s"OP_${name}_REF").flatMap(ref => readOnePassword(ref, config)))
-      .orElse(itemRefs(name, config).to(LazyList).flatMap(ref => readOnePassword(ref, config)).headOption)
-      .orElse(defaultItemNames(name, config).to(LazyList).flatMap(item => readOnePasswordItemField(item, name, config)).headOption)
+      .orElse(
+        env(s"OP_${name}_REF").flatMap(ref => readOnePassword(ref, config))
+      )
+      .orElse(
+        itemRefs(name, config)
+          .to(LazyList)
+          .flatMap(ref => readOnePassword(ref, config))
+          .headOption
+      )
+      .orElse(
+        defaultItemNames(name, config)
+          .to(LazyList)
+          .flatMap(item => readOnePasswordItemField(item, name, config))
+          .headOption
+      )
 
   private def itemRefs(name: String, config: Config): List[String] =
     val explicit =
@@ -168,16 +221,33 @@ object SetupGhRepo:
 
   private def defaultItemNames(name: String, config: Config): List[String] =
     val grouped =
-      if name.startsWith("SONATYPE_") then List("SONATYPE_CREDS", "arrowstep-sonatype", "sonatype", "maven-central")
-      else if name.startsWith("PGP_") then List("GPG", "arrowstep-gpg", "gpg", "pgp")
+      if name.startsWith("SONATYPE_") then
+        List(
+          "SONATYPE_CREDS",
+          "arrowstep-sonatype",
+          "sonatype",
+          "maven-central"
+        )
+      else if name.startsWith("PGP_") then
+        List("GPG", "arrowstep-gpg", "gpg", "pgp")
       else Nil
     val common =
-      List("arrowstep", "arrowstep-release", "arrowstep releases", "github-release", "github release")
-    (itemNames(name, config) ++ config.opFallbackItemNames ++ grouped ++ common).distinct
+      List(
+        "arrowstep",
+        "arrowstep-release",
+        "arrowstep releases",
+        "github-release",
+        "github release"
+      )
+    (itemNames(
+      name,
+      config
+    ) ++ config.opFallbackItemNames ++ grouped ++ common).distinct
 
   private def readOnePassword(ref: String, config: Config): Option[String] =
     requireCommand("op")
-    val result = os.proc("op", "read", ref).call(check = false, stderr = os.Pipe)
+    val result =
+      os.proc("op", "read", ref).call(check = false, stderr = os.Pipe)
     if result.exitCode == 0 then nonEmpty(result.out.text().trim)
     else
       if config.verbose then
@@ -185,42 +255,109 @@ object SetupGhRepo:
         Console.err.print(result.err.text())
       None
 
-  private def readOnePasswordItemField(item: String, name: String, config: Config): Option[String] =
+  private def readOnePasswordItemField(
+      item: String,
+      name: String,
+      config: Config
+  ): Option[String] =
     requireCommand("op")
 
-    fieldNames(name).to(LazyList).flatMap { field =>
-      println(s"field = ${field}")
-      val vaultArgs = config.opVault.toList.flatMap(vault => List("--vault", vault))
-      val result =
-        os.proc(
-          List("op", "item", "get", item, "--fields", s"label=$field", "--reveal") ++ vaultArgs
-        ).call(check = false, stderr = os.Pipe)
+    fieldNames(name)
+      .to(LazyList)
+      .flatMap { field =>
+        println(s"field = ${field}")
+        val vaultArgs =
+          config.opVault.toList.flatMap(vault => List("--vault", vault))
+        val result =
+          os.proc(
+            List(
+              "op",
+              "item",
+              "get",
+              item,
+              "--fields",
+              s"label=$field",
+              "--reveal"
+            ) ++ vaultArgs
+          ).call(check = false, stderr = os.Pipe)
 
-      if result.exitCode == 0 then nonEmpty(result.out.text().trim)
-      else
-        val vaultText = config.opVault.fold("")(vault => s" in vault $vault")
-        Console.err.println(s"1Password field read failed for item '$item'$vaultText field '$field':")
-        Console.err.println(result.err.text())
-        Console.err.println("Please run 'eval $(op signin)'")
-        None
-    }.headOption
+        if result.exitCode == 0 then nonEmpty(result.out.text().trim)
+        else
+          val vaultText = config.opVault.fold("")(vault => s" in vault $vault")
+          Console.err.println(
+            s"1Password field read failed for item '$item'$vaultText field '$field':"
+          )
+          Console.err.println(result.err.text())
+          Console.err.println("Please run 'eval $(op signin)'")
+          None
+      }
+      .headOption
 
   private def fieldNames(name: String): List[String] =
     val aliases =
       name match
-        case "MILL_PGP_SECRET_BASE64" => List("MILL_PGP_SECRET_BASE64", "PGP_SECRET_BASE64", "PGP_SECRET", "PGP_SECRET_KEY", "PGP_PRIVATE_KEY", "PGP_KEY")
-        case "MILL_PGP_PASSPHRASE" => List("MILL_PGP_PASSPHRASE", "PGP_PASSPHRASE", "PGP_SECRET_KEY_PASSWORD", "PGP_SECRET_PASSWORD", "PGP_PASSWORD")
-        case "MILL_SONATYPE_USERNAME" => List("MILL_SONATYPE_USERNAME", "SONATYPE_USERNAME" , "SONATYPE_USER", "CENTRAL_USERNAME", "CENTRAL_USER")
-        case "MILL_SONATYPE_PASSWORD" => List("MILL_SONATYPE_PASSWORD", "SONATYPE_PASSWORD", "SONATYPE_TOKEN", "CENTRAL_PASSWORD", "CENTRAL_TOKEN")
-        case "PGP_SECRET_KEY" => List("PGP_SECRET", "PGP_SECRET_KEY", "PGP_PRIVATE_KEY", "PGP_KEY")
-        case "PGP_SECRET_KEY_PASSWORD" => List("PGP_PASSPHRASE", "PGP_SECRET_KEY_PASSWORD", "PGP_SECRET_PASSWORD", "PGP_PASSWORD")
-        case "SONATYPE_USERNAME" => List("SONATYPE_USERNAME" , "SONATYPE_USER", "CENTRAL_USERNAME", "CENTRAL_USER")
-        case "SONATYPE_PASSWORD" => List("SONATYPE_PASSWORD", "SONATYPE_TOKEN", "CENTRAL_PASSWORD", "CENTRAL_TOKEN")
+        case "MILL_PGP_SECRET_BASE64" =>
+          List(
+            "MILL_PGP_SECRET_BASE64",
+            "PGP_SECRET_BASE64",
+            "PGP_SECRET",
+            "PGP_SECRET_KEY",
+            "PGP_PRIVATE_KEY",
+            "PGP_KEY"
+          )
+        case "MILL_PGP_PASSPHRASE" =>
+          List(
+            "MILL_PGP_PASSPHRASE",
+            "PGP_PASSPHRASE",
+            "PGP_SECRET_KEY_PASSWORD",
+            "PGP_SECRET_PASSWORD",
+            "PGP_PASSWORD"
+          )
+        case "MILL_SONATYPE_USERNAME" =>
+          List(
+            "MILL_SONATYPE_USERNAME",
+            "SONATYPE_USERNAME",
+            "SONATYPE_USER",
+            "CENTRAL_USERNAME",
+            "CENTRAL_USER"
+          )
+        case "MILL_SONATYPE_PASSWORD" =>
+          List(
+            "MILL_SONATYPE_PASSWORD",
+            "SONATYPE_PASSWORD",
+            "SONATYPE_TOKEN",
+            "CENTRAL_PASSWORD",
+            "CENTRAL_TOKEN"
+          )
+        case "PGP_SECRET_KEY" =>
+          List("PGP_SECRET", "PGP_SECRET_KEY", "PGP_PRIVATE_KEY", "PGP_KEY")
+        case "PGP_SECRET_KEY_PASSWORD" =>
+          List(
+            "PGP_PASSPHRASE",
+            "PGP_SECRET_KEY_PASSWORD",
+            "PGP_SECRET_PASSWORD",
+            "PGP_PASSWORD"
+          )
+        case "SONATYPE_USERNAME" =>
+          List(
+            "SONATYPE_USERNAME",
+            "SONATYPE_USER",
+            "CENTRAL_USERNAME",
+            "CENTRAL_USER"
+          )
+        case "SONATYPE_PASSWORD" =>
+          List(
+            "SONATYPE_PASSWORD",
+            "SONATYPE_TOKEN",
+            "CENTRAL_PASSWORD",
+            "CENTRAL_TOKEN"
+          )
         case _ => Nil
     (aliases).distinct
 
   private def inferRepo(): Option[String] =
-    val remote = os.proc("git", "remote", "get-url", "origin").call(check = false)
+    val remote =
+      os.proc("git", "remote", "get-url", "origin").call(check = false)
     if remote.exitCode != 0 then None
     else parseRemote(remote.out.text().trim)
 
@@ -259,7 +396,8 @@ object SetupGhRepo:
 
   private def base64EncodePgpKeyIfNeeded(value: String): String =
     if value.contains("BEGIN PGP PRIVATE KEY BLOCK") then
-      java.util.Base64.getEncoder.encodeToString(value.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+      java.util.Base64.getEncoder
+        .encodeToString(value.getBytes(java.nio.charset.StandardCharsets.UTF_8))
     else value
 
   private def printUsage(): Unit =
