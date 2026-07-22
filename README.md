@@ -154,6 +154,17 @@ scalafix --rules PreferArrow ...     # compose the lifted Kleislis into arrows
 Running both rules in one invocation is not wrong, it is just weaker:
 `PreferArrow` will not see anything `PreferKleisli` lifted in that same pass.
 
+`scripts/purrism-pipeline.sh` drives all three steps against a target project:
+
+```bash
+scripts/purrism-pipeline.sh ../my-project [rule-version]
+```
+
+It writes a default `.scalafix-pipeline.conf` (both opt-in flags on) if none
+exists, recompiles between stages, and passes only the files the compiler
+emitted a payload for — a `.scala` script that is not part of the build would
+otherwise fail the whole run with "SemanticDB not found".
+
 ## Rules
 
 | rule | what it does | configuration |
