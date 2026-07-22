@@ -604,49 +604,6 @@ private[fix] object TypelevelPurrism {
   def placeholderCallSites(tree: Tree, defn: Defn.Def): Boolean =
     hasPlaceholderCallSite(tree, defn)
 
-  /** The project-wide verdict: which names may be lifted, and how their
-    * arguments split.
-    *
-    * This is the *authority* -- a document in scope mode lifts exactly what
-    * this map names and re-splits exactly these call sites, applying no further
-    * judgement of its own. That is the whole point: a per-file filter that
-    * declined a def after other files had already re-split its calls is what
-    * broke the build, so every filter the single-file path applied is
-    * replicated here, against all the sources at once.
-    */
-  def liftScopeShapes(trees: List[Tree]): Map[String, LiftShape] = {
-    val valueUsed =
-      trees.foldLeft(Set.empty[String])(_ ++ valueUsedNames(_))
-    val candidates =
-      trees.flatMap(tree => liftCandidates(tree).map(tree -> _))
-
-    val unique =
-      candidates
-        .groupBy { case (_, (name, _, _)) => name }
-        .collect { case (name, List(single)) => name -> single }
-
-    val eligible = unique.filterNot { case (name, (tree, (_, shape, defn))) =>
-      valueUsed.contains(name) ||
-      (shape.arity > 1 && hasPlaceholderCallSite(tree, defn))
-    }
-
-    // Deferring one def can free another that only called it, so the "calls a
-    // def that is also being re-shaped" rule is run to a fixpoint rather than
-    // once.
-    def settle(
-        current: Map[String, (Tree, (String, LiftShape, Defn.Def))]
-    ): Map[String, (Tree, (String, LiftShape, Defn.Def))] = {
-      val names = current.keySet
-      val next = current.filterNot { case (name, (_, (_, _, defn))) =>
-        callsAnyMethod(defn.body, names - name)
-      }
-
-      if (next.size == current.size) next else settle(next)
-    }
-
-    settle(eligible).map { case (name, (_, (_, shape, _))) => name -> shape }
-  }
-
   /** A def no other file can call: `private`, or `private[this]`. A
     * `private[pkg]` def is *not* file-local -- the package can span files.
     */

@@ -3,7 +3,6 @@ package fix
 import java.nio.file.Files
 import java.nio.file.Path
 
-import scala.jdk.CollectionConverters._
 import scala.meta._
 import scala.meta.internal.{semanticdb => s}
 
@@ -52,12 +51,6 @@ final class KleisliLiftScope(val shapes: Map[String, LiftShape]) {
 
 object KleisliLiftScope {
   val empty: KleisliLiftScope = new KleisliLiftScope(Map.empty)
-
-  private val IgnoredDirectories =
-    Set(".git", ".semanticdb", "out", "target", ".worktrees", ".bloop", ".bsp")
-
-  def build(root: Path): KleisliLiftScope =
-    build(sourceFiles(root))
 
   /** The symbol-keyed scope: the sources SemanticDB recorded, resolved against
     * the sourceroot, with every decision made about *symbols* rather than
@@ -189,27 +182,6 @@ object KleisliLiftScope {
 
     loop(candidates)
   }
-
-  def build(sources: List[Path]): KleisliLiftScope =
-    new KleisliLiftScope(
-      TypelevelPurrism.liftScopeShapes(sources.flatMap(parseSource))
-    )
-
-  def sourceFiles(root: Path): List[Path] =
-    if (!Files.isDirectory(root)) Nil
-    else
-      Files
-        .walk(root)
-        .iterator()
-        .asScala
-        .filter(path => path.toString.endsWith(".scala"))
-        .filterNot(path =>
-          Option(root.relativize(path).getParent).exists(
-            _.iterator().asScala
-              .exists(part => IgnoredDirectories.contains(part.toString))
-          )
-        )
-        .toList
 
   private def parseSource(path: Path): Option[Tree] = {
     val input = Input.VirtualFile(
