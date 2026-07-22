@@ -141,12 +141,12 @@ object ArrowParser {
       effect <- in.effect
       gens <- body match {
         case Term.ForYield.After_4_9_9(enums, yieldBody) =>
-          plainGenerators(enums.enums).map((_, yieldBody))
+          splitGenerators(enums.enums).map((_, yieldBody))
         case _ => None
       }
-      (generators, yieldBody) = gens
+      (split, yieldBody) = gens
       ir <- buildAggressiveFanOut(
-        generators,
+        split,
         yieldBody,
         inputSymbol,
         in,
@@ -154,25 +154,51 @@ object ArrowParser {
       )
     } yield ir
 
-  /** Every enumerator is a bare `name <- rhs` generator, as `(name, rhs)`
-    * pairs. Any `val` binder or guard makes this `None` -- those shapes are not
-    * a clean fan-out.
+  /** A `for` split into the discard generators that run before the work, the
+    * named generators themselves, and the discard generators that run after.
     */
-  private def plainGenerators(
-      enums: List[Enumerator]
-  ): Option[List[(Term.Name, Term)]] =
-    traverse(enums) {
-      case Enumerator.Generator(Pat.Var(name), rhs) => Some((name, rhs))
-      case _                                        => None
+  private final case class Split(
+      leading: List[Term],
+      named: List[(Term.Name, Term)],
+      trailing: List[Term]
+  )
+
+  /** Every enumerator is a bare generator -- `name <- rhs` or `_ <- rhs` -- and
+    * the discards form a prefix and a suffix around the named ones. Any `val`
+    * binder or guard makes this `None`, as does a discard *between* two named
+    * generators: `&&&` feeds both its arms the same input and has no position
+    * to put an interleaved effect in, and reordering it around a neighbour
+    * would change the sequence the `for` specified.
+    */
+  private def splitGenerators(enums: List[Enumerator]): Option[Split] = {
+    val classified = traverse(enums) {
+      case Enumerator.Generator(Pat.Var(name), rhs)  => Some(Right((name, rhs)))
+      case Enumerator.Generator(Pat.Wildcard(), rhs) => Some(Left(rhs))
+      case _                                         => None
     }
 
+    classified.flatMap { items =>
+      val leading = items.takeWhile(_.isLeft).collect { case Left(rhs) => rhs }
+      val rest = items.drop(leading.length)
+      val named = rest.takeWhile(_.isRight).collect { case Right(pair) => pair }
+      val tail = rest.drop(named.length)
+
+      // Anything after the first trailing discard must also be a discard;
+      // a named generator there means an interleaved effect.
+      Option.when(tail.forall(_.isLeft))(
+        Split(leading, named, tail.collect { case Left(rhs) => rhs })
+      )
+    }
+  }
+
   private def buildAggressiveFanOut(
-      generators: List[(Term.Name, Term)],
+      split: Split,
       yieldBody: Term,
       inputSymbol: Symbol,
       in: Input,
       effect: String
   )(implicit doc: SemanticDocument): Option[ArrowIR] = {
+    val generators = split.named
     val bindingSymbols = generators.map(_._1.symbol)
     // Fan-out demands the generators be mutually independent: no right-hand
     // side may reference another generator's binding, and every one must be a
@@ -180,17 +206,36 @@ object ArrowParser {
     // meaningful). A generator referencing a prior binding needs `flatMap`
     // sequencing, which this path deliberately does not fake.
     val independent =
-      generators.forall { case (_, rhs) => !referencesAny(rhs, bindingSymbols) }
+      generators.forall { case (_, rhs) =>
+        !referencesAny(rhs, bindingSymbols)
+      } &&
+        // A leading discard runs before any binding exists, so it cannot read
+        // one either.
+        split.leading.forall(rhs => !referencesAny(rhs, bindingSymbols))
     // At least one generator must be a function of the arrow input. A fan-out
     // where *no* branch reads the input is a plain `mapN` over constants and
     // gains nothing from being an arrow; branches that ignore the input are
     // fine alongside ones that read it -- `Kleisli { _ => c }` is still the same
     // effect in the same position.
     val anyReferencesInput =
-      generators.exists { case (_, rhs) =>
+      (split.leading ++ generators.map(_._2)).exists(rhs =>
         referencesAny(rhs, List(inputSymbol))
-      }
-    if (generators.length < 2 || !independent || !anyReferencesInput) None
+      )
+    // A trailing discard is rendered inside `.flatTap`, where the arrow input
+    // is out of scope -- only the arms' results are bound there. One that reads
+    // the input would need the input threaded through the tuple as well, which
+    // costs more plumbing than the `for` it replaces, so it is declined.
+    val trailingClosed =
+      split.trailing.forall(rhs => !referencesAny(rhs, List(inputSymbol)))
+    // Two effects is the point of the exercise; one is not a composition. A
+    // discard counts, so a single named generator behind a `_ <- log(...)` is
+    // enough -- that shape is exactly what `*>` exists for.
+    val effectArms =
+      split.leading.length + generators.length + split.trailing.length
+    if (
+      generators.isEmpty || effectArms < 2 || !independent ||
+      !anyReferencesInput || !trailingClosed
+    ) None
     else {
       val arms: List[ArrowIR] =
         generators.map { case (_, rhs) => LiftK(in.name, in.tpe, rhs) }
@@ -202,18 +247,58 @@ object ArrowParser {
         (if (inputRetained) List(in.name) else Nil) ++ generators.map(
           _._1.value
         )
-      // Two arms produce a flat `(a, b)` -- no nesting to unpack -- so a
-      // `yield (a, b)` in that same order is already the arrow's output and the
-      // reshape would be the identity. Emitting it would be noise, and would
-      // also break idempotence-by-inspection for a reader.
+      // `flatTap` keeps the value it taps, so several trailing discards stack
+      // with the same binders and the reshape below still sees the arms.
+      val tapped = split.trailing.foldLeft(merged) { (acc, rhs) =>
+        FlatTap(acc, names, Eff(liftF(rhs)))
+      }
+      // A single arm produces its own value, two produce a flat `(a, b)` -- in
+      // neither case is there nesting to unpack, so a `yield` that names the
+      // arms in arm order is already the arrow's output and the reshape would
+      // be the identity. Emitting it would be noise, and would also break
+      // idempotence-by-inspection for a reader.
       val armSymbols =
         (if (inputRetained) List(inputSymbol) else Nil) ++ bindingSymbols
-      val identityReshape =
-        armSymbols.length == 2 && isTupleOf(yieldBody, armSymbols)
-      if (identityReshape) Some(merged)
-      else Some(Rmap(merged, destructureFunction(names, yieldBody)))
+      val reshaped =
+        if (isIdentityYield(yieldBody, armSymbols)) tapped
+        else Rmap(tapped, destructureFunction(names, yieldBody))
+      // Leading discards keep their source order ahead of the work. They are
+      // lifted with an explicit parameter type rather than `Kleisli.liftF`
+      // because as the *left* operand of `*>` they are what the input type is
+      // inferred from, and `liftF` there would leave it unconstrained.
+      Some(split.leading.foldRight(reshaped) { (rhs, acc) =>
+        ProductR(LiftK(in.name, in.tpe, rhs), acc)
+      })
     }
   }
+
+  /** `Kleisli.liftF(rhs)` -- a plain `F[_]` as an arrow that ignores its input.
+    * Only emitted where the expected type is already known (inside a
+    * `.flatTap`), since `liftF` infers its input type from context.
+    */
+  private def liftF(rhs: Term): Term =
+    Term.Apply.After_4_6_0(
+      Term.Select(Term.Name("Kleisli"), Term.Name("liftF")),
+      Term.ArgClause(List(rhs))
+    )
+
+  /** A `yield` that just names the arms, in arm order -- so the reshape it
+    * would produce is the identity. Only the un-nested arities: beyond two arms
+    * the arrow's output is a left-nested tuple and a flat `yield (a, b, c)` is
+    * a genuine reshape.
+    */
+  private def isIdentityYield(term: Term, symbols: List[Symbol])(implicit
+      doc: SemanticDocument
+  ): Boolean =
+    symbols match {
+      case List(only) =>
+        term match {
+          case name: Term.Name => name.symbol == only
+          case _               => false
+        }
+      case List(_, _) => isTupleOf(term, symbols)
+      case _          => false
+    }
 
   /** `yield (a, b)` written exactly as the arms' own bindings, in arm order --
     * compared by symbol, so a name that merely *spells* like an arm but

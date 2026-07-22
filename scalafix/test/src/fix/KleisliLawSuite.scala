@@ -1,9 +1,11 @@
 package fix
 
 import cats.data.Kleisli
+import cats.syntax.apply._
 import cats.syntax.arrow._
 import cats.syntax.choice._
 import cats.syntax.compose._
+import cats.syntax.flatMap._
 import munit.ScalaCheckSuite
 import org.scalacheck.Prop.forAll
 
@@ -411,6 +413,78 @@ final class KleisliLawSuite extends ScalaCheckSuite {
           }
         val refactored: Option[Boolean] =
           (classify >>> (onLeft ||| onRight)).run(input)
+
+        assertEquals(refactored, original)
+    }
+  }
+
+  property(
+    "PreferArrow aggressive: a leading discard generator matches announce *> work"
+  ) {
+    forAll {
+      (
+          input: Int,
+          announced: Map[Int, Option[Unit]],
+          announceFallback: Option[Unit],
+          sizes: Map[Int, Option[Int]],
+          sizeFallback: Option[Int]
+      ) =>
+        def announce(i: Int): Option[Unit] =
+          announced.getOrElse(i, announceFallback)
+        def size(i: Int): Option[Int] = sizes.getOrElse(i, sizeFallback)
+
+        val original: Option[Int] =
+          for {
+            _ <- announce(input)
+            s <- size(input)
+          } yield s
+
+        // What aggressive mode emits for a leading `_ <- ...`: both sides are
+        // fed the same input, the left result is dropped, and short-circuiting
+        // still happens on the left first -- which is why a `None` from
+        // `announce` must suppress `size` here exactly as it does in the `for`.
+        val refactored: Option[Int] =
+          (Kleisli((i: Int) => announce(i)) *> Kleisli((i: Int) => size(i)))
+            .run(input)
+
+        assertEquals(refactored, original)
+    }
+  }
+
+  property(
+    "PreferArrow aggressive: a trailing discard generator matches (a &&& b).flatTap(...)"
+  ) {
+    forAll {
+      (
+          input: Int,
+          sizes: Map[Int, Option[Int]],
+          sizeFallback: Option[Int],
+          actives: Map[Int, Option[Boolean]],
+          activeFallback: Option[Boolean],
+          records: Map[Int, Option[Unit]],
+          recordFallback: Option[Unit]
+      ) =>
+        def size(i: Int): Option[Int] = sizes.getOrElse(i, sizeFallback)
+        def active(i: Int): Option[Boolean] =
+          actives.getOrElse(i, activeFallback)
+        def record(s: Int): Option[Unit] = records.getOrElse(s, recordFallback)
+
+        val original: Option[(Int, Boolean)] =
+          for {
+            s <- size(input)
+            a <- active(input)
+            _ <- record(s)
+          } yield (s, a)
+
+        // The tap runs last and keeps the fanned-out pair, so a `None` from
+        // `record` still fails the whole arrow -- `flatTap` discards the
+        // *value*, not the effect.
+        val refactored: Option[(Int, Boolean)] =
+          (Kleisli((i: Int) => size(i)) &&& Kleisli((i: Int) => active(i)))
+            .flatTap { case (s, _) =>
+              Kleisli.liftF[Option, Int, Unit](record(s))
+            }
+            .run(input)
 
         assertEquals(refactored, original)
     }

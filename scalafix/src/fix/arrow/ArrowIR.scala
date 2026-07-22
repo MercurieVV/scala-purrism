@@ -58,6 +58,28 @@ object ArrowIR {
   /** `l ||| r` -- an `Either`-typed input routed to one arrow or the other. */
   final case class Choice(l: ArrowIR, r: ArrowIR) extends ArrowIR
 
+  /** `l *> r` -- both arrows fed the same input, left's result discarded.
+    *
+    * The shape a `for` writes as a discard generator, `_ <- log(...)`, ahead of
+    * the work whose result it keeps. `*>` needs only `Apply[F]`, weaker than
+    * the `Monad[F]` an `&&&` fan-out costs, and it feeds the same input to both
+    * sides -- so the whole `ask &&& … .map(_._2)` plumbing that would otherwise
+    * be needed to carry the kept value past the discarded one disappears.
+    */
+  final case class ProductR(l: ArrowIR, r: ArrowIR) extends ArrowIR
+
+  /** `a.flatTap { <binders> => tap }` -- run `tap` on `a`'s result and keep
+    * `a`'s result.
+    *
+    * The mirror of [[ProductR]]: a discard generator *after* the work, whose
+    * right-hand side reads what the work produced. `binders` names the arms `a`
+    * produces, in arm order, so the tap can refer to them exactly as the source
+    * `for` did; more than one arm is destructured out of the left-nested tuple
+    * an `&&&` chain yields.
+    */
+  final case class FlatTap(a: ArrowIR, binders: List[String], tap: ArrowIR)
+      extends ArrowIR
+
   /** `a.local(fn)` -- reshape the input with the pure `fn` before `a`. */
   final case class Local(fn: Term, a: ArrowIR) extends ArrowIR
 
@@ -73,12 +95,14 @@ object ArrowIR {
   def fold[A](ir: ArrowIR)(z: A)(op: (A, ArrowIR) => A): A = {
     val here = op(z, ir)
     ir match {
-      case AndThen(l, r) => fold(r)(fold(l)(here)(op))(op)
-      case Merge(l, r)   => fold(r)(fold(l)(here)(op))(op)
-      case Choice(l, r)  => fold(r)(fold(l)(here)(op))(op)
-      case Local(_, a)   => fold(a)(here)(op)
-      case Rmap(a, _)    => fold(a)(here)(op)
-      case _             => here
+      case AndThen(l, r)    => fold(r)(fold(l)(here)(op))(op)
+      case Merge(l, r)      => fold(r)(fold(l)(here)(op))(op)
+      case Choice(l, r)     => fold(r)(fold(l)(here)(op))(op)
+      case ProductR(l, r)   => fold(r)(fold(l)(here)(op))(op)
+      case FlatTap(a, _, t) => fold(t)(fold(a)(here)(op))(op)
+      case Local(_, a)      => fold(a)(here)(op)
+      case Rmap(a, _)       => fold(a)(here)(op)
+      case _                => here
     }
   }
 

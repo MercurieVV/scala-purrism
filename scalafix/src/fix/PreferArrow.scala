@@ -137,6 +137,8 @@ object PreferArrow {
   private val ComposeSyntaxImporter: Importer = catsSyntaxImporter("compose")
   private val ArrowSyntaxImporter: Importer = catsSyntaxImporter("arrow")
   private val ChoiceSyntaxImporter: Importer = catsSyntaxImporter("choice")
+  private val ApplySyntaxImporter: Importer = catsSyntaxImporter("apply")
+  private val FlatMapSyntaxImporter: Importer = catsSyntaxImporter("flatMap")
 
   private def renderModifiers(mods: List[Mod]): String =
     mods.map(_.syntax + " ").mkString
@@ -382,15 +384,28 @@ object PreferArrow {
   /** The cats syntax imports the rendered arrow needs, one per operator family,
     * since the packages are independent: `>>>` is `cats.syntax.compose._`,
     * `&&&` is `cats.syntax.arrow._`, and `|||` is `cats.syntax.choice._`. A
-    * tree that mixes them needs each.
+    * tree that mixes them needs each: `*>` is `cats.syntax.apply._` and
+    * `flatTap` is `cats.syntax.flatMap._`.
+    *
+    * Already-present imports are dropped. `Patch.addGlobalImport` deduplicates
+    * the `Symbol` overload but not the `Importer` one, and these packages are
+    * routinely imported by the very `for`-comprehension being rewritten --
+    * `flatMap` in particular -- so without this the rewrite emits the same
+    * wildcard import twice.
     */
-  private def syntaxImports(ir: ArrowIR): List[Importer] = {
+  private def syntaxImports(ir: ArrowIR)(implicit
+      doc: SemanticDocument
+  ): List[Importer] = {
     def has(pred: PartialFunction[ArrowIR, Unit]): Boolean =
       ArrowIR.fold(ir)(false)((acc, node) => acc || pred.isDefinedAt(node))
+    val present =
+      doc.tree.collect { case importer: Importer => importer.syntax }.toSet
     List(
       Option.when(has { case _: ArrowIR.AndThen => })(ComposeSyntaxImporter),
       Option.when(has { case _: ArrowIR.Merge => })(ArrowSyntaxImporter),
-      Option.when(has { case _: ArrowIR.Choice => })(ChoiceSyntaxImporter)
-    ).flatten
+      Option.when(has { case _: ArrowIR.Choice => })(ChoiceSyntaxImporter),
+      Option.when(has { case _: ArrowIR.ProductR => })(ApplySyntaxImporter),
+      Option.when(has { case _: ArrowIR.FlatTap => })(FlatMapSyntaxImporter)
+    ).flatten.filterNot(importer => present.contains(importer.syntax))
   }
 }

@@ -237,8 +237,10 @@ would read worse than the source — a declined site is a correct outcome, not a
 failure. `aggressive = true` relaxes it: generators calling *plain* `F`-returning
 methods are lifted in place into `Kleisli { x => ... }` so they can fan out with
 `&&&`, and a `yield` that still needs the input keeps it via a leading
-`Kleisli.ask`. The result is provably equivalent but busier than the source,
-which is why it is opt-in.
+`Kleisli.ask`. Discard generators (`_ <- log(...)`) are kept out of the fan-out
+and rendered as `*>` before the work or `.flatTap` after it, so their thrown-away
+results cost no tupling. The result is provably equivalent but busier than the
+source, which is why it is opt-in.
 
 Pattern catalogue and the aggressive-mode rules:
 [docs/ARROW_PATTERNS.md](docs/ARROW_PATTERNS.md).
