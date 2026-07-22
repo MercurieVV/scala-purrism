@@ -106,17 +106,30 @@ final class PreferKleisli(config: PreferKleisliConfig)
       .getOrElse("PreferKleisli")(PreferKleisliConfig.default)
       .map(new PreferKleisli(_))
 
+  /** Built once per rule instance, not per file: the project-wide scan parses
+    * every source, and a rule instance outlives the documents it is applied to.
+    */
+  private lazy val scope: KleisliLiftScope =
+    config.crossFileRoot.fold(KleisliLiftScope.empty) { root =>
+      KleisliLiftScope.build(java.nio.file.Paths.get(root).toAbsolutePath)
+    }
+
   override def fix(implicit doc: SemanticDocument): Patch = {
     val knownKleislies = PreferKleisli.collectKleisliNames(doc.tree)
     val rewrites = PreferKleisli.rewritePlan(
       doc.tree,
       knownKleislies,
-      config.fileLocalOnly
+      config.fileLocalOnly,
+      scope
     )
 
     rewrites.map { case (defn, rewritten) =>
       kleisliPatch(defn, rewritten)
     }.asPatch +
+      // With a scope, *every* call site -- this file's own included -- is
+      // re-split from the project-wide shape, so the per-def path would double
+      // up on the local ones.
+      PreferKleisli.scopedCallPatches(doc.tree, scope) +
       PreferKleisli.sequencedLocalCompositionPatches(
         doc.tree,
         knownKleislies
@@ -129,14 +142,19 @@ final class PreferKleisli(config: PreferKleisliConfig)
   )(implicit doc: SemanticDocument): Patch =
     Patch.addGlobalImport(Symbol("cats/data/Kleisli#")) +
       Patch.replaceTree(defn, rewritten) +
-      PreferKleisli.tupledCallPatches(doc.tree, defn)
+      (if (scope.isEmpty)
+         PreferKleisli.tupledCallPatches(doc.tree, defn)
+       else Patch.empty)
 }
 
 /** `fileLocalOnly` limits parameter re-shaping to `private` defs, whose call
   * sites are all in the file scalafix is currently rewriting. See
   * `TypelevelPurrism.kleisliRewritePlan`.
   */
-final case class PreferKleisliConfig(fileLocalOnly: Boolean = false)
+final case class PreferKleisliConfig(
+    fileLocalOnly: Boolean = false,
+    crossFileRoot: Option[String] = None
+)
 
 object PreferKleisliConfig {
   val default: PreferKleisliConfig = PreferKleisliConfig()
@@ -145,7 +163,13 @@ object PreferKleisliConfig {
     metaconfig.ConfDecoder.from { conf =>
       conf
         .getOrElse("fileLocalOnly")(default.fileLocalOnly)
-        .map(PreferKleisliConfig(_))
+        .product(conf.getOrElse("crossFileRoot")(""))
+        .map { case (fileLocalOnly, crossFileRoot) =>
+          PreferKleisliConfig(
+            fileLocalOnly,
+            Option(crossFileRoot).filter(_.nonEmpty)
+          )
+        }
     }
 }
 
@@ -189,6 +213,22 @@ object PreferKleisli {
 
   def tupledCallPatches(tree: Tree, defn: Defn.Def): Patch =
     TypelevelPurrism.tupledCallPatches(tree, defn)
+
+  def scopedCallPatches(tree: Tree, scope: KleisliLiftScope): Patch =
+    TypelevelPurrism.scopedCallPatches(tree, scope)
+
+  def rewritePlan(
+      tree: Tree,
+      knownKleislies: Set[String],
+      fileLocalOnly: Boolean,
+      scope: KleisliLiftScope
+  ): List[(Defn.Def, String)] =
+    TypelevelPurrism.kleisliRewritePlan(
+      tree,
+      knownKleislies,
+      fileLocalOnly,
+      scope
+    )
 
   def sequencedLocalCompositionPatches(
       tree: Tree,
@@ -399,7 +439,31 @@ private[fix] object TypelevelPurrism {
       tree: Tree,
       knownKleislies: Set[String],
       fileLocalOnly: Boolean
-  ): List[(Defn.Def, String)] = {
+  ): List[(Defn.Def, String)] =
+    kleisliRewritePlan(
+      tree,
+      knownKleislies,
+      fileLocalOnly,
+      KleisliLiftScope.empty
+    )
+
+  /** With a [[KleisliLiftScope]], a def is lifted only if the project-wide scan
+    * also cleared it -- which is what lets a *public* def be lifted at all,
+    * since every file then re-splits its calls the same way.
+    */
+  def kleisliRewritePlan(
+      tree: Tree,
+      knownKleislies: Set[String],
+      fileLocalOnly: Boolean,
+      scope: KleisliLiftScope
+  ): List[(Defn.Def, String)] = if (!scope.isEmpty)
+    // The scope already applied every filter below, over all the sources at
+    // once. Re-applying them here per file could decline a def whose call sites
+    // other files have already re-split.
+    rewriteCandidates(tree)
+      .filter(defn => scope.shapeOf(defn.name.value).isDefined)
+      .flatMap(defn => kleisliRewrite(defn, knownKleislies).map(defn -> _))
+  else {
     val candidateRewrites =
       rewriteCandidates(tree)
         .filter(defn => !fileLocalOnly || isFileLocal(defn))
@@ -442,18 +506,6 @@ private[fix] object TypelevelPurrism {
   private def usedAsValue(tree: Tree, defn: Defn.Def): Boolean = {
     val name = defn.name.value
 
-    // `GitHub.userAnswer(...)` and `userAnswer[F](...)` are calls; the name sits
-    // under a `Select`/`ApplyType` that is itself the callee, so those wrappers
-    // are followed upwards rather than accepted on sight.
-    def isCalleePosition(term: Tree): Boolean =
-      term.parent.exists {
-        case apply: Term.Apply     => apply.fun eq term
-        case apply: Term.ApplyType => isCalleePosition(apply)
-        case select: Term.Select =>
-          (select.name eq term) && isCalleePosition(select)
-        case _ => false
-      }
-
     tree.collect {
       case candidate: Term.Name
           if candidate.value == name &&
@@ -461,6 +513,101 @@ private[fix] object TypelevelPurrism {
             !isCalleePosition(candidate) =>
         ()
     }.nonEmpty
+  }
+
+  /** `GitHub.userAnswer(...)` and `userAnswer[F](...)` are calls; the name sits
+    * under a `Select`/`ApplyType` that is itself the callee, so those wrappers
+    * are followed upwards rather than accepted on sight.
+    */
+  private def isCalleePosition(term: Tree): Boolean =
+    term.parent.exists {
+      case apply: Term.Apply     => apply.fun eq term
+      case apply: Term.ApplyType => isCalleePosition(apply)
+      case select: Term.Select =>
+        (select.name eq term) && isCalleePosition(select)
+      case _ => false
+    }
+
+  /** Every name this tree references without calling it -- the project-wide
+    * veto list [[KleisliLiftScope]] builds its decision from.
+    */
+  def valueUsedNames(tree: Tree): Set[String] =
+    tree.collect {
+      case candidate: Term.Name
+          if !isCalleePosition(candidate) && !isDefinitionName(candidate) =>
+        candidate.value
+    }.toSet
+
+  private def isDefinitionName(name: Term.Name): Boolean =
+    name.parent.exists {
+      case defn: Defn.Def    => defn.name eq name
+      case decl: Decl.Def    => decl.name eq name
+      case param: Term.Param => param.name eq name
+      case _                 => false
+    }
+
+  /** How each liftable def in this tree would split its arguments, keyed by
+    * name -- what a *caller* needs to know, and a caller in another file has
+    * only the name to go on.
+    */
+  private def liftCandidates(tree: Tree): List[(String, LiftShape, Defn.Def)] =
+    rewriteCandidates(tree).flatMap { defn =>
+      for {
+        params <- plainParameters(defn)
+        returnType <- defn.decltpe.collect { case applied: Type.Apply =>
+          applied
+        }
+        if isKleisliCandidate(defn, params, returnType)
+        callbacks = splitEffectCallbacks(params, returnType.tpe.syntax)._2
+        if callbacks.length < params.length
+      } yield (
+        defn.name.value,
+        LiftShape(params.map(param => callbacks.contains(param))),
+        defn
+      )
+    }
+
+  /** The project-wide verdict: which names may be lifted, and how their
+    * arguments split.
+    *
+    * This is the *authority* -- a document in scope mode lifts exactly what
+    * this map names and re-splits exactly these call sites, applying no further
+    * judgement of its own. That is the whole point: a per-file filter that
+    * declined a def after other files had already re-split its calls is what
+    * broke the build, so every filter the single-file path applied is
+    * replicated here, against all the sources at once.
+    */
+  def liftScopeShapes(trees: List[Tree]): Map[String, LiftShape] = {
+    val valueUsed =
+      trees.foldLeft(Set.empty[String])(_ ++ valueUsedNames(_))
+    val candidates =
+      trees.flatMap(tree => liftCandidates(tree).map(tree -> _))
+
+    val unique =
+      candidates
+        .groupBy { case (_, (name, _, _)) => name }
+        .collect { case (name, List(single)) => name -> single }
+
+    val eligible = unique.filterNot { case (name, (tree, (_, shape, defn))) =>
+      valueUsed.contains(name) ||
+      (shape.arity > 1 && hasPlaceholderCallSite(tree, defn))
+    }
+
+    // Deferring one def can free another that only called it, so the "calls a
+    // def that is also being re-shaped" rule is run to a fixpoint rather than
+    // once.
+    def settle(
+        current: Map[String, (Tree, (String, LiftShape, Defn.Def))]
+    ): Map[String, (Tree, (String, LiftShape, Defn.Def))] = {
+      val names = current.keySet
+      val next = current.filterNot { case (name, (_, (_, _, defn))) =>
+        callsAnyMethod(defn.body, names - name)
+      }
+
+      if (next.size == current.size) next else settle(next)
+    }
+
+    settle(eligible).map { case (name, (_, (_, shape, _))) => name -> shape }
   }
 
   /** A def no other file can call: `private`, or `private[this]`. A
@@ -472,6 +619,56 @@ private[fix] object TypelevelPurrism {
       case Mod.Private(Term.This(_))     => true
       case _                             => false
     }
+
+  /** Re-splits calls to defs lifted *in other files*. The in-file path is
+    * anchored on the def being rewritten; this one is anchored on the
+    * project-wide scope, which is the only thing a document knows about a
+    * callee it does not define.
+    */
+  def scopedCallPatches(tree: Tree, scope: KleisliLiftScope): Patch =
+    if (scope.isEmpty) Patch.empty
+    else
+      tree.collect { case applyTerm: Term.Apply =>
+        val arguments = applyTerm.argClause.values
+        callName(applyTerm.fun)
+          .flatMap(scope.shapeOf)
+          .filter(shape =>
+            shape.arity == arguments.length && shape.arity > 0 &&
+              !insideRewrittenDefinition(applyTerm, arguments.length)
+          )
+          .map { shape =>
+            if (shape.hasCallbacks)
+              Patch.replaceTree(
+                applyTerm,
+                callbackSplitCall(applyTerm.fun, arguments, shape.callbacks)
+              )
+            else if (shape.arity > 1)
+              Patch.replaceTree(applyTerm.argClause, tupledArguments(arguments))
+            else Patch.empty
+          }
+          .getOrElse(Patch.empty)
+      }.asPatch
+
+  /** A recursive call sits inside the very def being replaced, so it is already
+    * carried along in the replacement text; patching it as well would stack two
+    * edits on one span. `replaceExactSelfCalls` handles that copy instead.
+    */
+  private def insideRewrittenDefinition(
+      applyTerm: Term.Apply,
+      arity: Int
+  ): Boolean = {
+    val calleeName = callName(applyTerm.fun)
+
+    def enclosingDef(tree: Tree): Boolean =
+      tree.parent.exists {
+        case defn: Defn.Def =>
+          calleeName.contains(defn.name.value) || enclosingDef(defn)
+        case other => enclosingDef(other)
+      }
+
+    val _ = arity
+    enclosingDef(applyTerm)
+  }
 
   def tupledCallPatches(tree: Tree, defn: Defn.Def): Patch =
     plainParameters(defn).filter(_.length > 1).fold(Patch.empty) { params =>
