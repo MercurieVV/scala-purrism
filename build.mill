@@ -137,6 +137,10 @@ object scalafix
     val generatorArgs = Seq(
       "--output",
       output.toString,
+      "--cats-version",
+      Versions.catsCore,
+      "--scala-version",
+      Versions.scala3,
       "--jar",
       requiredJar(s"cats-core_3-${Versions.catsCore}.jar").toString,
       "--jar",
@@ -165,14 +169,26 @@ object scalafix
     runCatsIndex(output, indexgen.runClasspath().map(_.path))
   }
 
+  /** Generate a private snapshot consumed by drift checks and tests. */
+  def catsIndexGenerated = Task {
+    val output = Task.dest / "cats-index"
+    runCatsIndex(output, indexgen.runClasspath().map(_.path))
+    PathRef(output)
+  }
+
   /** Fail when generated Cats inventory files differ from their checked-in bytes. */
   def catsIndexCheck() = Task.Command {
-    val generated = Task.dest / "cats-index"
-    runCatsIndex(generated, indexgen.runClasspath().map(_.path))
+    val generated = catsIndexGenerated().path
 
     val checkedIn =
       mill.api.BuildCtx.workspaceRoot / "scalafix" / "resources" / "cats-index"
-    Seq("typeclasses.tsv", "capabilities.tsv", "syntax.tsv").foreach { fileName =>
+    Seq(
+      "typeclasses.tsv",
+      "capabilities.tsv",
+      "syntax.tsv",
+      "stdlib.tsv",
+      "gaps.tsv"
+    ).foreach { fileName =>
       val expected = checkedIn / fileName
       val actual = generated / fileName
       val identical =
@@ -212,6 +228,7 @@ object scalafix
           .mkString(sep),
         "sourceroot" -> mill.api.BuildCtx.workspaceRoot.toString,
         "scalaVersion" -> Versions.scala3,
+        "catsIndexGenerated" -> catsIndexGenerated().path.toString,
         "scalacOptions" -> testInput.scalacOptions().mkString("|")
       ).map { case (key, value) => s"$key=$value" }
       os.write(
