@@ -1,0 +1,29 @@
+<idea-plugin>
+    <id>io.github.mercurievv.purrism.ideaplugin</id>
+    <name>Scala Purrism</name>
+    <vendor url="https://github.com/MercurieVV/scala-purrism">MercurieVV</vendor>
+    <description>Applies scala-purrism scalafix rules from the Refactor menu and opens a Three.js viewer from the Navigate menu.</description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.lang</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <notificationGroup id="Purrism" displayType="BALLOON"/>
+    </extensions>
+
+    <actions>
+        <action id="Purrism.RunScalafixRules"
+                class="io.github.mercurievv.purrism.ideaplugin.PurrismRefactorAction"
+                text="Apply Purrism Scalafix Rules..."
+                description="Run scala-purrism scalafix rules on the current file">
+            <add-to-group group-id="RefactoringMenu" anchor="last"/>
+        </action>
+
+        <action id="Purrism.OpenThreeJsViewer"
+                class="io.github.mercurievv.purrism.ideaplugin.PurrismThreeJsAction"
+                text="Purrism Viewer..."
+                description="Open the Purrism Three.js viewer">
+            <add-to-group group-id="GoToMenu" anchor="last"/>
+        </action>
+    </actions>
+</idea-plugin>
