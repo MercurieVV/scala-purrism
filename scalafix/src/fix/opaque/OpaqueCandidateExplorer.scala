@@ -6,7 +6,13 @@ import scala.meta.internal.{semanticdb => s}
   *
   * `basicTypes` is the set of underlying types worth protecting -- primitives
   * and near-primitives, whose values are interchangeable by accident and so
-  * benefit most from an opaque wrapper. `topN` caps the emitted clusters.
+  * benefit most from an opaque wrapper.
+  *
+  * `minClusterSize` is the threshold, not a cap: every cluster whose value-flow
+  * closure reaches at least this many nodes is emitted, and every smaller one
+  * is dropped. That is what makes the explorer converge -- once the big flows
+  * are opaque, the remainder fall below the threshold and a rerun is a no-op --
+  * unlike a fixed "top N" count, which always has N more clusters to hand back.
   *
   * `maxSeedsPerType` bounds the cost: one closure is computed per seed, so a
   * codebase with ten thousand Strings would otherwise run ten thousand graph
@@ -15,8 +21,7 @@ import scala.meta.internal.{semanticdb => s}
   */
 final case class ExplorerConfig(
     basicTypes: List[String] = ExplorerConfig.DefaultBasicTypes,
-    topN: Int = ExplorerConfig.DefaultTopN,
-    minClusterSize: Int = 2,
+    minClusterSize: Int = ExplorerConfig.DefaultMinClusterSize,
     maxSeedsPerType: Int = 2000
 )
 
@@ -37,7 +42,11 @@ object ExplorerConfig {
     "java/util/UUID#"
   )
 
-  val DefaultTopN: Int = 10
+  /** Below this a cluster is too small to be worth an opaque type. Also the
+    * convergence point: a rerun over a codebase whose larger flows are already
+    * opaque finds only sub-threshold clusters and emits nothing.
+    */
+  val DefaultMinClusterSize: Int = 4
 
   val default: ExplorerConfig = ExplorerConfig()
 }
@@ -103,7 +112,10 @@ object OpaqueCandidateExplorer {
       (-cluster.members.size, cluster.seeds.headOption.getOrElse(""))
     )
 
-    nameAll(index, dropSubsumed(ordered).take(config.topN))
+    // Every cluster over the threshold is kept; `clustersFor` already dropped
+    // the sub-threshold ones. No count cap -- the threshold is the only knob,
+    // so the emitted set is exactly "all flows still worth an opaque type".
+    nameAll(index, dropSubsumed(ordered))
   }
 
   /** A cluster before it has been named. */
@@ -190,12 +202,17 @@ object OpaqueCandidateExplorer {
       index: SemanticdbIndex,
       clusters: List[Cluster]
   ): List[OpaqueCandidate] = {
-    val used = scala.collection.mutable.Map.empty[String, Int]
+    // Seeded with every type name already in the codebase, not just the names
+    // this run hands out. Deriving `State` for a cluster when an `opaque type
+    // State` already exists would either fail to emit a definition (the rule's
+    // `definesType` guard skips it) and silently retype the field to that
+    // unrelated existing opaque, or -- once placed elsewhere -- collide at
+    // compile time. Reserving them up front makes discovery pick `State2`
+    // instead, the same way a human renaming would.
+    val taken = scala.collection.mutable.Set.from(existingTypeNames(index))
     clusters.map { cluster =>
-      val base = deriveName(cluster.members)
-      val seen = used.getOrElse(base, 0)
-      used.update(base, seen + 1)
-      val name = if (seen == 0) base else s"$base${seen + 1}"
+      val name = freeName(deriveName(cluster.members), taken)
+      taken += name
       val owner = dominantOwner(index, cluster.members)
       OpaqueCandidate(
         name = name,
@@ -207,6 +224,27 @@ object OpaqueCandidateExplorer {
       )
     }
   }
+
+  /** The first of `base`, `base2`, `base3`... not already taken. */
+  private def freeName(base: String, taken: collection.Set[String]): String =
+    if (!taken.contains(base)) base
+    else
+      Iterator
+        .from(2)
+        .map(suffix => s"$base$suffix")
+        .find(!taken.contains(_))
+        .get
+
+  /** Names of every type already declared in the analysed sources -- classes,
+    * traits, opaque types and type aliases, all of which reach SemanticDB with
+    * a `#` descriptor. A generated opaque type must not reuse one of these.
+    */
+  def existingTypeNames(index: SemanticdbIndex): Set[String] =
+    index.symbolInfo.keys.iterator
+      .filter(_.endsWith("#"))
+      .map(displayName)
+      .filter(_.nonEmpty)
+      .toSet
 
   /** The cluster's name: its most frequent member name, capitalized.
     *
@@ -390,6 +428,23 @@ object OpaqueCandidateExplorer {
        |]
        |""".stripMargin
   }
+
+  /** How many candidates landed at each closure size, largest first.
+    *
+    * One line per distinct size -- "cluster size 5 (10 of them)" -- so a run
+    * shows at a glance what the threshold let through and where it cut.
+    */
+  def renderSizeHistogram(candidates: List[OpaqueCandidate]): String =
+    if (candidates.isEmpty) "no clusters over the size threshold"
+    else
+      candidates
+        .groupBy(_.size)
+        .toList
+        .sortBy { case (size, _) => -size }
+        .map { case (size, group) =>
+          f"cluster size $size%3d (${group.size}%d of them)"
+        }
+        .mkString("\n")
 
   /** The ranking, for a human to eyeball before pasting anything. */
   def renderRanking(candidates: List[OpaqueCandidate]): String =
