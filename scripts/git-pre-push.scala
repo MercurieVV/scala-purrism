@@ -13,7 +13,9 @@ object GitPrePush:
 
     val buildTool =
       if os.exists(repoRoot / "build.sbt") then "sbt"
-      else if os.exists(repoRoot / "build.sc") then "mill"
+      else if
+        os.exists(repoRoot / "build.mill") || os.exists(repoRoot / "build.sc")
+      then "mill"
       else "scala-cli"
 
     println("=== Git Pre-Push Verification Checks ===")
@@ -30,10 +32,14 @@ object GitPrePush:
         os.proc(cmd).call(cwd = repoRoot, check = false).exitCode
 
       case "mill" =>
-        val buildScContent = os.read(repoRoot / "build.sc")
+        val buildFile =
+          if os.exists(repoRoot / "build.mill") then repoRoot / "build.mill"
+          else repoRoot / "build.sc"
+        val buildContent = os.read(buildFile)
         val cmd =
-          if buildScContent.contains("def prePush") then
-            Seq("mill", "app.prePush")
+          if buildContent.contains("def prePush") then Seq("mill", "prePush")
+          else if buildContent.contains("object scalafix") then
+            Seq("mill", "scalafix.test")
           else Seq("mill", "app.test")
         os.proc(cmd).call(cwd = repoRoot, check = false).exitCode
 

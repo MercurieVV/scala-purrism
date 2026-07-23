@@ -116,15 +116,18 @@ object CatsIndexGen {
         )
       }
 
-    val capabilityMethods = capabilityRows.iterator.map(row => row(2) -> row(1)).toSet
+    val capabilityMethods =
+      capabilityRows.iterator.map(row => row(2) -> row(1)).toSet
     val syntaxRows = (syntax.toList ++ legacyOpsSyntax(capabilities.toList))
       .filter(row => capabilityMethods.contains(row.owner -> row.method))
-      .map(row =>
-        List(row.syntaxMethod, row.owner, row.method, row.importPath)
-      )
+      .map(row => List(row.syntaxMethod, row.owner, row.method, row.importPath))
 
     Files.createDirectories(options.output)
-    writeTsv(options.output.resolve("typeclasses.tsv"), TypeclassHeader, typeclassRows)
+    writeTsv(
+      options.output.resolve("typeclasses.tsv"),
+      TypeclassHeader,
+      typeclassRows
+    )
     writeTsv(
       options.output.resolve("capabilities.tsv"),
       CapabilityHeader,
@@ -153,7 +156,9 @@ object CatsIndexGen {
         case value :: tail if !value.startsWith("-") =>
           loop(tail, output, jars :+ Paths.get(value))
         case flag :: _ =>
-          throw new IllegalArgumentException(s"unknown or incomplete argument: $flag")
+          throw new IllegalArgumentException(
+            s"unknown or incomplete argument: $flag"
+          )
         case Nil =>
           val target = output.getOrElse(
             Paths.get("scalafix", "resources", "cats-index")
@@ -187,11 +192,13 @@ object CatsIndexGen {
     val loader = Thread.currentThread().getContextClassLoader
     val syntaxModules = Try(
       Class.forName("cats.syntax.package$", false, loader)
-    ).toOption.toList.flatMap(
-      _.getFields.iterator
-        .filter(field => Modifier.isStatic(field.getModifiers))
-        .map(_.getName)
-    ).toSet
+    ).toOption.toList
+      .flatMap(
+        _.getFields.iterator
+          .filter(field => Modifier.isStatic(field.getModifiers))
+          .map(_.getName)
+      )
+      .toSet
 
     capabilities.iterator
       .map(_.owner)
@@ -206,16 +213,18 @@ object CatsIndexGen {
           .takeWhile(_ != '(')
         val opsMethods = Try(
           Class.forName(s"${typeName}$$Ops", false, loader)
-        ).toOption.toList.flatMap(
-          _.getMethods.iterator.map(method =>
-            NameTransformer.decode(method.getName)
+        ).toOption.toList
+          .flatMap(
+            _.getMethods.iterator
+              .map(method => NameTransformer.decode(method.getName))
           )
-        ).toSet
+          .toSet
         val module = syntaxModule(typeName.split('.').lastOption.getOrElse(""))
         if (opsMethods(methodName) && syntaxModules(module))
           List(
             RawSyntax(
-              typeSymbol.stripSuffix("#") + ".Ops#" + owner.stripPrefix(typeSymbol),
+              typeSymbol.stripSuffix("#") + ".Ops#" + owner
+                .stripPrefix(typeSymbol),
               owner,
               owner,
               s"cats.syntax.$module.*"
@@ -227,10 +236,10 @@ object CatsIndexGen {
 
   private def syntaxModule(typeclassName: String): String =
     typeclassName match {
-      case "MonoidK"                 => "semigroupk"
-      case "NonEmptyParallel"        => "parallel"
-      case other if other.nonEmpty   => other.head.toLower + other.tail
-      case _                         => "all"
+      case "MonoidK"               => "semigroupk"
+      case "NonEmptyParallel"      => "parallel"
+      case other if other.nonEmpty => other.head.toLower + other.tail
+      case _                       => "all"
     }
 
   private def writeTsv(
@@ -249,12 +258,17 @@ object CatsIndexGen {
           !cell.exists(ch => ch == '\t' || ch == '\n' || ch == '\r'),
           s"invalid TSV cell for $path: $cell"
         )
-        require(cell == cell.stripTrailing, s"trailing whitespace in $path: $cell")
+        require(
+          cell == cell.stripTrailing,
+          s"trailing whitespace in $path: $cell"
+        )
       }
     }
     val text =
       ("#" + header.mkString("\t")) + "\n" +
-        rows.map(_.mkString("\t")).mkString("", "\n", if (rows.isEmpty) "" else "\n")
+        rows
+          .map(_.mkString("\t"))
+          .mkString("", "\n", if (rows.isEmpty) "" else "\n")
     Files.writeString(path, text, StandardCharsets.UTF_8)
   }
 
@@ -270,7 +284,9 @@ object CatsIndexGen {
       capabilities: ListBuffer[RawCapability],
       syntax: ListBuffer[RawSyntax]
   ) extends Inspector {
-    override def inspect(using quotes: Quotes)(
+    override def inspect(using
+        quotes: Quotes
+    )(
         tastys: List[Tasty[quotes.type]]
     ): Unit = {
       import quotes.reflect.*
@@ -286,7 +302,9 @@ object CatsIndexGen {
           super.traverseTree(tree)(owner)
         }
       }
-      tastys.foreach(tasty => traverser.traverseTree(tasty.ast)(Symbol.noSymbol))
+      tastys.foreach(tasty =>
+        traverser.traverseTree(tasty.ast)(Symbol.noSymbol)
+      )
 
       val candidates = definitions.iterator
         .map(_.symbol)
@@ -346,7 +364,9 @@ object CatsIndexGen {
         )
         .foreach { definition =>
           val constructorEvidence =
-            evidenceTypeclasses(definition.symbol.primaryConstructor.paramSymss.flatten)
+            evidenceTypeclasses(
+              definition.symbol.primaryConstructor.paramSymss.flatten
+            )
           definition.symbol.declaredMethods
             .filter(isPublicMethod)
             .foreach { method =>
@@ -373,7 +393,9 @@ object CatsIndexGen {
 
     }
 
-    private def isTypeclass(using quotes: Quotes)(
+    private def isTypeclass(using
+        quotes: Quotes
+    )(
         symbol: quotes.reflect.Symbol
     ): Boolean = {
       import quotes.reflect.*
@@ -390,7 +412,9 @@ object CatsIndexGen {
       hasSummoner(symbol)
     }
 
-    private def hasSummoner(using quotes: Quotes)(
+    private def hasSummoner(using
+        quotes: Quotes
+    )(
         symbol: quotes.reflect.Symbol
     ): Boolean = {
       import quotes.reflect.*
@@ -398,12 +422,15 @@ object CatsIndexGen {
       companion != Symbol.noSymbol &&
       companion.declaredMethods
         .filter(_.name == "apply")
-        .exists(_.paramSymss.flatten.exists(parameter =>
-          containsType(parameterType(parameter), symbol)
-        ))
+        .exists(
+          _.paramSymss.flatten
+            .exists(parameter => containsType(parameterType(parameter), symbol))
+        )
     }
 
-    private def parameterType(using quotes: Quotes)(
+    private def parameterType(using
+        quotes: Quotes
+    )(
         parameter: quotes.reflect.Symbol
     ): quotes.reflect.TypeRepr = {
       import quotes.reflect.*
@@ -413,7 +440,9 @@ object CatsIndexGen {
       }
     }
 
-    private def containsType(using quotes: Quotes)(
+    private def containsType(using
+        quotes: Quotes
+    )(
         tpe: quotes.reflect.TypeRepr,
         target: quotes.reflect.Symbol
     ): Boolean = {
@@ -422,7 +451,9 @@ object CatsIndexGen {
       normalized.typeSymbol == target ||
       (normalized match {
         case AppliedType(tycon, arguments) =>
-          containsType(tycon, target) || arguments.exists(containsType(_, target))
+          containsType(tycon, target) || arguments.exists(
+            containsType(_, target)
+          )
         case AnnotatedType(underlying, _) =>
           containsType(underlying, target)
         case ByNameType(underlying) =>
@@ -432,7 +463,9 @@ object CatsIndexGen {
       })
     }
 
-    private def evidenceTypeclasses(using quotes: Quotes)(
+    private def evidenceTypeclasses(using
+        quotes: Quotes
+    )(
         parameters: List[quotes.reflect.Symbol]
     ): List[quotes.reflect.Symbol] =
       parameters
@@ -441,7 +474,9 @@ object CatsIndexGen {
         .filter(isTypeclass)
         .distinct
 
-    private def referencedTypes(using quotes: Quotes)(
+    private def referencedTypes(using
+        quotes: Quotes
+    )(
         tpe: quotes.reflect.TypeRepr
     ): List[quotes.reflect.Symbol] = {
       import quotes.reflect.*
@@ -461,7 +496,9 @@ object CatsIndexGen {
       })
     }
 
-    private def kindOf(using quotes: Quotes)(
+    private def kindOf(using
+        quotes: Quotes
+    )(
         parameter: quotes.reflect.Symbol
     ): String = {
       import quotes.reflect.*
@@ -480,7 +517,9 @@ object CatsIndexGen {
       }
     }
 
-    private def isPublicMethod(using quotes: Quotes)(
+    private def isPublicMethod(using
+        quotes: Quotes
+    )(
         method: quotes.reflect.Symbol
     ): Boolean = {
       import quotes.reflect.*
@@ -492,13 +531,17 @@ object CatsIndexGen {
       !method.flags.is(Flags.Synthetic)
     }
 
-    private def methodRoot(using quotes: Quotes)(
+    private def methodRoot(using
+        quotes: Quotes
+    )(
         method: quotes.reflect.Symbol
     ): quotes.reflect.Symbol =
       if (isConcreteEvidenceAccessor(method)) method
       else method.allOverriddenSymbols.toList.lastOption.getOrElse(method)
 
-    private def isConcreteEvidenceAccessor(using quotes: Quotes)(
+    private def isConcreteEvidenceAccessor(using
+        quotes: Quotes
+    )(
         method: quotes.reflect.Symbol
     ): Boolean = {
       import quotes.reflect.*
@@ -512,7 +555,9 @@ object CatsIndexGen {
       })
     }
 
-    private def bestTarget(using quotes: Quotes)(
+    private def bestTarget(using
+        quotes: Quotes
+    )(
         syntaxMethod: quotes.reflect.Symbol,
         candidates: List[quotes.reflect.Symbol]
     ): Option[quotes.reflect.Symbol] = {
@@ -523,7 +568,9 @@ object CatsIndexGen {
       }.headOption
     }
 
-    private def syntaxImport(using quotes: Quotes)(
+    private def syntaxImport(using
+        quotes: Quotes
+    )(
         method: quotes.reflect.Symbol
     ): String = {
       val sourceName =
@@ -546,14 +593,18 @@ object CatsIndexGen {
       s"cats.syntax.$module.*"
     }
 
-    private def typeclassSource(using quotes: Quotes)(
+    private def typeclassSource(using
+        quotes: Quotes
+    )(
         method: quotes.reflect.Symbol
     ): String =
       method.owner.name.headOption
         .map(first => first.toLower + method.owner.name.tail + ".scala")
         .getOrElse("all.scala")
 
-    private def semanticSymbol(using quotes: Quotes)(
+    private def semanticSymbol(using
+        quotes: Quotes
+    )(
         symbol: quotes.reflect.Symbol
     ): String = {
       import quotes.reflect.*
@@ -562,7 +613,8 @@ object CatsIndexGen {
         if (symbol.name == "<root>" || symbol.name == "<empty>") ""
         else {
           val prefix =
-            if (symbol.owner == Symbol.noSymbol) "" else semanticSymbol(symbol.owner)
+            if (symbol.owner == Symbol.noSymbol) ""
+            else semanticSymbol(symbol.owner)
           prefix + escapeName(symbol.name) + "/"
         }
       } else if (symbol.isDefDef) {
@@ -570,7 +622,9 @@ object CatsIndexGen {
           symbol.owner.declaredMethods.filter(_.name == symbol.name)
         val index = overloads.indexOf(symbol)
         val disambiguator = if (index <= 0) "()" else s"(+$index)"
-        semanticSymbol(symbol.owner) + escapeName(symbol.name) + disambiguator + "."
+        semanticSymbol(symbol.owner) + escapeName(
+          symbol.name
+        ) + disambiguator + "."
       } else if (symbol.isType) {
         semanticSymbol(symbol.owner) + escapeName(symbol.name) + "#"
       } else {

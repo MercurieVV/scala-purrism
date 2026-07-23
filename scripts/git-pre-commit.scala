@@ -13,7 +13,9 @@ object GitPreCommit:
 
     val buildTool =
       if os.exists(repoRoot / "build.sbt") then "sbt"
-      else if os.exists(repoRoot / "build.sc") then "mill"
+      else if
+        os.exists(repoRoot / "build.mill") || os.exists(repoRoot / "build.sc")
+      then "mill"
       else "scala-cli"
 
     val hasScalafmt = os.exists(repoRoot / ".scalafmt.conf")
@@ -120,9 +122,27 @@ object GitPreCommit:
                 0
           else 0
         case "mill" =>
-          os.proc("mill", "mill.scalalib.contrib.ScalafixModule/fix", "--check")
-            .call(cwd = repoRoot, check = false)
-            .exitCode
+          val result = os
+            .proc("mill", "mill.scalalib.contrib.ScalafixModule/fix", "--check")
+            .call(
+              cwd = repoRoot,
+              check = false,
+              stdout = os.Pipe,
+              stderr = os.Pipe
+            )
+          if result.exitCode == 0 then 0
+          else
+            val output = result.out.text() + result.err.text()
+            val plainOutput = output.replaceAll("\u001b\\[[;\\d]*m", "")
+            if plainOutput.contains("Cannot resolve external module") then
+              println(
+                "✓ Scalafix is not configured in Mill. Skipping Scalafix check."
+              )
+              0
+            else
+              System.out.print(result.out.text())
+              System.err.print(result.err.text())
+              result.exitCode
 
       if lintExit != 0 then
         println("\n[ERROR] Code linting check failed!")

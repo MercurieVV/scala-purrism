@@ -4,14 +4,13 @@ import java.nio.charset.StandardCharsets
 
 import munit.FunSuite
 
-/**
- * Checks the complete checked-in TSV format from classpath resources.
- *
- * Generator byte identity is deliberately carried by
- * `rtk mill scalafix.catsIndexCheck` in `prePush`: making this test invoke
- * `indexgen` would introduce a circular dependency from `scalafix.test` back
- * to the tooling module whose `moduleDeps` already contains `scalafix`.
- */
+/** Checks the complete checked-in TSV format from classpath resources.
+  *
+  * Generator byte identity is deliberately carried by
+  * `rtk mill scalafix.catsIndexCheck` in `prePush`: making this test invoke
+  * `indexgen` would introduce a circular dependency from `scalafix.test` back
+  * to the tooling module whose `moduleDeps` already contains `scalafix`.
+  */
 final class CatsIndexDriftSuite extends FunSuite {
   private final case class Table(
       header: List[String],
@@ -86,7 +85,9 @@ final class CatsIndexDriftSuite extends FunSuite {
     }
   }
 
-  test("parents are internally sorted and canonical hierarchy edges are present") {
+  test(
+    "parents are internally sorted and canonical hierarchy edges are present"
+  ) {
     val typeclasses = load("typeclasses.tsv")
     val bySymbol = typeclasses.rows.iterator.map(row => row.head -> row).toMap
     typeclasses.rows.foreach { row =>
