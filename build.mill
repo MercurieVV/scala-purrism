@@ -110,6 +110,82 @@ object scalafix
     )
   }
 
+  // Tooling-only generator for the checked-in Cats capability inventory.
+  // Kept out of the published module: TASTy inspection is a build-time concern.
+  object indexgen extends ScalaModule {
+    def scalaVersion = Versions.scala3
+    def moduleDeps = Seq(scalafix)
+    def mvnDeps = Seq(
+      mvn"org.scala-lang:scala3-tasty-inspector_3:${Versions.scala3}",
+      mvn"org.typelevel::scalac-compat-annotation:0.1.4"
+    )
+  }
+
+  private def runCatsIndex(
+      output: os.Path,
+      classpath: Seq[os.Path]
+  ): Unit = {
+    def requiredJar(fileName: String): os.Path =
+      classpath
+        .find(_.last == fileName)
+        .getOrElse(
+          throw new RuntimeException(
+            s"required Cats index input is missing from the resolved classpath: $fileName"
+          )
+        )
+
+    val generatorArgs = Seq(
+      "--output",
+      output.toString,
+      "--jar",
+      requiredJar(s"cats-core_3-${Versions.catsCore}.jar").toString,
+      "--jar",
+      requiredJar(s"cats-kernel_3-${Versions.catsCore}.jar").toString
+    )
+    val javaExecutable =
+      os.Path(sys.props("java.home")) / "bin" / "java"
+    val command =
+      Seq(
+        javaExecutable.toString,
+        "-cp",
+        classpath.mkString(java.io.File.pathSeparator),
+        "fix.hkt.gen.CatsIndexGen"
+      ) ++ generatorArgs
+    os.proc(command).call(
+      cwd = mill.api.BuildCtx.workspaceRoot,
+      stdout = os.Inherit,
+      stderr = os.Inherit
+    )
+  }
+
+  /** Regenerate the checked-in Cats capability inventory in place. */
+  def catsIndex() = Task.Command {
+    val output =
+      mill.api.BuildCtx.workspaceRoot / "scalafix" / "resources" / "cats-index"
+    runCatsIndex(output, indexgen.runClasspath().map(_.path))
+  }
+
+  /** Fail when generated Cats inventory files differ from their checked-in bytes. */
+  def catsIndexCheck() = Task.Command {
+    val generated = Task.dest / "cats-index"
+    runCatsIndex(generated, indexgen.runClasspath().map(_.path))
+
+    val checkedIn =
+      mill.api.BuildCtx.workspaceRoot / "scalafix" / "resources" / "cats-index"
+    Seq("typeclasses.tsv", "capabilities.tsv", "syntax.tsv").foreach { fileName =>
+      val expected = checkedIn / fileName
+      val actual = generated / fileName
+      val identical =
+        os.exists(expected) &&
+          os.exists(actual) &&
+          java.util.Arrays.equals(os.read.bytes(expected), os.read.bytes(actual))
+      if (!identical)
+        throw new RuntimeException(
+          s"Cats index drift in $fileName; run: rtk mill scalafix.catsIndex"
+        )
+    }
+  }
+
   object test extends ScalaTests {
     def testFramework = "munit.Framework"
     def mvnDeps = Seq(
@@ -155,6 +231,7 @@ object docs extends ScalaModule {
 }
 
 def prePush() = Task.Command {
+  scalafix.catsIndexCheck()()
   scalafix.compile()
   scalafix.explorer.compile()
   // Compile fixtures before the suite so a broken fixture reports as a compile

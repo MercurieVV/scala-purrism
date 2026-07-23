@@ -1,0 +1,60 @@
+#symbol	parents	kind	typeParams	depth	renderName	importPath	public
+cats/Align#		Unary	1	0	Align	cats.Align	true
+cats/Alternative#	cats/MonoidK#,cats/NonEmptyAlternative#	Unary	1	10	Alternative	cats.Alternative	true
+cats/Applicative#	cats/Apply#,cats/InvariantMonoidal#	Unary	1	6	Applicative	cats.Applicative	true
+cats/ApplicativeError#	cats/Applicative#	Unary	2	7	ApplicativeError	cats.ApplicativeError	true
+cats/Apply#	cats/Functor#,cats/InvariantSemigroupal#	Unary	1	4	Apply	cats.Apply	true
+cats/Bifoldable#		Binary	1	0	Bifoldable	cats.Bifoldable	true
+cats/Bifunctor#		Binary	1	0	Bifunctor	cats.Bifunctor	true
+cats/Bimonad#	cats/Comonad#,cats/Monad#	Unary	1	11	Bimonad	cats.Bimonad	true
+cats/Bitraverse#	cats/Bifoldable#,cats/Bifunctor#	Binary	1	2	Bitraverse	cats.Bitraverse	true
+cats/CoflatMap#	cats/Functor#	Unary	1	2	CoflatMap	cats.CoflatMap	true
+cats/CommutativeApplicative#	cats/Applicative#,cats/CommutativeApply#	Unary	1	8	CommutativeApplicative	cats.CommutativeApplicative	true
+cats/CommutativeApply#	cats/Apply#	Unary	1	5	CommutativeApply	cats.CommutativeApply	true
+cats/CommutativeFlatMap#	cats/CommutativeApply#,cats/FlatMap#	Unary	1	7	CommutativeFlatMap	cats.CommutativeFlatMap	true
+cats/CommutativeMonad#	cats/CommutativeApplicative#,cats/CommutativeFlatMap#,cats/Monad#	Unary	1	12	CommutativeMonad	cats.CommutativeMonad	true
+cats/Comonad#	cats/CoflatMap#	Unary	1	3	Comonad	cats.Comonad	true
+cats/Contravariant#	cats/Invariant#	Unary	1	1	Contravariant	cats.Contravariant	true
+cats/ContravariantMonoidal#	cats/ContravariantSemigroupal#,cats/InvariantMonoidal#	Unary	1	6	ContravariantMonoidal	cats.ContravariantMonoidal	true
+cats/ContravariantSemigroupal#	cats/Contravariant#,cats/InvariantSemigroupal#	Unary	1	4	ContravariantSemigroupal	cats.ContravariantSemigroupal	true
+cats/Defer#		Unary	1	0	Defer	cats.Defer	true
+cats/Distributive#	cats/Functor#	Unary	1	2	Distributive	cats.Distributive	true
+cats/FlatMap#	cats/Apply#	Unary	1	5	FlatMap	cats.FlatMap	true
+cats/Foldable#	cats/UnorderedFoldable#	Unary	1	1	Foldable	cats.Foldable	true
+cats/Functor#	cats/Invariant#	Unary	1	1	Functor	cats.Functor	true
+cats/FunctorFilter#		Unary	1	0	FunctorFilter	cats.FunctorFilter	true
+cats/Invariant#		Unary	1	0	Invariant	cats.Invariant	true
+cats/InvariantMonoidal#	cats/InvariantSemigroupal#	Unary	1	3	InvariantMonoidal	cats.InvariantMonoidal	true
+cats/InvariantSemigroupal#	cats/Invariant#,cats/Semigroupal#	Unary	1	2	InvariantSemigroupal	cats.InvariantSemigroupal	true
+cats/Monad#	cats/Applicative#,cats/FlatMap#	Unary	1	8	Monad	cats.Monad	true
+cats/MonadError#	cats/ApplicativeError#,cats/Monad#	Unary	2	10	MonadError	cats.MonadError	true
+cats/MonoidK#	cats/SemigroupK#	Unary	1	1	MonoidK	cats.MonoidK	true
+cats/NonEmptyAlternative#	cats/Applicative#,cats/SemigroupK#	Unary	1	8	NonEmptyAlternative	cats.NonEmptyAlternative	true
+cats/NonEmptyParallel#		Unary	1	0	NonEmptyParallel	cats.NonEmptyParallel	true
+cats/NonEmptyTraverse#	cats/Reducible#,cats/Traverse#	Unary	1	7	NonEmptyTraverse	cats.NonEmptyTraverse	true
+cats/Parallel#	cats/NonEmptyParallel#	Unary	1	1	Parallel	cats.Parallel	true
+cats/Reducible#	cats/Foldable#	Unary	1	2	Reducible	cats.Reducible	true
+cats/Representable#		Unary	1	0	Representable	cats.Representable	true
+cats/SemigroupK#		Unary	1	0	SemigroupK	cats.SemigroupK	true
+cats/Semigroupal#		Unary	1	0	Semigroupal	cats.Semigroupal	true
+cats/Show#		Star	1	0	Show	cats.Show	true
+cats/Traverse#	cats/Foldable#,cats/Functor#,cats/UnorderedTraverse#	Unary	1	5	Traverse	cats.Traverse	true
+cats/TraverseFilter#	cats/FunctorFilter#	Unary	1	1	TraverseFilter	cats.TraverseFilter	true
+cats/UnorderedFoldable#		Unary	1	0	UnorderedFoldable	cats.UnorderedFoldable	true
+cats/UnorderedTraverse#	cats/UnorderedFoldable#	Unary	1	1	UnorderedTraverse	cats.UnorderedTraverse	true
+cats/kernel/Band#	cats/kernel/Semigroup#	Star	1	1	Band	cats.Band	true
+cats/kernel/BoundedEnumerable#		Star	1	0	BoundedEnumerable	cats.BoundedEnumerable	true
+cats/kernel/BoundedSemilattice#	cats/kernel/CommutativeMonoid#,cats/kernel/Semilattice#	Star	1	6	BoundedSemilattice	cats.BoundedSemilattice	true
+cats/kernel/CommutativeGroup#	cats/kernel/CommutativeMonoid#,cats/kernel/Group#	Star	1	5	CommutativeGroup	cats.CommutativeGroup	true
+cats/kernel/CommutativeMonoid#	cats/kernel/CommutativeSemigroup#,cats/kernel/Monoid#	Star	1	3	CommutativeMonoid	cats.CommutativeMonoid	true
+cats/kernel/CommutativeSemigroup#	cats/kernel/Semigroup#	Star	1	1	CommutativeSemigroup	cats.CommutativeSemigroup	true
+cats/kernel/Eq#		Star	1	0	Eq	cats.Eq	true
+cats/kernel/Group#	cats/kernel/Monoid#	Star	1	2	Group	cats.Group	true
+cats/kernel/Hash#	cats/kernel/Eq#	Star	1	1	Hash	cats.Hash	true
+cats/kernel/LowerBounded#		Star	1	0	LowerBounded	cats.LowerBounded	true
+cats/kernel/Monoid#	cats/kernel/Semigroup#	Star	1	1	Monoid	cats.Monoid	true
+cats/kernel/Order#	cats/kernel/PartialOrder#	Star	1	2	Order	cats.Order	true
+cats/kernel/PartialOrder#	cats/kernel/Eq#	Star	1	1	PartialOrder	cats.PartialOrder	true
+cats/kernel/Semigroup#		Star	1	0	Semigroup	cats.Semigroup	true
+cats/kernel/Semilattice#	cats/kernel/Band#,cats/kernel/CommutativeSemigroup#	Star	1	3	Semilattice	cats.Semilattice	true
+cats/kernel/UpperBounded#		Star	1	0	UpperBounded	cats.UpperBounded	true
