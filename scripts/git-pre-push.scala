@@ -11,9 +11,15 @@ object GitPrePush:
       os.proc("git", "rev-parse", "--show-toplevel").call().out.text().trim
     )
 
+    // `build.mill` is the Mill 1.x build file; `build.sc` is the legacy 0.11
+    // name. Check the modern one first -- a repo can still carry a stale
+    // `build.sc` that Mill itself ignores.
+    val millBuildFile =
+      Seq("build.mill", "build.sc").map(repoRoot / _).find(os.exists)
+
     val buildTool =
       if os.exists(repoRoot / "build.sbt") then "sbt"
-      else if os.exists(repoRoot / "build.sc") then "mill"
+      else if millBuildFile.isDefined then "mill"
       else "scala-cli"
 
     println("=== Git Pre-Push Verification Checks ===")
@@ -30,11 +36,17 @@ object GitPrePush:
         os.proc(cmd).call(cwd = repoRoot, check = false).exitCode
 
       case "mill" =>
-        val buildScContent = os.read(repoRoot / "build.sc")
-        val cmd =
-          if buildScContent.contains("def prePush") then
-            Seq("mill", "app.prePush")
-          else Seq("mill", "app.test")
+        val buildContent = os.read(millBuildFile.get)
+        val prePushTarget =
+          // A `def prePush` at column 0 is a root-level task (`mill prePush`);
+          // an indented one lives inside the `app` module object.
+          if buildContent.linesIterator.exists(_.startsWith("def prePush")) then
+            Some("prePush")
+          else if buildContent.contains("def prePush") then Some("app.prePush")
+          else None
+        // Without a prePush task, fall back to every test module in the build
+        // rather than assuming an `app` module exists.
+        val cmd = Seq("mill", prePushTarget.getOrElse("__.test"))
         os.proc(cmd).call(cwd = repoRoot, check = false).exitCode
 
       case "scala-cli" =>
