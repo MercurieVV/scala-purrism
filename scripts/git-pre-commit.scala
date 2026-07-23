@@ -13,8 +13,7 @@ object GitPreCommit:
 
     val buildTool =
       if os.exists(repoRoot / "build.sbt") then "sbt"
-      else if
-        os.exists(repoRoot / "build.mill") || os.exists(repoRoot / "build.sc")
+      else if Seq("build.mill", "build.sc").exists(f => os.exists(repoRoot / f))
       then "mill"
       else "scala-cli"
 
@@ -122,27 +121,39 @@ object GitPreCommit:
                 0
           else 0
         case "mill" =>
-          val result = os
-            .proc("mill", "mill.scalalib.contrib.ScalafixModule/fix", "--check")
-            .call(
+          // `fix` comes from the mill-scalafix plugin's ScalafixModule, which a
+          // build has to mix into its modules. Without it there is nothing to
+          // run -- a bare `.scalafix.conf` only configures the scalafix CLI.
+          val millBuildFile =
+            Seq("build.mill", "build.sc").map(repoRoot / _).find(os.exists)
+          val hasScalafixModule = millBuildFile.exists(f =>
+            os.read(f).contains("ScalafixModule")
+          )
+          if hasScalafixModule then
+            val result = os.proc("mill", "__.fix", "--check").call(
               cwd = repoRoot,
               check = false,
               stdout = os.Pipe,
               stderr = os.Pipe
             )
-          if result.exitCode == 0 then 0
-          else
-            val output = result.out.text() + result.err.text()
-            val plainOutput = output.replaceAll("\u001b\\[[;\\d]*m", "")
-            if plainOutput.contains("Cannot resolve external module") then
-              println(
-                "✓ Scalafix is not configured in Mill. Skipping Scalafix check."
-              )
-              0
+            if result.exitCode == 0 then 0
             else
-              System.out.print(result.out.text())
-              System.err.print(result.err.text())
-              result.exitCode
+              val output = result.out.text() + result.err.text()
+              val plainOutput = output.replaceAll("\u001b\\[[;\\d]*m", "")
+              if plainOutput.contains("Cannot resolve external module") then
+                println(
+                  "✓ Scalafix is not configured in Mill. Skipping Scalafix check."
+                )
+                0
+              else
+                System.out.print(result.out.text())
+                System.err.print(result.err.text())
+                result.exitCode
+          else
+            println(
+              "No module mixes in ScalafixModule. Scalafix check skipped."
+            )
+            0
 
       if lintExit != 0 then
         println("\n[ERROR] Code linting check failed!")
