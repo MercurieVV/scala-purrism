@@ -11,6 +11,10 @@ This documentation is compiled and type-checked using **mdoc**.
 - [Maintenance](MAINTENANCE.md)
 - [Publishing](PUBLISHING.md)
 
+## Design Docs
+
+- [PreferHKTTypeclasses](design/PreferHKTTypeclasses.md)
+
 ## Scala 3 Code Example
 
 ```scala mdoc
