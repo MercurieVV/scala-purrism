@@ -66,6 +66,21 @@ Two implementation notes that cost time if rediscovered:
    unless `org.typelevel::scalac-compat-annotation:0.1.4` is also a dependency.
 2. The scalafix artifacts use a **full** Scala 3 version suffix (`scalafix-rules_3.8.4`),
    the tasty inspector uses the binary suffix (`scala3-tasty-inspector_3`).
+3. The resolved `cats-core` coordinate exposes Cats Kernel as its public transitive
+   API. Generation therefore inspects both the resolved `cats-core_3` jar and its
+   same-version `cats-kernel_3` jar; both paths are selected in `build.mill` from
+   `Versions.catsCore`. The generator contains no Cats version literal.
+4. Mill 1.1.7 does not allow a command-local `Task.dest` value to be passed into
+   another `Task.Command`. The two wrapper commands therefore launch
+   `fix.hkt.gen.CatsIndexGen` from the resolved `indexgen.runClasspath` in a Java
+   subprocess. The ordinary `indexgen.runMain` entry point remains runnable.
+5. Simulacrum-compatible members such as `cats/Functor.Ops#map().` exist in the
+   Cats classfiles and in downstream SemanticDB, but their synthetic `Ops` trees are
+   not present in the inspected TASTy; asking `Symbol.requiredClass` for them makes
+   the inspector report bad symbolic references. A narrow classfile-reflection pass
+   therefore enumerates only those wrapper method names and syntax-module fields.
+   Capability identity, hierarchy, kinds, signatures, bodies and override roots remain
+   TASTy-derived.
 
 ### Entry point
 
@@ -110,6 +125,17 @@ currently holds only `META-INF/`), so they are on the published rule's classpath
 | `syntax.tsv` | `syntaxMethod`, `owner`, `method`, `importPath` |
 | `stdlib.tsv` | `concreteMethod`, `owner`, `method`, `note` |
 | `gaps.tsv` | `typeclass`, `reason`, `tracked` |
+
+Snapshot for Cats 2.13.0 on Scala 3.8.4 (data rows exclude headers):
+
+| File | Data rows | Bytes |
+| --- | ---: | ---: |
+| `typeclasses.tsv` | 59 | 5,212 |
+| `capabilities.tsv` | 1,471 | 130,314 |
+| `syntax.tsv` | 354 | 42,873 |
+| `stdlib.tsv` | 0 | 34 |
+| `gaps.tsv` | 3 | 286 |
+| **Total** | **1,887** | **178,719** |
 
 TSV, not JSON: the rows are flat and uniform, a TSV diff is reviewable line-by-line in
 a PR, and parsing needs no dependency. `symbol`/`method`/`owner` are **SemanticDB symbol
@@ -171,10 +197,18 @@ method flatMap  -> declared in: FlatMap, Parallel
 ```
 
 `Applicative.map`, `Monad.map` and `Traverse.map` are *overrides* of `Functor.map` —
-same capability, so they collapse onto `owner = cats/Functor#map().`. `Parallel.flatMap`
-overrides nothing — it is a genuinely different capability that happens to share a
-name, and keying by name would let the solver answer `Parallel` (lattice depth 0) for a
-plain `flatMap`. Override-chain rooting resolves both cases exactly.
+same capability, so they collapse onto `owner = cats/Functor#map().`.
+
+One Cats 2.13.0 TASTy detail required a narrow refinement to the planned rule.
+`Parallel.flatMap` is a concrete, zero-argument evidence accessor returning
+`FlatMap[M]`; TASTy reports that it overrides the abstract
+`NonEmptyParallel.flatMap` accessor. Treating those accessors as one operation would
+lose the design's required distinction from the ordinary `FlatMap.flatMap`
+capability. The implemented structural rule therefore roots a concrete zero-argument
+accessor that returns an indexed typeclass at itself; every other method uses
+`allOverriddenSymbols.lastOption.getOrElse(self)`. Thus
+`Parallel.flatMap` has `owner = cats/Parallel#flatMap().` without keying on its
+method name.
 
 **Syntax extension methods** get their own table, `syntax.tsv`. The generator walks
 every `cats.syntax.*` ops class, and for each public method whose enclosing ops class
@@ -189,16 +223,14 @@ symbol is in none of the three is a decline (`NoCapability`), never a silent ski
 per `(typeclass, method)` pair for *every* method a typeclass provides, own or
 inherited, with `owner` naming the declaring root.
 
-Cost consequence, stated plainly: the row count is roughly `Σ_tc |methods(tc)|` rather
-than `Σ_tc |ownMethods(tc)|`. Cats' hierarchy is deep — `MonadError` and `Alternative`
-each have 10 indexed Cats ancestors — so the flattened file is expected in the low tens
-of thousands of rows, a few megabytes. That is the price. What it buys is a solver that
-is a set-membership test over a `Map[Symbol, List[Capability]]` with no hierarchy walk
-per query, and a `provides(tc)` answer that is a single lookup. Given the solver runs
-per candidate `def` per file, and given that the alternative (resolve-through-hierarchy
-at solve time) puts a transitive-closure walk inside the hottest loop and makes the
-index unreadable as a review artifact, flattening is the right trade. `typeclasses.tsv`
-keeps *direct* parents so the lattice is still reconstructible for ranking.
+Cost consequence, measured rather than estimated: the row count is
+`Σ_tc |methods(tc)|` rather than `Σ_tc |ownMethods(tc)|`, but the real Cats 2.13.0
+inventory is 1,471 capability rows (130,314 bytes), not the previously projected low
+tens of thousands. The representation is still deliberately flattened. It buys a
+solver that is a set-membership test over a `Map[Symbol, List[Capability]]` with no
+hierarchy walk per query, and a `provides(tc)` answer that is a single lookup.
+`typeclasses.tsv` keeps *direct* parents so the lattice remains reconstructible for
+ranking.
 
 ---
 
@@ -305,7 +337,7 @@ Real depths, computed from `cats-core_3:2.13.0`:
 | `Bifunctor` | 0 | `Reducible` | 2 | `NonEmptyTraverse` | 7 |
 | `Bifoldable` | 0 | `CoflatMap` | 2 | `Alternative` | 10 |
 | `UnorderedFoldable` | 0 | `Comonad` | 3 | `MonadError` | 10 |
-| `Parallel` | 0 | `Traverse` | 5 | `Bitraverse` | 2 |
+| `Parallel` | 1 | `Traverse` | 5 | `Bitraverse` | 2 |
 
 ### Candidate enumeration (kept finite)
 

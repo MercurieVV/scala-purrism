@@ -1,0 +1,4 @@
+#typeclass	reason	tracked
+cats/Bifoldable#	binary kind F[_, _] not solved in v1; needs type-lambda rendering	#33
+cats/Bifunctor#	binary kind F[_, _] not solved in v1; needs type-lambda rendering	#33
+cats/Bitraverse#	binary kind F[_, _] not solved in v1; needs type-lambda rendering	#33
