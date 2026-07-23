@@ -561,12 +561,15 @@ final class CatsIndex(
 object CatsIndex {
   val capabilitiesResource: String = "cats-index/capabilities.tsv"
   val typeclassesResource: String = "cats-index/typeclasses.tsv"
+  val syntaxResource: String = "cats-index/syntax.tsv"
+  val stdlibResource: String = "cats-index/stdlib.tsv"
   val gapsResource: String = "cats-index/gaps.tsv"
 
   def load(): CatsIndex = ???
   def parse(
       typeclassRows: Iterator[String],
-      capabilityRows: Iterator[String]
+      capabilityRows: Iterator[String],
+      syntaxRows: Iterator[String]
   ): Either[String, CatsIndex] = ???
 }
 ```
@@ -574,6 +577,17 @@ object CatsIndex {
 `capabilities` is keyed by **typeclass** symbol (flattened, per item 2); `providersOf`
 inverts it for a method. `parse` returns `Left` with the offending line so a malformed
 artifact fails loudly instead of yielding an empty index.
+
+**Deviation from the original sketch above (applied in #38, same commit):** the
+sketch predates the final #37 artifact and omits two things it needs. First,
+`syntax.tsv` and `stdlib.tsv` need their own resource-path constants alongside
+`capabilitiesResource`/`typeclassesResource`/`gapsResource`, mirroring the five
+checked-in files from item 1 — `syntaxResource` and `stdlibResource` above.
+Second, `parse` cannot build the `syntax: Map[Symbol, Capability]` field from
+only the typeclass and capability iterators, so it is widened to also take
+`syntaxRows: Iterator[String]`, as reflected in the signature above (the
+original sketch took only `typeclassRows` and `capabilityRows`). No other
+seam in this document changes.
 
 ### `scalafix/src/fix/hkt/UsageAnalyzer.scala`
 
