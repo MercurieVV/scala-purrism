@@ -52,6 +52,7 @@ object scalafix
 
   def scalacOptions = Seq(
     "-Ysemanticdb",
+    s"-sourceroot:${mill.api.BuildCtx.workspaceRoot}",
     "-Wunused:imports",
     "-Werror"
   )
@@ -152,6 +153,7 @@ object scalafix
 object docs extends ScalaModule {
   def scalaVersion = "3.3.8"
   def mvnDeps = Seq(mvn"org.scalameta::mdoc:${Versions.mdoc}")
+  def scalacOptions = Seq("-Ysemanticdb", s"-sourceroot:${mill.api.BuildCtx.workspaceRoot}")
 }
 
 // IntelliJ IDEA plugin: wraps the `scalafix` module's rules as a Refactor
@@ -167,6 +169,7 @@ object ijPlugin extends ScalaModule {
   def moduleDeps = Seq(scalafix)
   def pluginId = "io.github.mercurievv.purrism.ideaplugin"
   def ideVersion = "2026.1.4"
+  def scalacOptions = Seq("-Ysemanticdb", s"-sourceroot:${mill.api.BuildCtx.workspaceRoot}")
 
   def mvnDeps = Seq(
     mvn"ch.epfl.scala:scalafix-interfaces:${Versions.scalafix}"
@@ -193,6 +196,37 @@ object ijPlugin extends ScalaModule {
         .call(stdout = os.Inherit, stderr = os.Inherit)
     }
     PathRef(dir)
+  }
+
+  /** JetBrains' Scala plugin, resolved to whichever build is actually
+    * compatible with `ideVersion` and downloaded straight into the sandbox
+    * on every `runIde`. This sidesteps installing it by hand through the
+    * in-IDE Marketplace: that flow relies on the platform's "Restart IDE"
+    * button, which needs a native relauncher we don't have (see runIde's
+    * doc comment) -- a plugin installed that way was never actually
+    * committed to disk before the process died.
+    */
+  def scalaPluginHome = Task {
+    val buildNumber = platformBuildNumber()
+    val dir = os.home / ".cache" / "purrism-ijplatform" / s"scala-plugin-$buildNumber"
+    if (!os.exists(dir)) {
+      val tmp = Task.dest / "scala-plugin.zip"
+      os.proc(
+        "curl",
+        "-L",
+        "-o",
+        tmp.toString,
+        s"https://plugins.jetbrains.com/pluginManager?action=download&id=org.intellij.scala&build=IC-$buildNumber"
+      ).call(stdout = os.Inherit, stderr = os.Inherit)
+      os.makeDir.all(dir)
+      os.proc("unzip", "-q", tmp.toString, "-d", dir.toString)
+        .call(stdout = os.Inherit, stderr = os.Inherit)
+    }
+    PathRef(dir)
+  }
+
+  def platformBuildNumber = Task {
+    ujson.read(os.read(platformHome().path / "product-info.json"))("buildNumber").str
   }
 
   /** All platform jars, including the split-out jars IntelliJ introduced
@@ -262,7 +296,20 @@ object ijPlugin extends ScalaModule {
     os.proc("python3", "-c", script).call().out.lines()
   }
 
-  /** Launches the IDE distribution in a sandbox with this plugin installed.
+  /** Arbitrary sentinel exit code, chosen to not collide with any exit code
+    * the JVM itself would ever produce. Passed to the sandbox via the
+    * `IDEA_RESTART_VIA_EXIT_CODE` environment variable that
+    * `com.intellij.util.Restarter.scheduleRestart` checks for: when set, a
+    * "Restart IDE" click (e.g. after installing/updating a plugin) just
+    * calls `System.exit(restartExitCode)` instead of trying to spawn a
+    * native relauncher -- which doesn't exist here, since we launch via a
+    * bare `java` invocation rather than a real app bundle/launcher script.
+    * `runIde` treats that exit code as "relaunch me" and loops.
+    */
+  def restartExitCode = 66
+
+  /** Launches the IDE distribution in a sandbox with this plugin and the
+    * JetBrains Scala plugin installed, with this repo opened as the project.
     * Note: JCEF (used by the Three.js viewer action) needs the JetBrains
     * Runtime's bundled native cef libraries -- if `java` on PATH is a plain
     * OpenJDK build rather than a JBR, `JBCefApp.isSupported` will be false
@@ -273,10 +320,13 @@ object ijPlugin extends ScalaModule {
   def runIde() = Task.Command {
     val home = platformHome().path
     val dist = pluginDist().path
+    val scalaPlugin = scalaPluginHome().path
     val sandbox = Task.dest / "sandbox"
     val pluginsDir = sandbox / "plugins"
     os.makeDir.all(pluginsDir)
     os.copy(dist, pluginsDir / dist.last, mergeFolders = true, replaceExisting = true)
+    for (entry <- os.list(scalaPlugin))
+      os.copy(entry, pluginsDir / entry.last, mergeFolders = true, replaceExisting = true)
 
     val javaBin = Option(System.getenv("PURRISM_JBR_HOME"))
       .map(h => os.Path(h) / "bin" / "java")
@@ -295,7 +345,9 @@ object ijPlugin extends ScalaModule {
         os.read.lines(vmOptionsFile).map(_.trim).filter(l => l.nonEmpty && !l.startsWith("#"))
       else Nil
 
-    os.proc(
+    val projectPath = mill.api.BuildCtx.workspaceRoot
+
+    val cmd =
       Seq(javaBin.toString, "-cp", classpath) ++
         bundledVmOptions ++
         platformLaunchVmArgs() ++
@@ -304,9 +356,108 @@ object ijPlugin extends ScalaModule {
           s"-Didea.system.path=${sandbox / "system"}",
           s"-Didea.plugins.path=$pluginsDir",
           "-Didea.is.internal=true",
-          "com.intellij.idea.Main"
+          "com.intellij.idea.Main",
+          projectPath.toString
         )
-    ).call(stdout = os.Inherit, stderr = os.Inherit, cwd = home)
+
+    var exitCode = restartExitCode
+    while (exitCode == restartExitCode) {
+      exitCode = os
+        .proc(cmd)
+        .call(
+          stdout = os.Inherit,
+          stderr = os.Inherit,
+          cwd = home,
+          env = Map("IDEA_RESTART_VIA_EXIT_CODE" -> restartExitCode.toString),
+          check = false
+        )
+        .exitCode
+      if (exitCode == restartExitCode) println(s"[purrism] IDE requested restart, relaunching...")
+    }
+  }
+
+  /** Writes a standalone `run-ide.sh` to the repo root that does the same restart-aware launch as
+    * `runIde()`, but as a plain shell script instead of a Mill task. `runIde()` holds Mill's `out/`
+    * lock for as long as the sandbox IDE window stays open (Mill locks the whole workspace for a
+    * running task's duration, daemon or not), so every other `mill` command blocks until you close
+    * it. This script launches the same way but exits Mill immediately after generating it, so the
+    * sandbox IDE runs fully outside Mill's task lifecycle -- `mill` stays usable while it's open.
+    *
+    * Plugin/Scala-plugin jars and platform VM args are copied/read at script *run* time (not baked
+    * in), so rerunning `./run-ide.sh` after `mill ijPlugin.pluginDist` picks up a rebuilt plugin
+    * without regenerating the script. Regenerate (`mill ijPlugin.genRunIdeScript`) only if
+    * `ideVersion` changes or the platform download itself moves.
+    */
+  def genRunIdeScript() = Task.Command {
+    val home = platformHome().path
+    val dist = pluginDist().path
+    val scalaPlugin = scalaPluginHome().path
+    val projectPath = mill.api.BuildCtx.workspaceRoot
+    val sandbox = projectPath / "out" / "ijPlugin" / "standalone-sandbox"
+
+    val classpath = (os.list(home / "lib") ++
+      (if (os.exists(home / "lib" / "modules")) os.list(home / "lib" / "modules") else Nil))
+      .filter(_.ext == "jar")
+      .map(_.toString)
+      .mkString(java.io.File.pathSeparator)
+
+    val vmOptionsFile = home / "bin" / "mac" / "idea.vmoptions"
+    val bundledVmOptions =
+      if (os.exists(vmOptionsFile))
+        os.read.lines(vmOptionsFile).map(_.trim).filter(l => l.nonEmpty && !l.startsWith("#"))
+      else Nil
+
+    val allVmArgs = (bundledVmOptions ++ platformLaunchVmArgs())
+      .map(arg => s"'${arg.replace("'", "'\\''")}'")
+      .mkString(" ")
+
+    val script =
+      s"""#!/usr/bin/env bash
+         |# Generated by `mill ijPlugin.genRunIdeScript` -- do not edit by hand.
+         |set -euo pipefail
+         |
+         |HOME_DIR='${home.toString.replace("'", "'\\''")}'
+         |DIST='${dist.toString.replace("'", "'\\''")}'
+         |SCALA_PLUGIN='${scalaPlugin.toString.replace("'", "'\\''")}'
+         |PROJECT_PATH='${projectPath.toString.replace("'", "'\\''")}'
+         |SANDBOX='${sandbox.toString.replace("'", "'\\''")}'
+         |PLUGINS_DIR="$$SANDBOX/plugins"
+         |RESTART_EXIT_CODE=$restartExitCode
+         |
+         |rm -rf "$$PLUGINS_DIR"
+         |mkdir -p "$$PLUGINS_DIR"
+         |cp -R "$$DIST" "$$PLUGINS_DIR/"
+         |for entry in "$$SCALA_PLUGIN"/*; do
+         |  cp -R "$$entry" "$$PLUGINS_DIR/"
+         |done
+         |
+         |if [ -n "$${PURRISM_JBR_HOME:-}" ] && [ -x "$$PURRISM_JBR_HOME/bin/java" ]; then
+         |  JAVA_BIN="$$PURRISM_JBR_HOME/bin/java"
+         |else
+         |  JAVA_BIN='${(os.Path(sys.props("java.home")) / "bin" / "java").toString.replace("'", "'\\''")}'
+         |fi
+         |
+         |EXIT_CODE=$$RESTART_EXIT_CODE
+         |while [ "$$EXIT_CODE" -eq "$$RESTART_EXIT_CODE" ]; do
+         |  IDEA_RESTART_VIA_EXIT_CODE=$$RESTART_EXIT_CODE "$$JAVA_BIN" -cp '$classpath' \\
+         |    $allVmArgs \\
+         |    "-Didea.config.path=$$SANDBOX/config" \\
+         |    "-Didea.system.path=$$SANDBOX/system" \\
+         |    "-Didea.plugins.path=$$PLUGINS_DIR" \\
+         |    -Didea.is.internal=true \\
+         |    com.intellij.idea.Main "$$PROJECT_PATH" \\
+         |    && EXIT_CODE=0 || EXIT_CODE=$$?
+         |  if [ "$$EXIT_CODE" -eq "$$RESTART_EXIT_CODE" ]; then
+         |    echo "[purrism] IDE requested restart, relaunching..."
+         |  fi
+         |done
+         |""".stripMargin
+
+    val target = projectPath / "run-ide.sh"
+    os.write.over(target, script)
+    os.perms.set(target, "rwxr-xr-x")
+    println(s"[purrism] wrote $target -- run it directly (not through mill) so mill stays free while the IDE is open")
+    PathRef(target)
   }
 }
 

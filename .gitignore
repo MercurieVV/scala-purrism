@@ -56,3 +56,4 @@ stdout.log
 prompt.txt
 /.gh-tasks-llm-executor/
 /.worktrees/
+/run-ide.sh
