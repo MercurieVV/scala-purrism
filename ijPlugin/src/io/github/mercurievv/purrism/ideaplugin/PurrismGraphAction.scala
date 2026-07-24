@@ -10,7 +10,9 @@ import com.intellij.ui.jcef.{JBCefApp, JBCefBrowser}
 import io.github.mercurievv.purrism.graphmodel.{
   GraphJson,
   GraphModelBuilder,
-  ModuleProjection
+  GraphPayload,
+  ModuleProjection,
+  NodeKind
 }
 import org.cef.browser.CefBrowser
 import org.cef.handler.CefLoadHandlerAdapter
@@ -75,7 +77,15 @@ class PurrismGraphAction extends AnAction {
             LOG.info(
               s"[purrism-graph] module graph: ${moduleGraph.nodes.size} nodes, ${moduleGraph.edges.size} edges"
             )
-            val json = GraphJson.toJson(moduleGraph)
+            val keptModules = moduleGraph.nodes.map(_.name).toSet
+            val classNodes = full.nodes.filter(n =>
+              (n.kind == NodeKind.ClassDef || n.kind == NodeKind.TraitDef ||
+                n.kind == NodeKind.ObjectDef) && keptModules.contains(n.module)
+            )
+            LOG.info(
+              s"[purrism-graph] ${classNodes.size} class/trait/object nodes across ${keptModules.size} modules"
+            )
+            val json = GraphJson.toJson(GraphPayload(moduleGraph, classNodes))
             LOG.info(
               s"[purrism-graph] serialized ${json.length} chars of JSON, handing off to dialog"
             )
