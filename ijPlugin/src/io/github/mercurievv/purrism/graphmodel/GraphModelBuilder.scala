@@ -133,6 +133,34 @@ object GraphModelBuilder:
     val moduleNodes =
       moduleNames.toVector.map(m => Node(s"module:$m", NodeKind.Module, m, m))
 
+    // One File node per definition uri actually referenced by a kept symbol -- not every uri
+    // SemanticIndex knows about, just the ones something above is owned by. `File` sits between
+    // Module and the top-level types it defines: source of truth for "which module" is still
+    // moduleOf(symbol), read off the same uri.
+    val fileUris: Set[String] =
+      (typeInfos.iterator ++ methodInfos.iterator ++ valueInfos.iterator)
+        .flatMap(si => defUri.get(si.symbol))
+        .toSet
+
+    def fileIdOf(uri: String): String = s"file:$uri"
+
+    def moduleOfUri(uri: String): String =
+      val idx = uri.indexOf("/src/")
+      val name =
+        if idx > 0 then uri.substring(0, idx) else uri.takeWhile(_ != '/')
+      if name.nonEmpty then name else "<unknown>"
+
+    val fileNodes = fileUris.toVector.map { uri =>
+      val name = uri.split('/').lastOption.getOrElse(uri)
+      Node(
+        fileIdOf(uri),
+        NodeKind.File,
+        name,
+        moduleOfUri(uri),
+        sourceUri = Some(uri)
+      )
+    }
+
     val typeNodes = typeInfos.map { si =>
       val kind = classKind(si.kind).getOrElse(NodeKind.TypeAlias)
       Node(
@@ -166,14 +194,28 @@ object GraphModelBuilder:
       )
     }
 
-    val nodes = moduleNodes ++ typeNodes ++ methodNodes ++ valueNodes
+    val nodes =
+      moduleNodes ++ fileNodes ++ typeNodes ++ methodNodes ++ valueNodes
     val nodeIds = nodes.map(_.id).toSet
 
+    val moduleContainsFileEdges = fileNodes.map { f =>
+      Edge(s"module:${f.module}", f.id, EdgeKind.Contains)
+    }
+
+    // A member's owner (index.owner) is another kept node (its enclosing class/method/value) when
+    // there is one; otherwise it's a top-level definition, whose parent becomes its own file instead
+    // of jumping straight to the module -- File now sits between the two.
     val containsEdges =
       (typeNodes ++ methodNodes ++ valueNodes).flatMap { n =>
         val owner = index.owner(n.id)
         val parent =
-          if nodeIds.contains(owner) then owner else s"module:${n.module}"
+          if nodeIds.contains(owner) then owner
+          else
+            defUri
+              .get(n.id)
+              .map(fileIdOf)
+              .filter(nodeIds.contains)
+              .getOrElse(s"module:${n.module}")
         Option.when(parent != n.id)(Edge(parent, n.id, EdgeKind.Contains))
       }
 
@@ -207,9 +249,9 @@ object GraphModelBuilder:
       }
 
     val edges =
-      containsEdges ++ extendsEdges ++ callEdges ++ typeRefEdges ++ implicitEdges
+      moduleContainsFileEdges ++ containsEdges ++ extendsEdges ++ callEdges ++ typeRefEdges ++ implicitEdges
 
-    GraphModel(nodes, collapseEdges(edges))
+    GraphMetrics.compute(GraphModel(nodes, collapseEdges(edges)))
 
   // --- semanticdb helpers, index-independent ---------------------------------
 

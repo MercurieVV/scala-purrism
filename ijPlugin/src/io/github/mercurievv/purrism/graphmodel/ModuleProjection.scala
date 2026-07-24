@@ -44,4 +44,4 @@ object ModuleProjection:
       Edge(s"module:$from", s"module:$to", EdgeKind.ModuleDependsOn, w)
     }.toVector
 
-    GraphModel(moduleNodes, edges)
+    GraphMetrics.compute(GraphModel(moduleNodes, edges))
