@@ -24,12 +24,16 @@ private def debugWarn(message: => String): Unit =
 
 /** Extracts the bundled web/ resources (html + three.min.js) to a temp dir once
   * per IDE session, since JCEF cannot load them straight out of the plugin
-  * jar's classpath.
+  * jar's classpath. Shared by both the Three.js cube viewer and the module
+  * dependency graph viewer -- not file-private since [[PurrismGraphAction]] (a
+  * different source file) also uses it.
   */
-private object ViewerAssets {
+object ViewerAssets {
   private lazy val dir: Path = {
     val tmp = Files.createTempDirectory("purrism-viewer")
-    for (name <- Seq("purrism-viewer.html", "three.min.js")) {
+    for (
+      name <- Seq("purrism-viewer.html", "purrism-graph.html", "three.min.js")
+    ) {
       val in = classOf[PurrismThreeJsAction].getResourceAsStream(s"/web/$name")
       try Files.copy(in, tmp.resolve(name), StandardCopyOption.REPLACE_EXISTING)
       finally in.close()
@@ -38,6 +42,7 @@ private object ViewerAssets {
   }
 
   def indexUrl: String = dir.resolve("purrism-viewer.html").toUri.toString
+  def graphIndexUrl: String = dir.resolve("purrism-graph.html").toUri.toString
 }
 
 class PurrismViewerDialog(project: Project)

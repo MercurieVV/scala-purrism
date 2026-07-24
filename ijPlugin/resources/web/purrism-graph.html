@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<style>
+  html, body { margin: 0; padding: 0; overflow: hidden; background: #1e1f22; }
+  canvas { display: block; }
+  #label { position: fixed; top: 8px; left: 8px; color: #cdd6f4; font: 12px monospace; }
+</style>
+<script src="three.min.js"></script>
+</head>
+<body>
+<div id="label">Purrism module graph -- waiting for data...</div>
+<script>
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+  const renderer = new THREE.WebGLRenderer({antialias: true});
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  document.body.appendChild(renderer.domElement);
+
+  scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+  const light = new THREE.DirectionalLight(0xffffff, 0.8);
+  light.position.set(5, 8, 6);
+  scene.add(light);
+
+  camera.position.set(0, 4, 16);
+  camera.lookAt(0, 0, 0);
+
+  const colorByKind = {
+    Module: 0x7aa2f7,
+    ClassDef: 0x9ece6a,
+    TraitDef: 0xe0af68,
+    ObjectDef: 0xbb9af7,
+    TypeAlias: 0x73daca,
+    MethodDef: 0xf7768e,
+    ValueDef: 0xff9e64
+  };
+
+  let group = new THREE.Group();
+  scene.add(group);
+
+  // Base64 wrapper: the plugin sends the JSON base64-encoded (immune to JS template-literal /
+  // string-escaping edge cases -- see PurrismGraphDialog.sendJson), so decode then hand off to
+  // purrismRenderGraph. Also the single place errors get surfaced -- without this, a bad payload
+  // fails silently and the dialog just sits on "waiting for data" forever.
+  window.purrismRenderGraphBase64 = function (base64) {
+    console.log(`[purrism-graph] received ${base64.length} base64 chars`);
+    try {
+      const json = decodeURIComponent(escape(atob(base64)));
+      window.purrismRenderGraph(json);
+    } catch (err) {
+      console.error('[purrism-graph] failed to decode/render', err);
+      document.getElementById('label').textContent = `Purrism module graph -- ERROR: ${err}`;
+    }
+  };
+
+  // Renders {nodes:[{id,kind,name,module,...}], edges:[{from,to,kind,weight}]} laid out on a
+  // circle (good enough for a module-count graph; no physics dependency needed).
+  window.purrismRenderGraph = function (json) {
+    scene.remove(group);
+    group = new THREE.Group();
+    scene.add(group);
+
+    const data = JSON.parse(json);
+    const nodes = data.nodes || [];
+    const edges = data.edges || [];
+    console.log(`[purrism-graph] rendering ${nodes.length} nodes, ${edges.length} edges`);
+    document.getElementById('label').textContent =
+      `Purrism module graph -- ${nodes.length} nodes, ${edges.length} edges`;
+
+    const radius = Math.max(4, nodes.length * 1.4);
+    const positions = {};
+    nodes.forEach((n, i) => {
+      const angle = (i / Math.max(1, nodes.length)) * Math.PI * 2;
+      const x = Math.cos(angle) * radius;
+      const z = Math.sin(angle) * radius;
+      positions[n.id] = new THREE.Vector3(x, 0, z);
+
+      const size = 0.4 + Math.min(1.2, (n.weight || 1) * 0.05);
+      const geometry = new THREE.SphereGeometry(size, 24, 24);
+      const material = new THREE.MeshStandardMaterial({color: colorByKind[n.kind] || 0xffffff});
+      const sphere = new THREE.Mesh(geometry, material);
+      sphere.position.copy(positions[n.id]);
+      sphere.userData = n;
+      group.add(sphere);
+
+      const label = makeLabel(n.name);
+      label.position.copy(positions[n.id]).add(new THREE.Vector3(0, size + 0.4, 0));
+      group.add(label);
+    });
+
+    edges.forEach(e => {
+      const from = positions[e.from];
+      const to = positions[e.to];
+      if (!from || !to) return;
+      const geometry = new THREE.BufferGeometry().setFromPoints([from, to]);
+      const material = new THREE.LineBasicMaterial({
+        color: 0x565f89,
+        transparent: true,
+        opacity: Math.min(1, 0.25 + (e.weight || 1) * 0.05)
+      });
+      group.add(new THREE.Line(geometry, material));
+    });
+  };
+
+  function makeLabel(text) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    ctx.font = '28px monospace';
+    ctx.fillStyle = '#cdd6f4';
+    ctx.textAlign = 'center';
+    ctx.fillText(text, 128, 40);
+    const texture = new THREE.CanvasTexture(canvas);
+    const material = new THREE.SpriteMaterial({map: texture, depthTest: false});
+    const sprite = new THREE.Sprite(material);
+    sprite.scale.set(4, 1, 1);
+    return sprite;
+  }
+
+  // Manual orbit controls (rotate + zoom) instead of THREE's OrbitControls.js -- that ships as a
+  // separate module not included in the bundled three.min.js, and this page has no network access
+  // to fetch it. Camera orbits a fixed target at the origin using spherical coordinates.
+  const target = new THREE.Vector3(0, 0, 0);
+  let radius = 16;
+  let theta = 0;   // azimuth, radians
+  let phi = Math.PI / 2.4; // polar angle from +Y, radians (clamped away from the poles below)
+
+  function updateCameraFromSpherical() {
+    camera.position.set(
+      target.x + radius * Math.sin(phi) * Math.sin(theta),
+      target.y + radius * Math.cos(phi),
+      target.z + radius * Math.sin(phi) * Math.cos(theta)
+    );
+    camera.lookAt(target);
+  }
+  updateCameraFromSpherical();
+
+  const dom = renderer.domElement;
+  dom.style.touchAction = 'none';
+  let dragging = false;
+  let lastX = 0;
+  let lastY = 0;
+
+  dom.addEventListener('pointerdown', e => {
+    dragging = true;
+    lastX = e.clientX;
+    lastY = e.clientY;
+    dom.setPointerCapture(e.pointerId);
+  });
+  dom.addEventListener('pointerup', e => {
+    dragging = false;
+    dom.releasePointerCapture(e.pointerId);
+  });
+  dom.addEventListener('pointercancel', () => { dragging = false; });
+  dom.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    const dx = e.clientX - lastX;
+    const dy = e.clientY - lastY;
+    lastX = e.clientX;
+    lastY = e.clientY;
+    theta -= dx * 0.006;
+    phi = Math.min(Math.PI - 0.05, Math.max(0.05, phi - dy * 0.006));
+    updateCameraFromSpherical();
+  });
+
+  // Wheel covers both a physical scroll wheel and trackpad gestures (two-finger scroll and
+  // pinch-to-zoom both arrive as wheel events in Chromium) -- treating any wheel delta as zoom is
+  // what most 3D web viewers do, since a trackpad pinch and a two-finger scroll are otherwise hard
+  // to tell apart reliably across platforms.
+  dom.addEventListener('wheel', e => {
+    e.preventDefault();
+    const factor = Math.exp(e.deltaY * 0.001);
+    radius = Math.min(200, Math.max(2, radius * factor));
+    updateCameraFromSpherical();
+  }, {passive: false});
+
+  function animate() {
+    requestAnimationFrame(animate);
+    renderer.render(scene, camera);
+  }
+  animate();
+
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+</script>
+</body>
+</html>

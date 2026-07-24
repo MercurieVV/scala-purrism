@@ -25,5 +25,12 @@
                 description="Open the Purrism Three.js viewer">
             <add-to-group group-id="GoToMenu" anchor="last"/>
         </action>
+
+        <action id="Purrism.OpenModuleGraph"
+                class="io.github.mercurievv.purrism.ideaplugin.PurrismGraphAction"
+                text="Purrism Module Graph..."
+                description="Build and show the module dependency graph from SemanticDB">
+            <add-to-group group-id="GoToMenu" anchor="last"/>
+        </action>
     </actions>
 </idea-plugin>
