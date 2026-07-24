@@ -384,9 +384,12 @@ object ijPlugin extends ScalaModule {
     * sandbox IDE runs fully outside Mill's task lifecycle -- `mill` stays usable while it's open.
     *
     * Plugin/Scala-plugin jars and platform VM args are copied/read at script *run* time (not baked
-    * in), so rerunning `./run-ide.sh` after `mill ijPlugin.pluginDist` picks up a rebuilt plugin
-    * without regenerating the script. Regenerate (`mill ijPlugin.genRunIdeScript`) only if
-    * `ideVersion` changes or the platform download itself moves.
+    * in). The script rebuilds the plugin itself (`mill ijPlugin.pluginDist`) before staging it, so a
+    * plain rerun of `./run-ide.sh` always picks up source changes -- that briefly needs Mill's
+    * workspace lock (blocks if another `mill` command is mid-run, same as any other `mill` call), but
+    * releases it once the rebuild finishes and the sandbox IDE launches outside Mill's lifecycle same
+    * as before. Regenerate (`mill ijPlugin.genRunIdeScript`) only if `ideVersion` changes or the
+    * platform download itself moves.
     */
   def genRunIdeScript() = Task.Command {
     val home = platformHome().path
@@ -424,6 +427,9 @@ object ijPlugin extends ScalaModule {
          |PLUGINS_DIR="$$SANDBOX/plugins"
          |RESTART_EXIT_CODE=$restartExitCode
          |
+         |echo "[purrism] rebuilding plugin (mill ijPlugin.pluginDist)..."
+         |(cd "$$PROJECT_PATH" && mill ijPlugin.pluginDist)
+         |
          |rm -rf "$$PLUGINS_DIR"
          |mkdir -p "$$PLUGINS_DIR"
          |cp -R "$$DIST" "$$PLUGINS_DIR/"
@@ -431,11 +437,26 @@ object ijPlugin extends ScalaModule {
          |  cp -R "$$entry" "$$PLUGINS_DIR/"
          |done
          |
+         |# Prefer an explicit override, then the newest cached JBR-with-JCEF under
+         |# ~/.cache/purrism-jbr (JetBrains Runtime, not a stock JDK -- needed for JCEF and for
+         |# IntelliJ's native Mac screen-menu bridge, which crashes on a plain JDK), then whatever
+         |# JVM Mill itself ran on as a last resort.
          |if [ -n "$${PURRISM_JBR_HOME:-}" ] && [ -x "$$PURRISM_JBR_HOME/bin/java" ]; then
          |  JAVA_BIN="$$PURRISM_JBR_HOME/bin/java"
          |else
-         |  JAVA_BIN='${(os.Path(sys.props("java.home")) / "bin" / "java").toString.replace("'", "'\\''")}'
+         |  CACHED_JBR=$$(ls -d "$$HOME/.cache/purrism-jbr"/jbr_jcef-*/Contents/Home 2>/dev/null | sort -V | tail -1 || true)
+         |  if [ -n "$$CACHED_JBR" ] && [ -x "$$CACHED_JBR/bin/java" ]; then
+         |    JAVA_BIN="$$CACHED_JBR/bin/java"
+         |  else
+         |    JAVA_BIN='${(os.Path(sys.props("java.home")) / "bin" / "java").toString.replace("'", "'\\''")}'
+         |  fi
          |fi
+         |
+         |# Serve the Three.js viewer HTML/JS straight from source (see ViewerAssets.dir) instead of a
+         |# one-time jar-resource copy, so editing e.g. purrism-graph.html and reloading the dialog's
+         |# browser (right-click -> Reload, or Cmd+R) picks up the change immediately -- no plugin
+         |# rebuild or IDE restart needed for pure UI/JS edits.
+         |export PURRISM_WEB_DIR="$$PROJECT_PATH/ijPlugin/resources/web"
          |
          |EXIT_CODE=$$RESTART_EXIT_CODE
          |while [ "$$EXIT_CODE" -eq "$$RESTART_EXIT_CODE" ]; do

@@ -8,6 +8,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.{DialogWrapper, Messages}
 import com.intellij.ui.jcef.{JBCefApp, JBCefBrowser}
 import io.github.mercurievv.purrism.graphmodel.{
+  EdgeKind,
   GraphJson,
   GraphModelBuilder,
   GraphPayload,
@@ -85,7 +86,37 @@ class PurrismGraphAction extends AnAction {
             LOG.info(
               s"[purrism-graph] ${classNodes.size} class/trait/object nodes across ${keptModules.size} modules"
             )
-            val json = GraphJson.toJson(GraphPayload(moduleGraph, classNodes))
+            val classNodeIds = classNodes.map(_.id).toSet
+            val classEdges = full.edges.filter(e =>
+              e.kind != EdgeKind.Contains && classNodeIds.contains(
+                e.from
+              ) && classNodeIds.contains(e.to)
+            )
+            LOG.info(
+              s"[purrism-graph] ${classEdges.size} dependency edges among class/trait/object nodes"
+            )
+            val fileNodes = full.nodes.filter(n =>
+              n.kind == NodeKind.File && keptModules.contains(n.module)
+            )
+            val fileNodeIds = fileNodes.map(_.id).toSet
+            val fileContainsEdges = full.edges.filter(e =>
+              e.kind == EdgeKind.Contains && fileNodeIds.contains(
+                e.from
+              ) && classNodeIds.contains(e.to)
+            )
+            LOG.info(
+              s"[purrism-graph] ${fileNodes.size} files across ${keptModules.size} modules, ${fileContainsEdges.size} file->class contains edges"
+            )
+            val json =
+              GraphJson.toJson(
+                GraphPayload(
+                  moduleGraph,
+                  fileNodes,
+                  fileContainsEdges,
+                  classNodes,
+                  classEdges
+                )
+              )
             LOG.info(
               s"[purrism-graph] serialized ${json.length} chars of JSON, handing off to dialog"
             )
@@ -224,6 +255,19 @@ class PurrismGraphDialog(project: Project)
     val panel = new javax.swing.JPanel(new BorderLayout())
     panel.setPreferredSize(new java.awt.Dimension(900, 650))
     panel.add(browser.getComponent, BorderLayout.CENTER)
+
+    // JCEF's built-in right-click "Reload" context-menu item doesn't fire reliably inside the IDE's
+    // embedded browser, so pure HTML/JS edits (see PURRISM_WEB_DIR dev mode) had no way to show up
+    // without closing and reopening this whole dialog. reloadIgnoreCache() bypasses any caching of
+    // the file:// page so an edited purrism-graph.html always wins.
+    val reloadButton = new javax.swing.JButton("Reload viewer")
+    reloadButton.addActionListener(_ =>
+      browser.getCefBrowser.reloadIgnoreCache()
+    )
+    val controls = new javax.swing.JPanel()
+    controls.add(reloadButton)
+    panel.add(controls, BorderLayout.SOUTH)
+
     panel
   }
 }

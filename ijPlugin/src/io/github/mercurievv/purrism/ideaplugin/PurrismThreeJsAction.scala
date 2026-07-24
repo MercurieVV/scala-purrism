@@ -9,7 +9,7 @@ import com.intellij.ui.jcef.{JBCefApp, JBCefBrowser}
 import org.cef.browser.CefBrowser
 import org.cef.handler.CefLoadHandlerAdapter
 import java.awt.BorderLayout
-import java.nio.file.{Files, Path, StandardCopyOption}
+import java.nio.file.{Files, Path, Paths, StandardCopyOption}
 import javax.swing.{JButton, JComponent, JPanel, JTextField}
 
 private val LOG = Logger.getInstance("Purrism")
@@ -29,16 +29,40 @@ private def debugWarn(message: => String): Unit =
   * different source file) also uses it.
   */
 object ViewerAssets {
+
+  /** Dev shortcut: if `PURRISM_WEB_DIR` points at the real
+    * `ijPlugin/resources/web` source dir (set by `run-ide.sh`), serve straight
+    * from there instead of a one-time jar-resource copy -- editing
+    * `purrism-graph.html` and reloading the dialog's browser (right-click ->
+    * Reload, or Cmd+R) then picks up changes immediately, no plugin rebuild/IDE
+    * restart needed. Falls back to the classpath copy (the only option once the
+    * plugin is actually packaged/installed) when unset.
+    */
   private lazy val dir: Path = {
-    val tmp = Files.createTempDirectory("purrism-viewer")
-    for (
-      name <- Seq("purrism-viewer.html", "purrism-graph.html", "three.min.js")
-    ) {
-      val in = classOf[PurrismThreeJsAction].getResourceAsStream(s"/web/$name")
-      try Files.copy(in, tmp.resolve(name), StandardCopyOption.REPLACE_EXISTING)
-      finally in.close()
+    val devDir = Option(System.getenv("PURRISM_WEB_DIR")).map(Paths.get(_))
+    devDir.filter(Files.isDirectory(_)) match {
+      case Some(d) => d
+      case None =>
+        val tmp = Files.createTempDirectory("purrism-viewer")
+        for (
+          name <- Seq(
+            "purrism-viewer.html",
+            "purrism-graph.html",
+            "three.min.js"
+          )
+        ) {
+          val in =
+            classOf[PurrismThreeJsAction].getResourceAsStream(s"/web/$name")
+          try
+            Files.copy(
+              in,
+              tmp.resolve(name),
+              StandardCopyOption.REPLACE_EXISTING
+            )
+          finally in.close()
+        }
+        tmp
     }
-    tmp
   }
 
   def indexUrl: String = dir.resolve("purrism-viewer.html").toUri.toString
