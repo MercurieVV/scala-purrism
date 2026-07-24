@@ -47,5 +47,15 @@ final case class Edge(from: String, to: String, kind: EdgeKind, weight: Int = 1)
 final case class GraphModel(nodes: Vector[Node], edges: Vector[Edge])
     derives upickle.default.ReadWriter
 
+/** What the Three.js panel actually receives: the module-level projection for
+  * the always-visible view, plus the raw class/trait/object nodes (keyed by
+  * their `module` field) so the UI can reveal a module's classes on demand
+  * without a round trip -- methods/values are still withheld, per
+  * [[ModuleProjection]]'s reasoning.
+  */
+final case class GraphPayload(modules: GraphModel, classes: Vector[Node])
+    derives upickle.default.ReadWriter
+
 object GraphJson:
   def toJson(model: GraphModel): String = upickle.default.write(model)
+  def toJson(payload: GraphPayload): String = upickle.default.write(payload)

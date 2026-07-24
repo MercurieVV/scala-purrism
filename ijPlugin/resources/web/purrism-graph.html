@@ -39,6 +39,101 @@
   let group = new THREE.Group();
   scene.add(group);
 
+  // Selection state: click (not drag) toggles a sphere in/out of `selected`; Shift-click adds to
+  // the set instead of replacing it -- Shift, not Cmd/Ctrl, since those collide with browser/OS
+  // shortcuts and Shift-click-to-multiselect is the common convention (Finder, most 3D tools).
+  const SELECTED_SCALE = 1.8;
+  const DESELECTED_SCALE = 0.55;
+  const NORMAL_SCALE = 1.0;
+  const SCALE_LERP_SPEED = 8; // per second; higher = snappier zoom animation
+  let spheres = [];
+  const selected = new Set();
+
+  // Selecting a Module (only Module -- classes/methods aren't selectable yet) turns it into a
+  // tiny glass-like sphere and reveals its classes as always-camera-facing rectangles hovering
+  // around it. `classesByModule`/`classGroups` are populated per render; a class group is built
+  // lazily on first selection since most modules are never opened in a given session.
+  const GLASS_SCALE = 0.35;
+  const GLASS_OPACITY = 0.22;
+  const NORMAL_OPACITY = 1.0;
+  let classesByModule = {};
+  const classGroups = {}; // moduleId -> THREE.Group of rectangle sprites
+
+  function isModule(n) { return n.kind === 'Module'; }
+
+  function targetScaleFor(n) {
+    if (isModule(n)) {
+      if (selected.has(n.id)) return GLASS_SCALE;
+      return selected.size > 0 ? DESELECTED_SCALE : NORMAL_SCALE;
+    }
+    return selected.size === 0 ? NORMAL_SCALE : (selected.has(n.id) ? SELECTED_SCALE : DESELECTED_SCALE);
+  }
+
+  function targetOpacityFor(n) {
+    return isModule(n) && selected.has(n.id) ? GLASS_OPACITY : NORMAL_OPACITY;
+  }
+
+  function makeClassRectangle(node) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 220;
+    canvas.height = 130;
+    const ctx = canvas.getContext('2d');
+    const color = colorByKind[node.kind] || 0xffffff;
+    ctx.fillStyle = 'rgba(30,31,34,0.85)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = `#${color.toString(16).padStart(6, '0')}`;
+    ctx.strokeRect(3, 3, canvas.width - 6, canvas.height - 6);
+    ctx.fillStyle = '#cdd6f4';
+    ctx.font = '20px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(node.name, canvas.width / 2, canvas.height / 2 + 7);
+    const texture = new THREE.CanvasTexture(canvas);
+    // Sprite -- not a Mesh -- so it always faces the camera regardless of orbit rotation, per the
+    // "always oriented to user" requirement.
+    const material = new THREE.SpriteMaterial({map: texture, transparent: true, depthTest: false});
+    const sprite = new THREE.Sprite(material);
+    sprite.scale.set(1.5, 0.9, 1);
+    return sprite;
+  }
+
+  function classGroupFor(moduleSphere) {
+    const moduleId = moduleSphere.userData.id;
+    if (classGroups[moduleId]) return classGroups[moduleId];
+    const nodes = classesByModule[moduleSphere.userData.name] || [];
+    const grp = new THREE.Group();
+    const n = Math.max(1, nodes.length);
+    const ringRadius = 1.1 + n * 0.12;
+    nodes.forEach((cls, i) => {
+      const angle = (i / n) * Math.PI * 2;
+      const sprite = makeClassRectangle(cls);
+      sprite.position.set(
+        Math.cos(angle) * ringRadius,
+        (i % 2 === 0 ? 1 : -1) * 0.35,
+        Math.sin(angle) * ringRadius
+      );
+      grp.add(sprite);
+    });
+    grp.position.copy(moduleSphere.position);
+    grp.visible = false;
+    group.add(grp);
+    classGroups[moduleId] = grp;
+    return grp;
+  }
+
+  function applySelectionVisuals() {
+    spheres.forEach(sphere => {
+      const n = sphere.userData;
+      const isSelected = selected.has(n.id);
+      sphere.material.emissive.setHex(isSelected ? 0xffffff : 0x000000);
+      sphere.material.emissiveIntensity = isSelected ? 0.5 : 0;
+      if (isModule(n)) {
+        const grp = classGroupFor(sphere);
+        grp.visible = isSelected;
+      }
+    });
+  }
+
   // Base64 wrapper: the plugin sends the JSON base64-encoded (immune to JS template-literal /
   // string-escaping edge cases -- see PurrismGraphDialog.sendJson), so decode then hand off to
   // purrismRenderGraph. Also the single place errors get surfaced -- without this, a bad payload
@@ -54,19 +149,28 @@
     }
   };
 
-  // Renders {nodes:[{id,kind,name,module,...}], edges:[{from,to,kind,weight}]} laid out on a
-  // circle (good enough for a module-count graph; no physics dependency needed).
+  // Payload is {modules: {nodes, edges}, classes: [{id,kind,name,module,...}]}: `modules` is the
+  // always-visible module-level projection laid out on a circle; `classes` are the raw
+  // class/trait/object nodes, grouped by owning module name and only materialized (as rectangle
+  // sprites) when that module is selected -- see classGroupFor/applySelectionVisuals.
   window.purrismRenderGraph = function (json) {
     scene.remove(group);
     group = new THREE.Group();
     scene.add(group);
+    spheres = [];
+    selected.clear();
+    for (const k of Object.keys(classGroups)) delete classGroups[k];
 
     const data = JSON.parse(json);
-    const nodes = data.nodes || [];
-    const edges = data.edges || [];
-    console.log(`[purrism-graph] rendering ${nodes.length} nodes, ${edges.length} edges`);
+    const nodes = (data.modules && data.modules.nodes) || [];
+    const edges = (data.modules && data.modules.edges) || [];
+    classesByModule = {};
+    (data.classes || []).forEach(c => {
+      (classesByModule[c.module] = classesByModule[c.module] || []).push(c);
+    });
+    console.log(`[purrism-graph] rendering ${nodes.length} modules, ${edges.length} edges, ${(data.classes || []).length} classes`);
     document.getElementById('label').textContent =
-      `Purrism module graph -- ${nodes.length} nodes, ${edges.length} edges`;
+      `Purrism module graph -- ${nodes.length} modules, ${edges.length} edges`;
 
     const radius = Math.max(4, nodes.length * 1.4);
     const positions = {};
@@ -78,11 +182,16 @@
 
       const size = 0.4 + Math.min(1.2, (n.weight || 1) * 0.05);
       const geometry = new THREE.SphereGeometry(size, 24, 24);
-      const material = new THREE.MeshStandardMaterial({color: colorByKind[n.kind] || 0xffffff});
+      const material = new THREE.MeshStandardMaterial({
+        color: colorByKind[n.kind] || 0xffffff,
+        transparent: true // needed so selected modules can animate down to GLASS_OPACITY
+      });
       const sphere = new THREE.Mesh(geometry, material);
       sphere.position.copy(positions[n.id]);
       sphere.userData = n;
+      sphere.scale.setScalar(NORMAL_SCALE);
       group.add(sphere);
+      spheres.push(sphere);
 
       const label = makeLabel(n.name);
       label.position.copy(positions[n.id]).add(new THREE.Vector3(0, size + 0.4, 0));
@@ -142,16 +251,48 @@
   let dragging = false;
   let lastX = 0;
   let lastY = 0;
+  let downX = 0;
+  let downY = 0;
+  const CLICK_MOVE_THRESHOLD = 4; // px; below this a pointerdown+up is a click, not a drag-rotate
+
+  const raycaster = new THREE.Raycaster();
+  const pointerNdc = new THREE.Vector2();
+
+  function pickSphereAt(clientX, clientY) {
+    const rect = dom.getBoundingClientRect();
+    pointerNdc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+    pointerNdc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+    raycaster.setFromCamera(pointerNdc, camera);
+    const hits = raycaster.intersectObjects(spheres);
+    return hits.length > 0 ? hits[0].object : null;
+  }
 
   dom.addEventListener('pointerdown', e => {
     dragging = true;
     lastX = e.clientX;
     lastY = e.clientY;
+    downX = e.clientX;
+    downY = e.clientY;
     dom.setPointerCapture(e.pointerId);
   });
   dom.addEventListener('pointerup', e => {
     dragging = false;
     dom.releasePointerCapture(e.pointerId);
+    const moved = Math.hypot(e.clientX - downX, e.clientY - downY);
+    if (moved > CLICK_MOVE_THRESHOLD) return; // was a drag-rotate, not a click
+    const hit = pickSphereAt(e.clientX, e.clientY);
+    if (!hit) {
+      selected.clear();
+    } else if (e.shiftKey) {
+      const id = hit.userData.id;
+      if (selected.has(id)) selected.delete(id); else selected.add(id);
+    } else {
+      const id = hit.userData.id;
+      const wasOnlySelected = selected.size === 1 && selected.has(id);
+      selected.clear();
+      if (!wasOnlySelected) selected.add(id); // click again on the sole selection deselects it
+    }
+    applySelectionVisuals();
   });
   dom.addEventListener('pointercancel', () => { dragging = false; });
   dom.addEventListener('pointermove', e => {
@@ -176,8 +317,27 @@
     updateCameraFromSpherical();
   }, {passive: false});
 
+  let lastFrameTime = performance.now();
+
   function animate() {
     requestAnimationFrame(animate);
+    const now = performance.now();
+    const dt = Math.min(0.1, (now - lastFrameTime) / 1000);
+    lastFrameTime = now;
+
+    const t = 1 - Math.exp(-SCALE_LERP_SPEED * dt); // frame-rate-independent lerp factor
+    spheres.forEach(sphere => {
+      const n = sphere.userData;
+      const targetScale = targetScaleFor(n);
+      sphere.scale.setScalar(sphere.scale.x + (targetScale - sphere.scale.x) * t);
+
+      const targetOpacity = targetOpacityFor(n);
+      sphere.material.opacity += (targetOpacity - sphere.material.opacity) * t;
+
+      const grp = classGroups[n.id];
+      if (grp && grp.visible) grp.position.copy(sphere.position);
+    });
+
     renderer.render(scene, camera);
   }
   animate();
