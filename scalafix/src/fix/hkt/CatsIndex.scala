@@ -12,14 +12,16 @@ final class CatsIndex private (
     val typeclasses: Map[Symbol, CatsTypeclass],
     val capabilities: Map[Symbol, List[Capability]],
     val syntax: Map[Symbol, Capability],
+    val stdlib: Map[Symbol, List[Capability]],
     private val syntaxImports: Map[Symbol, String]
 ) {
 
   def this(
       typeclasses: Map[Symbol, CatsTypeclass],
       capabilities: Map[Symbol, List[Capability]],
-      syntax: Map[Symbol, Capability]
-  ) = this(typeclasses, capabilities, syntax, Map.empty)
+      syntax: Map[Symbol, Capability],
+      stdlib: Map[Symbol, List[Capability]] = Map.empty
+  ) = this(typeclasses, capabilities, syntax, stdlib, Map.empty)
 
   /** Every capability whose method or owner is `method`, across all
     * typeclasses, in stable order (by typeclass symbol string).
@@ -42,6 +44,14 @@ final class CatsIndex private (
       .map(_.owner)
 
   def resolveSyntax(method: Symbol): Option[Capability] = syntax.get(method)
+
+  /** The Cats capabilities a concrete stdlib (or concrete Cats data type)
+    * method maps onto, in stable order (by typeclass symbol string). Empty for
+    * methods with no abstract counterpart, which is what makes a concrete-only
+    * operation decline instead of resolving.
+    */
+  def resolveStdlib(method: Symbol): List[Capability] =
+    stdlib.getOrElse(method, Nil)
 
   /** The syntax wildcard import for a syntax method or its resolved primitive
     * owner.
@@ -84,10 +94,12 @@ object CatsIndex {
     val typeclassLines = readResourceLines(typeclassesResource)
     val capabilityLines = readResourceLines(capabilitiesResource)
     val syntaxLines = readResourceLines(syntaxResource)
+    val stdlibLines = readResourceLines(stdlibResource)
     parse(
       typeclassLines.iterator,
       capabilityLines.iterator,
-      syntaxLines.iterator
+      syntaxLines.iterator,
+      stdlibLines.iterator
     ) match {
       case Right(index)  => index
       case Left(message) => throw new IllegalStateException(message)
@@ -97,7 +109,8 @@ object CatsIndex {
   def parse(
       typeclassRows: Iterator[String],
       capabilityRows: Iterator[String],
-      syntaxRows: Iterator[String]
+      syntaxRows: Iterator[String],
+      stdlibRows: Iterator[String] = Iterator.empty
   ): Either[String, CatsIndex] =
     for {
       typeclassList <- parseTable(typeclassesResource, typeclassRows)(
@@ -107,12 +120,14 @@ object CatsIndex {
         parseCapabilityRow
       )
       syntaxList <- parseTable(syntaxResource, syntaxRows)(parseSyntaxRow)
-    } yield build(typeclassList, capabilityList, syntaxList)
+      stdlibList <- parseTable(stdlibResource, stdlibRows)(parseStdlibRow)
+    } yield build(typeclassList, capabilityList, syntaxList, stdlibList)
 
   private def build(
       typeclassList: List[CatsTypeclass],
       capabilityList: List[Capability],
-      syntaxList: List[(Symbol, Symbol, Symbol, String)]
+      syntaxList: List[(Symbol, Symbol, Symbol, String)],
+      stdlibList: List[(Symbol, Symbol, Symbol)]
   ): CatsIndex = {
     val typeclassMap = typeclassList.map(tc => tc.symbol -> tc).toMap
     val capabilitiesByTypeclass = capabilityList.groupBy(_.typeclass)
@@ -154,10 +169,28 @@ object CatsIndex {
       }
       .toMap
 
+    val stdlibMap = stdlibList
+      .flatMap { case (concreteMethod, owner, method) =>
+        capabilitiesByOwnerMethod
+          .get((owner, method))
+          .flatMap { capabilities =>
+            val ownerTypeclass = typeclassOf(owner)
+            capabilities
+              .find(_.typeclass == ownerTypeclass)
+              .orElse(capabilities.headOption)
+          }
+          .map(concreteMethod -> _)
+      }
+      .groupBy(_._1)
+      .view
+      .mapValues(_.map(_._2).sortBy(_.typeclass.value))
+      .toMap
+
     new CatsIndex(
       typeclassMap,
       capabilitiesByTypeclass,
       syntaxMap,
+      stdlibMap,
       exactSyntaxImports ++ resolvedSyntaxImports
     )
   }
@@ -266,6 +299,21 @@ object CatsIndex {
         Right((Symbol(syntaxMethod), Symbol(owner), Symbol(method), importPath))
       case other => Left(s"expected 4 columns, got ${other.size}")
     }
+
+  private def parseStdlibRow(
+      cells: List[String]
+  ): Either[String, (Symbol, Symbol, Symbol)] =
+    cells match {
+      case List(concreteMethod, owner, method, _) =>
+        Right((Symbol(concreteMethod), Symbol(owner), Symbol(method)))
+      case other => Left(s"expected 4 columns, got ${other.size}")
+    }
+
+  /** The declaring typeclass symbol of a capability method symbol. */
+  private def typeclassOf(method: Symbol): Symbol = {
+    val end = method.value.lastIndexOf('#')
+    if (end < 0) Symbol.None else Symbol(method.value.take(end + 1))
+  }
 
   private def parseSymbolList(cell: String): List[Symbol] =
     if (cell.isEmpty) Nil else cell.split(",", -1).toList.map(Symbol(_))
