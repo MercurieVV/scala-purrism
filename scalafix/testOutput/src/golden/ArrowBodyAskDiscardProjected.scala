@@ -4,7 +4,7 @@ package golden
 import cats.Monad
 import cats.data.Kleisli
 import cats.syntax.functor._
-import cats.syntax.apply._
+import cats.syntax.arrow._
 
 object ArrowBodyAskDiscardProjected {
   final case class Task(path: String)
@@ -14,6 +14,8 @@ object ArrowBodyAskDiscardProjected {
       Kleisli { path => Monad[F].unit }
 
     def run: Kleisli[F, Task, Task] =
-      Kleisli.ask[F, Task] <* validatePath.local((task: Task) => task.path)
+      (Kleisli.ask[F, Task] &&& validatePath.local((task: Task) => task.path)).map({
+  case (task, _) => task
+})
   }
 }

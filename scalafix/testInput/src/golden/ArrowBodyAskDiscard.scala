@@ -5,11 +5,11 @@ rules = [PreferArrow]
 # arrow's own input and its result is thrown away in favour of that input.
 # That is `Kleisli.ask <* work` -- `ask` supplies the input as the value,
 # `<*` runs the work for its effect only. `<*` needs just `Apply[F]`, so this
-# costs less than the `ask &&& work` fan-out plus destructuring `map` the rule
-# would otherwise need to carry the input past the discarded result.
+# would cost less than the `ask &&& work` fan-out plus destructuring `map`
+# the rule would otherwise need to carry the input past the discarded result.
 #
-# Fires without `PreferArrow.aggressive`: one plumbing node (the `ask`) and a
-# rendering shorter than the length guard's ceiling.
+# This recognition ("case 1") is not implemented yet, so the rule leaves the
+# body untouched. Pinned as the executed oracle until case 1 lands.
  */
 package golden
 

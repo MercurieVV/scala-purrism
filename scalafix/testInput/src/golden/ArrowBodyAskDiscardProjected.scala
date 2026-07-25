@@ -3,12 +3,10 @@ rules = [PreferArrow]
 PreferArrow.aggressive = true
 
 # The same `ask <* work` shape, but the work reads a *projection* of the input
-# -- so the right operand carries a `.local`. Structurally cheap (two plumbing
-# nodes, exactly at the conservative ceiling) but textually expensive: `.local`
-# must annotate its parameter with the input type or the new input type infers
-# as `Any`. The conservative length-ratio guard therefore declines it, exactly
-# as it declines `ArrowBodyLocalProjection`. That guard is the backstop against
-# pathological blow-up and is left alone, so this sub-shape needs the flag.
+# -- so the right operand would carry a `.local`. Case 1 recognition is not
+# implemented yet, so with `aggressive` set this falls to the existing
+# input-capturing fan-out (`&&&`) branch instead. Pinned as the executed
+# oracle until case 1 lands.
  */
 package golden
 

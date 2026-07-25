@@ -10,9 +10,11 @@ object ArrowBodyAskPure {
 
   final class Runner[F[_]: Monad] {
     def echo: Kleisli[F, Task, Task] =
-      Kleisli.ask[F, Task]
+      Kleisli { task =>
+        task.pure[F]
+      }
 
     val echoValue: Kleisli[F, Task, Task] =
-      Kleisli.ask[F, Task]
+      Kleisli { task => task.pure }
   }
 }
