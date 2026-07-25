@@ -297,9 +297,8 @@ object CatsIndexGen {
 
     val capabilityMethods =
       capabilityRows.iterator.map(row => row(2) -> row(1)).toSet
-    val missingStdlibCapabilities = StdlibSeed.filterNot(row =>
-      capabilityMethods.contains(row(1) -> row(2))
-    )
+    val missingStdlibCapabilities =
+      StdlibSeed.filterNot(row => capabilityMethods.contains(row(1) -> row(2)))
     require(
       missingStdlibCapabilities.isEmpty,
       s"stdlib mappings absent from capabilities: $missingStdlibCapabilities"

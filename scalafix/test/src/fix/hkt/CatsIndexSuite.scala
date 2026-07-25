@@ -17,8 +17,21 @@ final class CatsIndexSuite extends FunSuite {
 
   test("resolveSyntax resolves Functor.Ops#map() to the Functor#map() owner") {
     val capability =
-      index.resolveSyntax(Symbol("cats/Functor.Ops#map().")).getOrElse(fail("no capability"))
+      index
+        .resolveSyntax(Symbol("cats/Functor.Ops#map()."))
+        .getOrElse(fail("no capability"))
     assertEquals(capability.owner, Symbol("cats/Functor#map()."))
+  }
+
+  test("syntaxImport resolves a RequiredOp owner to its direct syntax module") {
+    assertEquals(
+      index.syntaxImport(Symbol("cats/Functor#map().")),
+      Some("cats.syntax.functor.*")
+    )
+    assertEquals(
+      index.syntaxImport(Symbol("cats/Traverse#traverse().")),
+      Some("cats.syntax.traverse.*")
+    )
   }
 
   test("resolveStdlib resolves List#map() to the Functor#map() owner") {
@@ -90,12 +103,15 @@ final class CatsIndexSuite extends FunSuite {
     assertEquals(KindShape.arity(KindShape.Binary), 2)
   }
 
-  test("typeclasses.size matches the non-comment line count of typeclasses.tsv") {
+  test(
+    "typeclasses.size matches the non-comment line count of typeclasses.tsv"
+  ) {
     val bytes = getClass.getClassLoader
       .getResourceAsStream(CatsIndex.typeclassesResource)
       .readAllBytes()
     val lines = new String(bytes, StandardCharsets.UTF_8).split("\n", -1).toList
-    val dataLineCount = lines.count(line => line.nonEmpty && !line.startsWith("#"))
+    val dataLineCount =
+      lines.count(line => line.nonEmpty && !line.startsWith("#"))
     assertEquals(index.typeclasses.size, dataLineCount)
   }
 
@@ -115,7 +131,8 @@ final class CatsIndexSuite extends FunSuite {
     val syntaxRows = Iterator.empty[String]
     val stdlibRows = Iterator.empty[String]
 
-    val result = CatsIndex.parse(typeclassRows, capabilityRows, syntaxRows, stdlibRows)
+    val result =
+      CatsIndex.parse(typeclassRows, capabilityRows, syntaxRows, stdlibRows)
     result match {
       case Left(message) =>
         assert(message.contains(CatsIndex.typeclassesResource))
