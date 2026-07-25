@@ -58,7 +58,9 @@ final class CapabilitySolverSuite extends FunSuite {
     assertEquals(solution.extraTypeParams, List("E"))
   }
 
-  test("map and mapFilter retain separate Functor and FunctorFilter constraints") {
+  test(
+    "map and mapFilter retain separate Functor and FunctorFilter constraints"
+  ) {
     assertSolution(
       ops("cats/Functor#map().", "cats/FunctorFilter#mapFilter()."),
       List("cats/Functor#", "cats/FunctorFilter#"),
@@ -85,7 +87,7 @@ final class CapabilitySolverSuite extends FunSuite {
       maxConstraints = 2
     ) match {
       case Left(_: DeclineReason.NoCapability) => ()
-      case other                               => fail(s"expected NoCapability, got $other")
+      case other => fail(s"expected NoCapability, got $other")
     }
   }
 
@@ -100,12 +102,17 @@ final class CapabilitySolverSuite extends FunSuite {
       maxConstraints = 2
     ) match {
       case Left(DeclineReason.TooManyConstraints(candidate, 2)) =>
-        assertEquals(candidate, symbols("cats/Functor#", "cats/FunctorFilter#", "cats/SemigroupK#"))
+        assertEquals(
+          candidate,
+          symbols("cats/Functor#", "cats/FunctorFilter#", "cats/SemigroupK#")
+        )
       case other => fail(s"expected TooManyConstraints, got $other")
     }
   }
 
-  test("solve is deterministic across shuffled operations and index map iteration") {
+  test(
+    "solve is deterministic across shuffled operations and index map iteration"
+  ) {
     val required = ops("cats/FlatMap#flatMap().", "cats/Applicative#pure().")
     val expected = CapabilitySolver.solve(required, index, maxConstraints = 2)
     val random = new Random(40L)
@@ -117,7 +124,8 @@ final class CapabilitySolverSuite extends FunSuite {
         random.shuffle(index.syntax.toList).toMap
       )
       assertEquals(
-        CapabilitySolver.solve(random.shuffle(required), shuffledIndex, maxConstraints = 2),
+        CapabilitySolver
+          .solve(random.shuffle(required), shuffledIndex, maxConstraints = 2),
         expected
       )
     }
@@ -143,14 +151,20 @@ final class CapabilitySolverSuite extends FunSuite {
       )
     )
     cases.foreach { required =>
-      CapabilitySolver.rank(CapabilitySolver.candidates(required, index), index).take(2) match {
+      CapabilitySolver
+        .rank(CapabilitySolver.candidates(required, index), index)
+        .take(2) match {
         case first :: second :: Nil => assertNotEquals(first, second)
         case _                      => ()
       }
     }
   }
 
-  private def assertSolution(required: List[RequiredOp], expected: List[String], strength: Int): Unit = {
+  private def assertSolution(
+      required: List[RequiredOp],
+      expected: List[String],
+      strength: Int
+  ): Unit = {
     val solution = solve(required)
     assertEquals(solution.constraints, symbols(expected*))
     assertEquals(solution.strengthSum, strength)
@@ -163,7 +177,10 @@ final class CapabilitySolverSuite extends FunSuite {
     }
 
   private def ops(methods: String*): List[RequiredOp] =
-    methods.toList.map(method => RequiredOp(Symbol(method), Position.None, KindShape.Unary))
+    methods.toList.map(method =>
+      RequiredOp(Symbol(method), Position.None, KindShape.Unary)
+    )
 
-  private def symbols(values: String*): List[Symbol] = values.toList.map(Symbol(_))
+  private def symbols(values: String*): List[Symbol] =
+    values.toList.map(Symbol(_))
 }

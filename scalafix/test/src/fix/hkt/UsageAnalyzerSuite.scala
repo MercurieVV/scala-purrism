@@ -109,7 +109,9 @@ final class UsageAnalyzerSuite extends FunSuite {
         ambiguousIndex,
         widenPublic = false
       )
-    result.collectFirst { case declined: UsageResult.Declined => declined.reason } match {
+    result.collectFirst { case declined: UsageResult.Declined =>
+      declined.reason
+    } match {
       case Some(_: DeclineReason.AmbiguousCapability) => ()
       case other => fail(s"expected AmbiguousCapability, got $other")
     }
@@ -144,19 +146,36 @@ final class UsageAnalyzerSuite extends FunSuite {
   }
 
   test("isWidenable rejects bare protected") {
-    assert(!UsageAnalyzer.isWidenable(definition("bareProtected"), widenPublic = false))
+    assert(
+      !UsageAnalyzer.isWidenable(
+        definition("bareProtected"),
+        widenPublic = false
+      )
+    )
   }
 
   test("isWidenable accepts package-private") {
-    assert(UsageAnalyzer.isWidenable(definition("packagePrivate"), widenPublic = false))
+    assert(
+      UsageAnalyzer.isWidenable(
+        definition("packagePrivate"),
+        widenPublic = false
+      )
+    )
   }
 
   test("isWidenable accepts a local def") {
-    assert(UsageAnalyzer.isWidenable(definition("localDefinition"), widenPublic = false))
+    assert(
+      UsageAnalyzer.isWidenable(
+        definition("localDefinition"),
+        widenPublic = false
+      )
+    )
   }
 
   test("isWidenable accepts public when widenPublic is enabled") {
-    assert(UsageAnalyzer.isWidenable(definition("publicMap"), widenPublic = true))
+    assert(
+      UsageAnalyzer.isWidenable(definition("publicMap"), widenPublic = true)
+    )
   }
 
   test("a public head reports the body decline, not PublicBoundary") {
@@ -208,12 +227,18 @@ final class UsageAnalyzerSuite extends FunSuite {
       .getOrElse(fail(s"$name did not decline"))
 
   private def definition(name: String): Defn.Def =
-    doc.tree.collect {
-      case defn: Defn.Def if defn.name.value == name => defn
-    }.headOption.getOrElse(fail(s"missing fixture definition: $name"))
+    doc.tree
+      .collect {
+        case defn: Defn.Def if defn.name.value == name => defn
+      }
+      .headOption
+      .getOrElse(fail(s"missing fixture definition: $name"))
 
   private def selectedMethod(defn: Defn.Def): Symbol =
-    defn.body.collect {
-      case Term.Select(_, method: Term.Name) => method.symbol
-    }.headOption.getOrElse(fail(s"missing selected method in ${defn.name.value}"))
+    defn.body
+      .collect { case Term.Select(_, method: Term.Name) =>
+        method.symbol
+      }
+      .headOption
+      .getOrElse(fail(s"missing selected method in ${defn.name.value}"))
 }
