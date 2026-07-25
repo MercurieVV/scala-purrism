@@ -79,7 +79,7 @@ object OpaqueTypeSpec {
   */
 final case class AutoDiscoverConfig(
     enabled: Boolean = false,
-    topN: Int = ExplorerConfig.DefaultTopN,
+    minClusterSize: Int = ExplorerConfig.DefaultMinClusterSize,
     basicTypes: List[String] = ExplorerConfig.DefaultBasicTypes,
     serialize: Boolean = false
 )
@@ -90,13 +90,20 @@ object AutoDiscoverConfig {
   implicit val decoder: ConfDecoder[AutoDiscoverConfig] =
     ConfDecoder.from { conf =>
       conf.getOrElse("enabled")(default.enabled).andThen { enabled =>
-        conf.getOrElse("topN")(default.topN).andThen { topN =>
-          conf.getOrElse("basicTypes")(default.basicTypes).andThen {
-            basicTypes =>
-              conf.getOrElse("serialize")(default.serialize).map { serialize =>
-                AutoDiscoverConfig(enabled, topN, basicTypes, serialize)
-              }
-          }
+        conf.getOrElse("minClusterSize")(default.minClusterSize).andThen {
+          minClusterSize =>
+            conf.getOrElse("basicTypes")(default.basicTypes).andThen {
+              basicTypes =>
+                conf.getOrElse("serialize")(default.serialize).map {
+                  serialize =>
+                    AutoDiscoverConfig(
+                      enabled,
+                      minClusterSize,
+                      basicTypes,
+                      serialize
+                    )
+                }
+            }
         }
       }
     }
@@ -441,7 +448,7 @@ object PropagateOpaqueType {
     val claimedSeeds = manual.flatMap(_.seeds).toSet
     val explorerConfig = ExplorerConfig(
       basicTypes = autoDiscover.basicTypes,
-      topN = autoDiscover.topN
+      minClusterSize = autoDiscover.minClusterSize
     )
     val candidates = OpaqueCandidateExplorer.withPlacement(
       bundle.index,
@@ -456,6 +463,7 @@ object PropagateOpaqueType {
         candidate.seeds.exists(claimedSeeds.contains)
     )
     println("--- DISCOVERED CANDIDATES ---")
+    println(OpaqueCandidateExplorer.renderSizeHistogram(res))
     res.foreach(c => println(s"Candidate: ${c.name}, seeds: ${c.seeds}"))
     res
   }
