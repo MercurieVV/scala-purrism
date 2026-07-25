@@ -1,8 +1,8 @@
 
 package golden
 
-import cats.Functor
 import cats.syntax.functor._
+import cats.Functor
 
 case class User(name: String)
 

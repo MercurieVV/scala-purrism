@@ -1,9 +1,9 @@
 
 package golden
 
-import cats.FlatMap
 import cats.syntax.flatMap._
 import cats.syntax.functor._
+import cats.FlatMap
 
 object AbstractFlatMapDependent {
   private def chain[G[_]: FlatMap](xs: G[Int])(f: Int => G[Int]): G[Int] =

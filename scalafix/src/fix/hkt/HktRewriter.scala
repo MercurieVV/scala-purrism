@@ -30,7 +30,12 @@ object HktRewriter {
         val imports =
           if (reusable.nonEmpty) syntaxImports
           else requiredImports(solution, index) ++ syntaxImports
-        val importPatch = addMissingImports(usage.defn, imports.distinct.sorted)
+        val importPatch = addMissingImports(
+          usage.defn,
+          imports.distinct.sortBy(path =>
+            (path.startsWith("cats.syntax"), path)
+          )
+        )
 
         reusable match {
           case Some(_) => replacementPatch + importPatch
@@ -87,7 +92,7 @@ object HktRewriter {
       .flatMap(index.typeclasses.get)
       .map(_.importPath)
       .distinct
-      .sorted
+      .sortBy(path => (path.startsWith("cats.syntax"), path))
 
   private final case class ExistingConstraint(
       symbol: Symbol,
