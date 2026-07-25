@@ -8,8 +8,7 @@ rules = [PreferArrow]
 # would cost less than the `ask &&& work` fan-out plus destructuring `map`
 # the rule would otherwise need to carry the input past the discarded result.
 #
-# This recognition ("case 1") is not implemented yet, so the rule leaves the
-# body untouched. Pinned as the executed oracle until case 1 lands.
+# This is the direct-input form of the `ProductL` recognition.
  */
 package golden
 
