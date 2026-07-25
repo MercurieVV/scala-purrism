@@ -11,7 +11,8 @@ import scalafix.v1.Symbol
 final class CatsIndex(
     val typeclasses: Map[Symbol, CatsTypeclass],
     val capabilities: Map[Symbol, List[Capability]],
-    val syntax: Map[Symbol, Capability]
+    val syntax: Map[Symbol, Capability],
+    val stdlib: Map[Symbol, List[Capability]] = Map.empty
 ) {
 
   /** Every capability whose method or owner is `method`, across all
@@ -33,6 +34,9 @@ final class CatsIndex(
       .map(_.owner)
 
   def resolveSyntax(method: Symbol): Option[Capability] = syntax.get(method)
+
+  def resolveStdlib(method: Symbol): List[Capability] =
+    stdlib.getOrElse(method, Nil)
 
   /** Transitive, cycle-safe ancestry over `CatsTypeclass.parents`. */
   def isAncestor(ancestor: Symbol, descendant: Symbol): Boolean = {
@@ -70,7 +74,13 @@ object CatsIndex {
     val typeclassLines = readResourceLines(typeclassesResource)
     val capabilityLines = readResourceLines(capabilitiesResource)
     val syntaxLines = readResourceLines(syntaxResource)
-    parse(typeclassLines.iterator, capabilityLines.iterator, syntaxLines.iterator) match {
+    val stdlibLines = readResourceLines(stdlibResource)
+    parse(
+      typeclassLines.iterator,
+      capabilityLines.iterator,
+      syntaxLines.iterator,
+      stdlibLines.iterator
+    ) match {
       case Right(index)  => index
       case Left(message) => throw new IllegalStateException(message)
     }
@@ -79,18 +89,21 @@ object CatsIndex {
   def parse(
       typeclassRows: Iterator[String],
       capabilityRows: Iterator[String],
-      syntaxRows: Iterator[String]
+      syntaxRows: Iterator[String],
+      stdlibRows: Iterator[String]
   ): Either[String, CatsIndex] =
     for {
       typeclassList <- parseTable(typeclassesResource, typeclassRows)(parseTypeclassRow)
       capabilityList <- parseTable(capabilitiesResource, capabilityRows)(parseCapabilityRow)
       syntaxList <- parseTable(syntaxResource, syntaxRows)(parseSyntaxRow)
-    } yield build(typeclassList, capabilityList, syntaxList)
+      stdlibList <- parseTable(stdlibResource, stdlibRows)(parseStdlibRow)
+    } yield build(typeclassList, capabilityList, syntaxList, stdlibList)
 
   private def build(
       typeclassList: List[CatsTypeclass],
       capabilityList: List[Capability],
-      syntaxList: List[(Symbol, Symbol, Symbol)]
+      syntaxList: List[(Symbol, Symbol, Symbol)],
+      stdlibList: List[(Symbol, Symbol, Symbol)]
   ): CatsIndex = {
     val typeclassMap = typeclassList.map(tc => tc.symbol -> tc).toMap
     val capabilitiesByTypeclass = capabilityList.groupBy(_.typeclass)
@@ -109,7 +122,24 @@ object CatsIndex {
       }
       .toMap
 
-    new CatsIndex(typeclassMap, capabilitiesByTypeclass, syntaxMap)
+    val stdlibMap = stdlibList
+      .flatMap { case (concreteMethod, owner, method) =>
+        capabilitiesByOwnerMethod
+          .get((owner, method))
+          .flatMap { capabilities =>
+            val ownerTypeclass = typeclassOf(owner)
+            capabilities
+              .find(_.typeclass == ownerTypeclass)
+              .orElse(capabilities.headOption)
+          }
+          .map(concreteMethod -> _)
+      }
+      .groupBy(_._1)
+      .view
+      .mapValues(_.map(_._2).sortBy(_.typeclass.value))
+      .toMap
+
+    new CatsIndex(typeclassMap, capabilitiesByTypeclass, syntaxMap, stdlibMap)
   }
 
   private def readResourceLines(resource: String): List[String] = {
@@ -194,6 +224,18 @@ object CatsIndex {
         Right((Symbol(syntaxMethod), Symbol(owner), Symbol(method)))
       case other => Left(s"expected 4 columns, got ${other.size}")
     }
+
+  private def parseStdlibRow(cells: List[String]): Either[String, (Symbol, Symbol, Symbol)] =
+    cells match {
+      case List(concreteMethod, owner, method, _) =>
+        Right((Symbol(concreteMethod), Symbol(owner), Symbol(method)))
+      case other => Left(s"expected 4 columns, got ${other.size}")
+    }
+
+  private def typeclassOf(method: Symbol): Symbol = {
+    val end = method.value.lastIndexOf('#')
+    if (end < 0) Symbol.None else Symbol(method.value.take(end + 1))
+  }
 
   private def parseSymbolList(cell: String): List[Symbol] =
     if (cell.isEmpty) Nil else cell.split(",", -1).toList.map(Symbol(_))
