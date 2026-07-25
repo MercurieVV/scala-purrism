@@ -545,14 +545,14 @@ object UsageAnalyzer {
       doc: SemanticDocument
   ): Option[Symbol] =
     term.symbol.info.flatMap { info =>
-        info.signature match {
-          case ValueSignature(tpe) =>
-            typeConstructor(tpe)
-          case MethodSignature(_, _, tpe) =>
-            typeConstructor(tpe)
-          case _ => None
-        }
+      info.signature match {
+        case ValueSignature(tpe) =>
+          typeConstructor(tpe)
+        case MethodSignature(_, _, tpe) =>
+          typeConstructor(tpe)
+        case _ => None
       }
+    }
 
   private def typeConstructor(tpe: SemanticType): Option[Symbol] =
     tpe match {

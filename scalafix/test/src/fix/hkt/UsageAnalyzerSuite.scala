@@ -190,7 +190,11 @@ final class UsageAnalyzerSuite extends FunSuite {
   }
 
   test("a public head reports the body decline, not PublicBoundary") {
-    val results = UsageAnalyzer.analyze(definition("publicHead"), index, widenPublic = false)
+    val results = UsageAnalyzer.analyze(
+      definition("publicHead"),
+      index,
+      widenPublic = false
+    )
     assertEquals(results.size, 1)
     results.head match {
       case declined: UsageResult.Declined =>
@@ -210,37 +214,56 @@ final class UsageAnalyzerSuite extends FunSuite {
   }
 
   test("the same public def is abstractable when widenPublic is enabled") {
-    val results = UsageAnalyzer.analyze(definition("publicMap"), index, widenPublic = true)
+    val results =
+      UsageAnalyzer.analyze(definition("publicMap"), index, widenPublic = true)
     assert(results.forall(_.isInstanceOf[UsageResult.Abstractable]), results)
   }
 
   test("a bare protected def declines as a public boundary") {
     decline("bareProtected", widenPublic = false).reason match {
-      case DeclineReason.PublicBoundary(name) => assertEquals(name, "bareProtected")
+      case DeclineReason.PublicBoundary(name) =>
+        assertEquals(name, "bareProtected")
       case other => fail(s"expected PublicBoundary, got $other")
     }
   }
 
   test("a private[golden] def is abstractable") {
-    val results = UsageAnalyzer.analyze(definition("packagePrivate"), index, widenPublic = false)
+    val results = UsageAnalyzer.analyze(
+      definition("packagePrivate"),
+      index,
+      widenPublic = false
+    )
     assert(results.forall(_.isInstanceOf[UsageResult.Abstractable]), results)
   }
 
-  test("a def mentioning two concrete constructors yields two independent results") {
+  test(
+    "a def mentioning two concrete constructors yields two independent results"
+  ) {
     val results =
-      UsageAnalyzer.analyze(definition("twoConstructors"), index, widenPublic = false)
+      UsageAnalyzer.analyze(
+        definition("twoConstructors"),
+        index,
+        widenPublic = false
+      )
     assertEquals(results.size, 2)
-    val constructors = results.collect { case a: UsageResult.Abstractable => a.constructor }
+    val constructors = results.collect { case a: UsageResult.Abstractable =>
+      a.constructor
+    }
     assertEquals(constructors.toSet.size, 2)
   }
 
   test("isWidenable rejects public without widenPublic") {
-    assert(!UsageAnalyzer.isWidenable(definition("publicMap"), widenPublic = false))
+    assert(
+      !UsageAnalyzer.isWidenable(definition("publicMap"), widenPublic = false)
+    )
   }
 
   test("isWidenable accepts a restricted owner chain") {
     assert(
-      UsageAnalyzer.isWidenable(definition("restrictedOwner"), widenPublic = false)
+      UsageAnalyzer.isWidenable(
+        definition("restrictedOwner"),
+        widenPublic = false
+      )
     )
   }
 
@@ -282,7 +305,10 @@ final class UsageAnalyzerSuite extends FunSuite {
       .collectFirst { case result: UsageResult.Abstractable => result }
       .getOrElse(fail(s"$name was not abstractable"))
 
-  private def decline(name: String, widenPublic: Boolean = false): UsageResult.Declined =
+  private def decline(
+      name: String,
+      widenPublic: Boolean = false
+  ): UsageResult.Declined =
     UsageAnalyzer
       .analyze(definition(name), index, widenPublic = widenPublic)
       .collectFirst { case declined: UsageResult.Declined => declined }
