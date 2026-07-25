@@ -38,9 +38,13 @@ final class UsageAnalyzerSuite extends FunSuite {
   }
 
   test("map-only body requires the Functor map override root") {
+    val ops = abstractable("mapOnly").ops
+    val position = ops.headOption
+      .map(_.position)
+      .getOrElse(fail("mapOnly produced no operations"))
     assertEquals(
-      requiredMethods("mapOnly"),
-      Set(Symbol("cats/Functor#map()."))
+      ops,
+      List(RequiredOp(Symbol("cats/Functor#map()."), position, KindShape.Unary))
     )
   }
 
@@ -333,12 +337,15 @@ final class UsageAnalyzerSuite extends FunSuite {
   }
 
   private def requiredMethods(name: String): Set[Symbol] =
-    UsageAnalyzer
-      .analyze(definition(name), index, widenPublic = false)
-      .collect { case UsageResult.Abstractable(_, _, _, _, ops) => ops }
-      .flatten
+    abstractable(name).ops
       .map(_.method)
       .toSet
+
+  private def abstractable(name: String): UsageResult.Abstractable =
+    UsageAnalyzer
+      .analyze(definition(name), index, widenPublic = false)
+      .collectFirst { case result: UsageResult.Abstractable => result }
+      .getOrElse(fail(s"$name was not abstractable"))
 
   private def decline(name: String): UsageResult.Declined =
     UsageAnalyzer
