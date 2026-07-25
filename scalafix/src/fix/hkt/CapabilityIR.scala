@@ -39,6 +39,19 @@ final case class Capability(
     arity: Int
 )
 
+sealed trait StdlibMapping
+
+object StdlibMapping {
+  final case class ToCapability(owner: Symbol, method: Symbol)
+      extends StdlibMapping
+  final case class ToDecline(reason: String) extends StdlibMapping
+}
+
+final case class StdlibEntry(
+    concreteMethod: Symbol,
+    mapping: StdlibMapping
+)
+
 final case class CatsTypeclass(
     symbol: Symbol,
     parents: List[Symbol],

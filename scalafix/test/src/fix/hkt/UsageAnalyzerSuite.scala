@@ -32,7 +32,8 @@ final class UsageAnalyzerSuite extends FunSuite {
         functor,
         capability :: baseIndex.capabilities.getOrElse(functor, Nil)
       ),
-      baseIndex.syntax
+      baseIndex.syntax,
+      baseIndex.stdlib
     )
   }
 
@@ -71,6 +72,24 @@ final class UsageAnalyzerSuite extends FunSuite {
     }
   }
 
+  test("a cons pattern declines as a concrete-constructor match") {
+    decline("consMatch").reason match {
+      case DeclineReason.ConcreteConstructorMatch(what) =>
+        assertEquals(what, "::")
+      case other => fail(s"expected ConcreteConstructorMatch, got $other")
+    }
+  }
+
+  test(
+    "an Option constructor pattern declines as a concrete-constructor match"
+  ) {
+    decline("someMatch").reason match {
+      case DeclineReason.ConcreteConstructorMatch(what) =>
+        assertEquals(what, "Some")
+      case other => fail(s"expected ConcreteConstructorMatch, got $other")
+    }
+  }
+
   test("a resolved operation absent from every index declines") {
     decline("missingCapability").reason match {
       case _: DeclineReason.NoCapability => ()
@@ -101,7 +120,8 @@ final class UsageAnalyzerSuite extends FunSuite {
       index.capabilities
         .updated(Symbol("cats/Reducible#"), List(reducible))
         .updated(Symbol("cats/kernel/Semigroup#"), List(semigroup)),
-      index.syntax
+      index.syntax,
+      index.stdlib
     )
     val result =
       UsageAnalyzer.analyze(
@@ -109,8 +129,32 @@ final class UsageAnalyzerSuite extends FunSuite {
         ambiguousIndex,
         widenPublic = false
       )
-    result.collectFirst { case declined: UsageResult.Declined => declined.reason } match {
+    result.collectFirst { case declined: UsageResult.Declined =>
+      declined.reason
+    } match {
       case Some(_: DeclineReason.AmbiguousCapability) => ()
+      case other => fail(s"expected AmbiguousCapability, got $other")
+    }
+  }
+
+  test("reviewed stdlib ambiguity declines without a test-only index entry") {
+    val results =
+      UsageAnalyzer.analyze(
+        definition("ambiguousCapability"),
+        baseIndex,
+        widenPublic = false
+      )
+    results.collectFirst { case declined: UsageResult.Declined =>
+      declined.reason
+    } match {
+      case Some(DeclineReason.AmbiguousCapability(candidates)) =>
+        assertEquals(
+          candidates,
+          List(
+            Symbol("cats/Reducible#reduceLeft()."),
+            Symbol("cats/kernel/Semigroup#combine().")
+          )
+        )
       case other => fail(s"expected AmbiguousCapability, got $other")
     }
   }
@@ -129,6 +173,41 @@ final class UsageAnalyzerSuite extends FunSuite {
     }
   }
 
+  test("unsafe effect execution declines as an unsafe body") {
+    decline("unsafeEffect").reason match {
+      case DeclineReason.UnsafeBody(what) =>
+        assertEquals(what, "unsafeRunSync")
+      case other => fail(s"expected UnsafeBody, got $other")
+    }
+  }
+
+  test("mutable variable definitions decline as unsafe bodies") {
+    decline("mutableVariable").reason match {
+      case _: DeclineReason.UnsafeBody => ()
+      case other => fail(s"expected UnsafeBody, got $other")
+    }
+  }
+
+  test("assignment to an enclosing var declines as an unsafe body") {
+    decline("mutableAssignment").reason match {
+      case _: DeclineReason.UnsafeBody => ()
+      case other => fail(s"expected UnsafeBody, got $other")
+    }
+  }
+
+  test("a named argument is not treated as mutable assignment") {
+    val results =
+      UsageAnalyzer.analyze(
+        definition("namedArgument"),
+        index,
+        widenPublic = false
+      )
+    assert(!results.exists {
+      case UsageResult.Declined(_, _: DeclineReason.UnsafeBody) => true
+      case _                                                    => false
+    })
+  }
+
   test("Either in an abstractable position declines as Binary") {
     assertEquals(
       decline("binary").reason,
@@ -143,20 +222,53 @@ final class UsageAnalyzerSuite extends FunSuite {
     )
   }
 
+  test("the kind gate precedes unsafe-body checks") {
+    assertEquals(
+      decline("binaryUnsafe").reason,
+      DeclineReason.UnsupportedKind(KindShape.Binary)
+    )
+  }
+
   test("isWidenable rejects bare protected") {
-    assert(!UsageAnalyzer.isWidenable(definition("bareProtected"), widenPublic = false))
+    assert(
+      !UsageAnalyzer.isWidenable(
+        definition("bareProtected"),
+        widenPublic = false
+      )
+    )
   }
 
   test("isWidenable accepts package-private") {
-    assert(UsageAnalyzer.isWidenable(definition("packagePrivate"), widenPublic = false))
+    assert(
+      UsageAnalyzer.isWidenable(
+        definition("packagePrivate"),
+        widenPublic = false
+      )
+    )
   }
 
   test("isWidenable accepts a local def") {
-    assert(UsageAnalyzer.isWidenable(definition("localDefinition"), widenPublic = false))
+    assert(
+      UsageAnalyzer.isWidenable(
+        definition("localDefinition"),
+        widenPublic = false
+      )
+    )
   }
 
   test("isWidenable accepts public when widenPublic is enabled") {
-    assert(UsageAnalyzer.isWidenable(definition("publicMap"), widenPublic = true))
+    assert(
+      UsageAnalyzer.isWidenable(definition("publicMap"), widenPublic = true)
+    )
+  }
+
+  test("isWidenable accepts a restricted owner chain") {
+    assert(
+      UsageAnalyzer.isWidenable(
+        definition("restrictedOwner"),
+        widenPublic = false
+      )
+    )
   }
 
   test("a public head reports the body decline, not PublicBoundary") {
@@ -164,6 +276,33 @@ final class UsageAnalyzerSuite extends FunSuite {
       case _: DeclineReason.OrderOrIndexSpecific => ()
       case other => fail(s"expected OrderOrIndexSpecific, got $other")
     }
+  }
+
+  test("an otherwise-abstractable public def declines at the boundary") {
+    decline("publicMap").reason match {
+      case DeclineReason.PublicBoundary(name) =>
+        assertEquals(name, "publicMap")
+      case other => fail(s"expected PublicBoundary, got $other")
+    }
+  }
+
+  test("one result is returned per distinct concrete constructor") {
+    val results =
+      UsageAnalyzer.analyze(
+        definition("twoConstructors"),
+        index,
+        widenPublic = false
+      )
+    assertEquals(results.size, 2)
+    assertEquals(
+      results
+        .collect { case result: UsageResult.Abstractable =>
+          result.constructor
+        }
+        .distinct
+        .size,
+      2
+    )
   }
 
   test("analysis is deterministic") {
@@ -208,12 +347,18 @@ final class UsageAnalyzerSuite extends FunSuite {
       .getOrElse(fail(s"$name did not decline"))
 
   private def definition(name: String): Defn.Def =
-    doc.tree.collect {
-      case defn: Defn.Def if defn.name.value == name => defn
-    }.headOption.getOrElse(fail(s"missing fixture definition: $name"))
+    doc.tree
+      .collect {
+        case defn: Defn.Def if defn.name.value == name => defn
+      }
+      .headOption
+      .getOrElse(fail(s"missing fixture definition: $name"))
 
   private def selectedMethod(defn: Defn.Def): Symbol =
-    defn.body.collect {
-      case Term.Select(_, method: Term.Name) => method.symbol
-    }.headOption.getOrElse(fail(s"missing selected method in ${defn.name.value}"))
+    defn.body
+      .collect { case Term.Select(_, method: Term.Name) =>
+        method.symbol
+      }
+      .headOption
+      .getOrElse(fail(s"missing selected method in ${defn.name.value}"))
 }

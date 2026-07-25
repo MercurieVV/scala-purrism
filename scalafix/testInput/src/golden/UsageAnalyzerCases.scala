@@ -4,9 +4,13 @@ rules = [DisableSyntax]
 package golden
 
 import cats.Applicative
+import cats.effect.IO
+import cats.effect.unsafe.IORuntime
 import cats.syntax.all.*
 
 final class UsageAnalyzerCases {
+  private var stored: List[Int] = Nil
+
   private def mapOnly(values: List[Int]): List[Int] =
     values.map(identity)
 
@@ -27,8 +31,20 @@ final class UsageAnalyzerCases {
       case _   => 1
     }
 
+  private def consMatch(values: List[Int]): Int =
+    values match {
+      case _ :: _ => 1
+      case Nil    => 0
+    }
+
+  private def someMatch(value: Option[Int]): Int =
+    value match {
+      case Some(number) => number
+      case None         => 0
+    }
+
   private def missingCapability(values: List[Int]): List[Int] =
-    values.reverse
+    values.distinct
 
   private def ambiguousCapability(values: List[Int]): Int =
     values.reduce((left, _) => left)
@@ -39,8 +55,32 @@ final class UsageAnalyzerCases {
   private def unsafeCast(values: List[Int]): List[Int] =
     values.asInstanceOf[List[Int]]
 
+  private def unsafeEffect(value: IO[Int])(using IORuntime): Int =
+    value.unsafeRunSync()
+
+  private def mutableVariable(values: List[Int]): List[Int] = {
+    var current = values
+    current = values
+    current
+  }
+
+  private def mutableAssignment(values: List[Int]): List[Int] = {
+    stored = values
+    values
+  }
+
+  private def namedArgument(values: List[Int]): List[Int] = {
+    def keep(input: List[Int]): List[Int] = input
+    keep(input = values)
+  }
+
   private def binary(value: Either[String, Int]): Either[String, Int] =
     value
+
+  private def binaryUnsafe(
+      value: Either[String, Int]
+  ): Either[String, Int] =
+    value.asInstanceOf[Either[String, Int]]
 
   private def typeLambda(
       value: ([X] =>> Either[String, X])[Int]
@@ -65,4 +105,15 @@ final class UsageAnalyzerCases {
 
     localDefinition(values)
   }
+
+  private def twoConstructors(
+      values: List[Int],
+      vector: Vector[Int]
+  ): List[Int] =
+    values
+}
+
+private object RestrictedUsageAnalyzerOwner {
+  def restrictedOwner(values: List[Int]): List[Int] =
+    values
 }

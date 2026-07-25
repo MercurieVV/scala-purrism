@@ -17,8 +17,55 @@ final class CatsIndexSuite extends FunSuite {
 
   test("resolveSyntax resolves Functor.Ops#map() to the Functor#map() owner") {
     val capability =
-      index.resolveSyntax(Symbol("cats/Functor.Ops#map().")).getOrElse(fail("no capability"))
+      index
+        .resolveSyntax(Symbol("cats/Functor.Ops#map()."))
+        .getOrElse(fail("no capability"))
     assertEquals(capability.owner, Symbol("cats/Functor#map()."))
+  }
+
+  test("resolveStdlib maps List.map to the Functor map root") {
+    assertEquals(
+      index.resolveStdlib(Symbol("scala/collection/immutable/List#map().")),
+      List(
+        StdlibEntry(
+          Symbol("scala/collection/immutable/List#map()."),
+          StdlibMapping.ToCapability(
+            Symbol("cats/Functor#map()."),
+            Symbol("cats/Functor#map().")
+          )
+        )
+      )
+    )
+  }
+
+  test("resolveStdlib exposes reviewed declines") {
+    assertEquals(
+      index.resolveStdlib(Symbol("scala/Option#isDefined().")),
+      List(
+        StdlibEntry(
+          Symbol("scala/Option#isDefined()."),
+          StdlibMapping.ToDecline("ConcreteConstructorMatch")
+        )
+      )
+    )
+  }
+
+  test("resolveStdlib keeps ambiguous reduce capabilities in stable order") {
+    val entries =
+      index.resolveStdlib(Symbol("scala/collection/IterableOnceOps#reduce()."))
+    assertEquals(
+      entries.map(_.mapping),
+      List(
+        StdlibMapping.ToCapability(
+          Symbol("cats/Reducible#reduceLeft()."),
+          Symbol("cats/Reducible#reduceLeft().")
+        ),
+        StdlibMapping.ToCapability(
+          Symbol("cats/kernel/Semigroup#combine()."),
+          Symbol("cats/kernel/Semigroup#combine().")
+        )
+      )
+    )
   }
 
   test("primitiveOwner and providersOf agree for Traverse#traverse()") {
@@ -33,12 +80,15 @@ final class CatsIndexSuite extends FunSuite {
     assertEquals(KindShape.arity(KindShape.Binary), 2)
   }
 
-  test("typeclasses.size matches the non-comment line count of typeclasses.tsv") {
+  test(
+    "typeclasses.size matches the non-comment line count of typeclasses.tsv"
+  ) {
     val bytes = getClass.getClassLoader
       .getResourceAsStream(CatsIndex.typeclassesResource)
       .readAllBytes()
     val lines = new String(bytes, StandardCharsets.UTF_8).split("\n", -1).toList
-    val dataLineCount = lines.count(line => line.nonEmpty && !line.startsWith("#"))
+    val dataLineCount =
+      lines.count(line => line.nonEmpty && !line.startsWith("#"))
     assertEquals(index.typeclasses.size, dataLineCount)
   }
 
@@ -57,12 +107,42 @@ final class CatsIndexSuite extends FunSuite {
     val capabilityRows = Iterator.empty[String]
     val syntaxRows = Iterator.empty[String]
 
-    val result = CatsIndex.parse(typeclassRows, capabilityRows, syntaxRows)
+    val result =
+      CatsIndex.parse(
+        typeclassRows,
+        capabilityRows,
+        syntaxRows,
+        Iterator.empty
+      )
     result match {
       case Left(message) =>
         assert(message.contains(CatsIndex.typeclassesResource))
         assert(message.contains(":3:"))
       case Right(_) => fail("expected a Left for a malformed kind token")
     }
+  }
+
+  test("parse rejects malformed stdlib rows with the resource and line") {
+    val capabilityRows = Iterator(
+      "cats/Functor#\tcats/Functor#map().\tcats/Functor#map().\tUnary\tfalse\t2"
+    )
+    val stdlibRows = Iterator(
+      "#concreteMethod\tkind\towner\tmethod\tnote",
+      "# hand-written; audited by CatsIndexDriftSuite",
+      "scala/Option#get().\tdecline\t\tNotAReason\tbad row"
+    )
+
+    val result = CatsIndex.parse(
+      Iterator.empty,
+      capabilityRows,
+      Iterator.empty,
+      stdlibRows
+    )
+    assertEquals(
+      result.left.toOption,
+      Some(
+        s"${CatsIndex.stdlibResource}:3: invalid decline reason: NotAReason"
+      )
+    )
   }
 }

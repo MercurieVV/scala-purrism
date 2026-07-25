@@ -186,7 +186,6 @@ object scalafix
       "typeclasses.tsv",
       "capabilities.tsv",
       "syntax.tsv",
-      "stdlib.tsv",
       "gaps.tsv"
     ).foreach { fileName =>
       val expected = checkedIn / fileName
