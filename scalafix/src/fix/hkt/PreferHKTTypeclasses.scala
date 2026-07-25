@@ -9,15 +9,17 @@ final class PreferHKTTypeclasses extends SemanticRule("PreferHKTTypeclasses") {
     val index = CatsIndex.load()
     val typeParamNames = List("G", "H", "I", "J", "K", "L", "M", "N", "O")
 
-    val allPatches = doc.tree.collect { case defn: Defn.Def =>
+    val allDefinitions = doc.tree.collect { case defn: Defn.Def => defn }
+
+    val patches = allDefinitions.flatMap { defn =>
       val results = UsageAnalyzer.analyze(defn, index, widenPublic = false)
-      val patches = results.flatMap {
+      results.flatMap {
         case usage: UsageResult.Abstractable =>
           CapabilitySolver.solve(usage.ops, index, maxConstraints = 3) match {
             case Right(solution) =>
               val typeParamName = HktRewriter
                 .freshTypeParamName(defn, typeParamNames)
-                .getOrElse("F")
+                .getOrElse("G")
               Some(HktRewriter.rewrite(usage, solution, index, typeParamName))
             case Left(_) =>
               None
@@ -25,8 +27,8 @@ final class PreferHKTTypeclasses extends SemanticRule("PreferHKTTypeclasses") {
         case _ =>
           None
       }
-      patches
     }
-    allPatches.flatten.asPatch
+
+    patches.asPatch
   }
 }
