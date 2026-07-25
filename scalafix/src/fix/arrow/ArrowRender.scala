@@ -43,6 +43,8 @@ object ArrowRender {
       // operands may not lean on that: anything compound is parenthesised.
       case chain: ProductR =>
         flattenProductR(chain).map(productOperand).mkString(" *> ")
+      case chain: ProductL =>
+        flattenProductL(chain).map(productLOperand).mkString(" <* ")
       case FlatTap(a, binders, tap) =>
         s"${receiverOperand(a)}.flatTap { ${binderPattern(binders)} => ${render(tap)} }"
       case Local(fn, a) => s"${receiverOperand(a)}.local(${fn.syntax})"
@@ -79,6 +81,12 @@ object ArrowRender {
       case other          => List(other)
     }
 
+  private def flattenProductL(ir: ArrowIR): List[ArrowIR] =
+    ir match {
+      case ProductL(l, r) => flattenProductL(l) ++ flattenProductL(r)
+      case other          => List(other)
+    }
+
   /** The binder of a `.flatTap`. One arm binds a name; several arms arrive as
     * the left-nested tuple an `&&&` chain produces, so they are destructured
     * with a `case` pattern that re-establishes exactly the names the source
@@ -102,6 +110,19 @@ object ArrowRender {
   private def productOperand(ir: ArrowIR): String =
     ir match {
       case _: ProductR => render(ir)
+      case _: ProductL => s"(${render(ir)})"
+      case _           => receiverOperand(ir)
+    }
+
+  /** An operand of `<*`. It shares a precedence tier with `>>>`, so compound
+    * operands must be parenthesised. A same-kind chain is the only exception:
+    * it is flattened above. `*>` binds tighter than `<*`, but spelling the
+    * grouping explicitly keeps mixed product trees faithful and readable.
+    */
+  private def productLOperand(ir: ArrowIR): String =
+    ir match {
+      case _: ProductL => render(ir)
+      case _: ProductR => s"(${render(ir)})"
       case _           => receiverOperand(ir)
     }
 
