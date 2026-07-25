@@ -1,8 +1,6 @@
 package fix.hkt
 
-import scala.meta.Defn
-import scala.meta.Term
-import scala.meta.XtensionCollectionLikeUI
+import scala.meta._
 
 import munit.FunSuite
 
@@ -13,204 +11,361 @@ import scalafix.v1.XtensionTreeScalafix
 
 final class UsageAnalyzerSuite extends FunSuite {
   private implicit lazy val doc: SemanticDocument =
-    FixtureDocuments("src/hkt/UsageAnalyzerCases.scala")
+    FixtureDocuments("src/golden/UsageAnalyzerCases.scala")
+
+  private lazy val baseIndex: CatsIndex = CatsIndex.load()
 
   private lazy val index: CatsIndex = {
-    val baseIndex = CatsIndex.load()
-    val map = selectedMethod(findDef("mapOnly"))
-    val reduce = selectedMethod(findDef("ambiguousCapability"))
+    val map = selectedMethod(definition("mapOnly"))
     val functor = Symbol("cats/Functor#")
-    val reducible = Symbol("cats/Reducible#")
-    val semigroup = Symbol("cats/kernel/Semigroup#")
-    val capabilities = List(
-      functor -> Capability(
-        functor,
-        map,
-        Symbol("cats/Functor#map()."),
-        KindShape.Unary,
-        derived = false,
-        arity = 2
-      ),
-      reducible -> Capability(
-        reducible,
-        reduce,
-        Symbol("cats/Reducible#reduceLeft()."),
-        KindShape.Unary,
-        derived = false,
-        arity = 2
-      ),
-      semigroup -> Capability(
-        semigroup,
-        reduce,
-        Symbol("cats/kernel/Semigroup#combine()."),
-        KindShape.Star,
-        derived = false,
-        arity = 2
-      )
+    val capability = Capability(
+      functor,
+      map,
+      Symbol("cats/Functor#map()."),
+      KindShape.Unary,
+      derived = false,
+      arity = 2
     )
     new CatsIndex(
       baseIndex.typeclasses,
-      capabilities.foldLeft(baseIndex.capabilities) {
-        case (all, (typeclass, capability)) =>
-          all.updated(typeclass, capability :: all.getOrElse(typeclass, Nil))
-      },
-      baseIndex.syntax
+      baseIndex.capabilities.updated(
+        functor,
+        capability :: baseIndex.capabilities.getOrElse(functor, Nil)
+      ),
+      baseIndex.syntax,
+      baseIndex.stdlib
     )
   }
 
-  test("List map requires Functor.map") {
-    assertAbstractable("mapOnly", List(Symbol("cats/Functor#map().")))
-  }
-
-  test("List traverse requires Traverse.traverse") {
-    assertAbstractable(
-      "traverseOnly",
-      List(Symbol("cats/Traverse#traverse()."))
-    )
-  }
-
-  test("List foldMap requires Foldable.foldMap") {
-    assertAbstractable("foldMapOnly", List(Symbol("cats/Foldable#foldMap().")))
-  }
-
-  test("List head declines as order-specific") {
-    assertDecline("headOnly") {
-      case _: DeclineReason.OrderOrIndexSpecific => true
-      case _                                     => false
-    }
-  }
-
-  test("Nil pattern declines as a concrete constructor match") {
-    assertDecline("nilMatch") {
-      case _: DeclineReason.ConcreteConstructorMatch => true
-      case _                                         => false
-    }
-  }
-
-  test("locally defined extension method declines without a capability") {
-    assertDecline("missingCapability") {
-      case _: DeclineReason.NoCapability => true
-      case _                             => false
-    }
-  }
-
-  test("List reduce declines with sorted ambiguous capability roots") {
-    val result = oneResult("ambiguousCapability")
-    result match {
-      case UsageResult.Declined(_, DeclineReason.AmbiguousCapability(roots)) =>
-        assert(
-          roots == roots.sortBy(_.value) && roots.size >= 2,
-          clues(result)
-        )
-      case other => fail(s"expected AmbiguousCapability, got ${render(other)}")
-    }
-  }
-
-  test("Either declines as a Binary constructor") {
-    assertDecline("binary") {
-      case DeclineReason.UnsupportedKind(KindShape.Binary) => true
-      case _                                               => false
-    }
-  }
-
-  test("public map declines at the visibility boundary") {
-    assertDecline("publicMap") {
-      case DeclineReason.PublicBoundary("publicMap") => true
-      case _                                         => false
-    }
-  }
-
-  test("public head reports its body decline before the visibility boundary") {
-    assertDecline("publicHead") {
-      case _: DeclineReason.OrderOrIndexSpecific => true
-      case _                                     => false
-    }
-  }
-
-  test("public map is abstractable when public widening is enabled") {
-    assertAbstractable(
-      "publicMap",
-      List(Symbol("cats/Functor#map().")),
-      widenPublic = true
-    )
-  }
-
-  test("mutable and throwing body declines as unsafe") {
-    assertDecline("unsafeBody") {
-      case _: DeclineReason.UnsafeBody => true
-      case _                           => false
-    }
-  }
-
-  private def assertAbstractable(
-      name: String,
-      expectedOps: List[Symbol],
-      widenPublic: Boolean = false
-  ): Unit = {
-    val result = oneResult(name, widenPublic)
-    result match {
-      case UsageResult.Abstractable(_, _, _, _, ops) =>
-        val actualOps = ops.map(_.method)
-        assertEquals(actualOps, expectedOps, clues(result))
-      case other => fail(s"expected Abstractable, got ${render(other)}")
-    }
-  }
-
-  private def assertDecline(
-      name: String
-  )(expected: PartialFunction[DeclineReason, Boolean]): Unit = {
-    oneResult(name) match {
-      case result @ UsageResult.Declined(_, reason)
-          if expected.applyOrElse(reason, (_: DeclineReason) => false) =>
-        ()
-      case result @ UsageResult.Declined(_, reason) =>
-        fail(s"unexpected decline ${reason.message}: ${render(result)}")
-      case other => fail(s"expected Declined, got ${render(other)}")
-    }
-  }
-
-  private def oneResult(
-      name: String,
-      widenPublic: Boolean = false
-  ): UsageResult = {
-    val defn = findDef(name)
-    val first = UsageAnalyzer.analyze(defn, index, widenPublic)
-    val second = UsageAnalyzer.analyze(defn, index, widenPublic)
+  test("map-only body requires the Functor map override root") {
+    val ops = abstractable("mapOnly").ops
+    val position = ops.headOption
+      .map(_.position)
+      .getOrElse(fail("mapOnly produced no operations"))
     assertEquals(
-      second,
-      first,
-      s"non-deterministic $name: first=${renderAll(first)}, second=${renderAll(second)}"
+      ops,
+      List(RequiredOp(Symbol("cats/Functor#map()."), position, KindShape.Unary))
     )
-    first match {
-      case result :: Nil => result
-      case other =>
-        fail(s"expected exactly one result for $name, got ${renderAll(other)}")
+  }
+
+  test("traverse body requires Traverse.traverse") {
+    assertEquals(
+      requiredMethods("traverseOnly"),
+      Set(Symbol("cats/Traverse#traverse()."))
+    )
+  }
+
+  test("foldMap body requires Foldable.foldMap") {
+    assertEquals(
+      requiredMethods("foldMapOnly"),
+      Set(Symbol("cats/Foldable#foldMap()."))
+    )
+  }
+
+  test("List.head declines as order-specific") {
+    decline("headOnly").reason match {
+      case _: DeclineReason.OrderOrIndexSpecific => ()
+      case other => fail(s"expected OrderOrIndexSpecific, got $other")
     }
   }
 
-  private def findDef(name: String): Defn.Def =
+  test("a Nil pattern declines as a concrete-constructor match") {
+    decline("nilMatch").reason match {
+      case _: DeclineReason.ConcreteConstructorMatch => ()
+      case other => fail(s"expected ConcreteConstructorMatch, got $other")
+    }
+  }
+
+  test("a cons pattern declines as a concrete-constructor match") {
+    decline("consMatch").reason match {
+      case DeclineReason.ConcreteConstructorMatch(what) =>
+        assertEquals(what, "::")
+      case other => fail(s"expected ConcreteConstructorMatch, got $other")
+    }
+  }
+
+  test(
+    "an Option constructor pattern declines as a concrete-constructor match"
+  ) {
+    decline("someMatch").reason match {
+      case DeclineReason.ConcreteConstructorMatch(what) =>
+        assertEquals(what, "Some")
+      case other => fail(s"expected ConcreteConstructorMatch, got $other")
+    }
+  }
+
+  test("a resolved operation absent from every index declines") {
+    decline("missingCapability").reason match {
+      case _: DeclineReason.NoCapability => ()
+      case other => fail(s"expected NoCapability, got $other")
+    }
+  }
+
+  test("unrelated capability roots decline as ambiguous") {
+    val reduce = selectedMethod(definition("ambiguousCapability"))
+    val reducible = Capability(
+      Symbol("cats/Reducible#"),
+      reduce,
+      Symbol("cats/Reducible#reduceLeft()."),
+      KindShape.Unary,
+      derived = false,
+      arity = 2
+    )
+    val semigroup = Capability(
+      Symbol("cats/kernel/Semigroup#"),
+      reduce,
+      Symbol("cats/kernel/Semigroup#combine()."),
+      KindShape.Star,
+      derived = false,
+      arity = 2
+    )
+    val ambiguousIndex = new CatsIndex(
+      index.typeclasses,
+      index.capabilities
+        .updated(Symbol("cats/Reducible#"), List(reducible))
+        .updated(Symbol("cats/kernel/Semigroup#"), List(semigroup)),
+      index.syntax,
+      index.stdlib
+    )
+    val result =
+      UsageAnalyzer.analyze(
+        definition("ambiguousCapability"),
+        ambiguousIndex,
+        widenPublic = false
+      )
+    result.collectFirst { case declined: UsageResult.Declined =>
+      declined.reason
+    } match {
+      case Some(_: DeclineReason.AmbiguousCapability) => ()
+      case other => fail(s"expected AmbiguousCapability, got $other")
+    }
+  }
+
+  test("reviewed stdlib ambiguity declines without a test-only index entry") {
+    val results =
+      UsageAnalyzer.analyze(
+        definition("ambiguousCapability"),
+        baseIndex,
+        widenPublic = false
+      )
+    results.collectFirst { case declined: UsageResult.Declined =>
+      declined.reason
+    } match {
+      case Some(DeclineReason.AmbiguousCapability(candidates)) =>
+        assertEquals(
+          candidates,
+          List(
+            Symbol("cats/Reducible#reduceLeft()."),
+            Symbol("cats/kernel/Semigroup#combine().")
+          )
+        )
+      case other => fail(s"expected AmbiguousCapability, got $other")
+    }
+  }
+
+  test("List.apply indexing declines as order-specific") {
+    decline("indexed").reason match {
+      case _: DeclineReason.OrderOrIndexSpecific => ()
+      case other => fail(s"expected OrderOrIndexSpecific, got $other")
+    }
+  }
+
+  test("unsafe casts decline as unsafe bodies") {
+    decline("unsafeCast").reason match {
+      case _: DeclineReason.UnsafeBody => ()
+      case other => fail(s"expected UnsafeBody, got $other")
+    }
+  }
+
+  test("unsafe effect execution declines as an unsafe body") {
+    decline("unsafeEffect").reason match {
+      case DeclineReason.UnsafeBody(what) =>
+        assertEquals(what, "unsafeRunSync")
+      case other => fail(s"expected UnsafeBody, got $other")
+    }
+  }
+
+  test("mutable variable definitions decline as unsafe bodies") {
+    decline("mutableVariable").reason match {
+      case _: DeclineReason.UnsafeBody => ()
+      case other => fail(s"expected UnsafeBody, got $other")
+    }
+  }
+
+  test("assignment to an enclosing var declines as an unsafe body") {
+    decline("mutableAssignment").reason match {
+      case _: DeclineReason.UnsafeBody => ()
+      case other => fail(s"expected UnsafeBody, got $other")
+    }
+  }
+
+  test("a named argument is not treated as mutable assignment") {
+    val results =
+      UsageAnalyzer.analyze(
+        definition("namedArgument"),
+        index,
+        widenPublic = false
+      )
+    assert(!results.exists {
+      case UsageResult.Declined(_, _: DeclineReason.UnsafeBody) => true
+      case _                                                    => false
+    })
+  }
+
+  test("Either in an abstractable position declines as Binary") {
+    assertEquals(
+      decline("binary").reason,
+      DeclineReason.UnsupportedKind(KindShape.Binary)
+    )
+  }
+
+  test("type lambdas decline as unsupported Binary constructors") {
+    assertEquals(
+      decline("typeLambda").reason,
+      DeclineReason.UnsupportedKind(KindShape.Binary)
+    )
+  }
+
+  test("the kind gate precedes unsafe-body checks") {
+    assertEquals(
+      decline("binaryUnsafe").reason,
+      DeclineReason.UnsupportedKind(KindShape.Binary)
+    )
+  }
+
+  test("isWidenable rejects bare protected") {
+    assert(
+      !UsageAnalyzer.isWidenable(
+        definition("bareProtected"),
+        widenPublic = false
+      )
+    )
+  }
+
+  test("isWidenable accepts package-private") {
+    assert(
+      UsageAnalyzer.isWidenable(
+        definition("packagePrivate"),
+        widenPublic = false
+      )
+    )
+  }
+
+  test("isWidenable accepts a local def") {
+    assert(
+      UsageAnalyzer.isWidenable(
+        definition("localDefinition"),
+        widenPublic = false
+      )
+    )
+  }
+
+  test("isWidenable accepts public when widenPublic is enabled") {
+    assert(
+      UsageAnalyzer.isWidenable(definition("publicMap"), widenPublic = true)
+    )
+  }
+
+  test("isWidenable accepts a restricted owner chain") {
+    assert(
+      UsageAnalyzer.isWidenable(
+        definition("restrictedOwner"),
+        widenPublic = false
+      )
+    )
+  }
+
+  test("a public head reports the body decline, not PublicBoundary") {
+    decline("publicHead").reason match {
+      case _: DeclineReason.OrderOrIndexSpecific => ()
+      case other => fail(s"expected OrderOrIndexSpecific, got $other")
+    }
+  }
+
+  test("an otherwise-abstractable public def declines at the boundary") {
+    decline("publicMap").reason match {
+      case DeclineReason.PublicBoundary(name) =>
+        assertEquals(name, "publicMap")
+      case other => fail(s"expected PublicBoundary, got $other")
+    }
+  }
+
+  test("one result is returned per distinct concrete constructor") {
+    val results =
+      UsageAnalyzer.analyze(
+        definition("twoConstructors"),
+        index,
+        widenPublic = false
+      )
+    assertEquals(results.size, 2)
+    assertEquals(
+      results
+        .collect { case result: UsageResult.Abstractable =>
+          result.constructor
+        }
+        .distinct
+        .size,
+      2
+    )
+  }
+
+  test("analysis is deterministic") {
+    val defn = definition("mapOnly")
+    assertEquals(
+      UsageAnalyzer.analyze(defn, index, widenPublic = false),
+      UsageAnalyzer.analyze(defn, index, widenPublic = false)
+    )
+  }
+
+  test("all decline messages are distinct one-line diagnostics") {
+    val reasons: List[DeclineReason] = List(
+      DeclineReason.ConcreteConstructorMatch("Nil"),
+      DeclineReason.OrderOrIndexSpecific("head"),
+      DeclineReason.UnsupportedKind(KindShape.Binary),
+      DeclineReason.PublicBoundary("example"),
+      DeclineReason.AmbiguousCapability(
+        List(Symbol("cats/Functor#map()."), Symbol("cats/Foldable#foldMap()."))
+      ),
+      DeclineReason.NoCapability(Symbol("example/Missing#operation().")),
+      DeclineReason.UnsafeBody("throw"),
+      DeclineReason.NameConflict(List("F", "G")),
+      DeclineReason.TooManyConstraints(List(Symbol("cats/Functor#")), 0),
+      DeclineReason.MissingEvidence
+    )
+    assertEquals(reasons.map(_.message).distinct.size, reasons.size)
+    assert(reasons.forall(reason => !reason.message.contains("\n")))
+  }
+
+  private def requiredMethods(name: String): Set[Symbol] =
+    abstractable(name).ops
+      .map(_.method)
+      .toSet
+
+  private def abstractable(name: String): UsageResult.Abstractable =
+    UsageAnalyzer
+      .analyze(definition(name), index, widenPublic = false)
+      .collectFirst { case result: UsageResult.Abstractable => result }
+      .getOrElse(fail(s"$name was not abstractable"))
+
+  private def decline(name: String): UsageResult.Declined =
+    UsageAnalyzer
+      .analyze(definition(name), index, widenPublic = false)
+      .collectFirst { case declined: UsageResult.Declined => declined }
+      .getOrElse(fail(s"$name did not decline"))
+
+  private def definition(name: String): Defn.Def =
     doc.tree
-      .collect { case defn: Defn.Def if defn.name.value == name => defn }
+      .collect {
+        case defn: Defn.Def if defn.name.value == name => defn
+      }
       .headOption
       .getOrElse(fail(s"missing fixture definition: $name"))
 
   private def selectedMethod(defn: Defn.Def): Symbol =
     defn.body
-      .collect { case Term.Select(_, method: Term.Name) => method.symbol }
+      .collect { case Term.Select(_, method: Term.Name) =>
+        method.symbol
+      }
       .headOption
       .getOrElse(fail(s"missing selected method in ${defn.name.value}"))
-
-  private def clues(result: UsageResult): String =
-    s"actual result: ${render(result)}"
-
-  private def renderAll(results: List[UsageResult]): String =
-    results.map(render).mkString("List(", ", ", ")")
-
-  private def render(result: UsageResult): String =
-    result match {
-      case UsageResult.Abstractable(_, _, constructor, _, ops) =>
-        s"Abstractable($constructor, ops=${ops.map(_.method).mkString("[", ", ", "]")})"
-      case UsageResult.Declined(_, reason) =>
-        s"Declined(${reason.message})"
-    }
 }
