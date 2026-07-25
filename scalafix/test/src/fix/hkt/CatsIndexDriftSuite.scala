@@ -221,8 +221,7 @@ final class CatsIndexDriftSuite extends FunSuite {
     try {
       val properties = new java.util.Properties()
       properties.load(stream)
-      properties.asScala
-        .view
+      properties.asScala.view
         .mapValues(_.toString)
         .toMap
     } finally stream.close()
