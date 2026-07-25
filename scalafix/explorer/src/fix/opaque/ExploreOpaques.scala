@@ -16,13 +16,13 @@ import fix.PropagateOpaqueType
   * {{{
   * mill scalafix.explorer.runMain fix.opaque.ExploreOpaques \
   *   --target /path/to/gh-tasks-llm-executor \
-  *   [--out <file>] [-n 10] [--basic-types scala/Int#,scala/Predef.String#] \
+  *   [--out <file>] [-m 4] [--basic-types scala/Int#,scala/Predef.String#] \
   *   [--dry-run]
   * }}}
   *
-  * Defaults: `-n 10`, the basic types in `ExplorerConfig.DefaultBasicTypes`
-  * (String, Int, Long, Double, Boolean, java.util.UUID), and `--out` next to
-  * the target as `opaque-candidates.conf`.
+  * Defaults: `-m 4` (emit clusters reaching at least 4 nodes), the basic types
+  * in `ExplorerConfig.DefaultBasicTypes` (String, Int, Long, Double, Boolean,
+  * java.util.UUID), and `--out` next to the target as `opaque-candidates.conf`.
   *
   * The target's sources are rewritten in place and nothing else: this never
   * touches git. Reviewing and reverting the result is the operator's job, and
@@ -33,7 +33,7 @@ object ExploreOpaques {
   private final case class Options(
       target: Path,
       out: Path,
-      topN: Int,
+      minClusterSize: Int,
       basicTypes: List[String],
       dryRun: Boolean
   )
@@ -72,7 +72,7 @@ object ExploreOpaques {
       GraphBuilder.facts(index, new GraphBuilder(index, sourceroot).build())
     val config = ExplorerConfig(
       basicTypes = options.basicTypes,
-      topN = options.topN
+      minClusterSize = options.minClusterSize
     )
 
     val candidates =
@@ -89,6 +89,8 @@ object ExploreOpaques {
       )
 
     val hocon = OpaqueCandidateExplorer.renderHocon(candidates)
+    println()
+    println(OpaqueCandidateExplorer.renderSizeHistogram(candidates))
     println()
     println(OpaqueCandidateExplorer.renderRanking(candidates))
     println()
@@ -151,7 +153,7 @@ object ExploreOpaques {
         remaining: List[String],
         target: Option[Path],
         out: Option[Path],
-        topN: Int,
+        minClusterSize: Int,
         basicTypes: List[String],
         dryRun: Boolean
     ): Either[String, Options] =
@@ -161,7 +163,7 @@ object ExploreOpaques {
             Options(
               target = resolved,
               out = out.getOrElse(resolved.resolve("opaque-candidates.conf")),
-              topN = topN,
+              minClusterSize = minClusterSize,
               basicTypes = basicTypes,
               dryRun = dryRun
             )
@@ -171,7 +173,7 @@ object ExploreOpaques {
             rest,
             Some(Paths.get(value).toAbsolutePath.normalize),
             out,
-            topN,
+            minClusterSize,
             basicTypes,
             dryRun
           )
@@ -180,23 +182,26 @@ object ExploreOpaques {
             remaining = rest,
             target,
             Some(Paths.get(value).toAbsolutePath.normalize),
-            topN,
+            minClusterSize,
             basicTypes,
             dryRun
           )
-        case ("-n" | "--top") :: value :: rest =>
+        case ("-m" | "--min-cluster-size") :: value :: rest =>
           value.toIntOption match {
             case Some(parsed) if parsed > 0 =>
               loop(rest, target, out, parsed, basicTypes, dryRun)
-            case _ => Left(s"-n expects a positive integer, got '$value'")
+            case _ =>
+              Left(
+                s"--min-cluster-size expects a positive integer, got '$value'"
+              )
           }
         case "--basic-types" :: value :: rest =>
           val types = value.split(',').toList.map(_.trim).filter(_.nonEmpty)
           if (types.isEmpty)
             Left("--basic-types expects a comma-separated list")
-          else loop(rest, target, out, topN, types, dryRun)
+          else loop(rest, target, out, minClusterSize, types, dryRun)
         case "--dry-run" :: rest =>
-          loop(rest, target, out, topN, basicTypes, true)
+          loop(rest, target, out, minClusterSize, basicTypes, true)
         case ("-h" | "--help") :: _ => Left(usage)
         case unknown :: _ => Left(s"unknown argument '$unknown'\n\n$usage")
       }
@@ -205,7 +210,7 @@ object ExploreOpaques {
       args,
       None,
       None,
-      ExplorerConfig.DefaultTopN,
+      ExplorerConfig.DefaultMinClusterSize,
       ExplorerConfig.DefaultBasicTypes,
       false
     )
@@ -214,14 +219,15 @@ object ExploreOpaques {
   private def usage: String =
     s"""ExploreOpaques --target <path> [options]
        |
-       |  --target <path>       compiled codebase to explore (required)
-       |  --out <file>          where to write the HOCON fragment
-       |                        (default: <target>/opaque-candidates.conf)
-       |  -n, --top <count>     how many clusters to emit (default: ${ExplorerConfig.DefaultTopN})
-       |  --basic-types <list>  comma-separated underlying type symbols
-       |                        (default: ${ExplorerConfig.DefaultBasicTypes
+       |  --target <path>              compiled codebase to explore (required)
+       |  --out <file>                 where to write the HOCON fragment
+       |                               (default: <target>/opaque-candidates.conf)
+       |  -m, --min-cluster-size <n>   emit only clusters reaching at least this
+       |                               many nodes (default: ${ExplorerConfig.DefaultMinClusterSize})
+       |  --basic-types <list>         comma-separated underlying type symbols
+       |                               (default: ${ExplorerConfig.DefaultBasicTypes
         .mkString(",")})
-       |  --dry-run             rank and write the config, but do not rewrite
+       |  --dry-run                    rank and write the config, but do not rewrite
        |
        |The target is rewritten in place; no git command is ever run against it.
        |""".stripMargin
