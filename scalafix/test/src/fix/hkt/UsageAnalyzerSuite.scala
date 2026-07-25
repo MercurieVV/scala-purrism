@@ -11,7 +11,7 @@ import scalafix.v1.XtensionTreeScalafix
 
 final class UsageAnalyzerSuite extends FunSuite {
   private implicit lazy val doc: SemanticDocument =
-    FixtureDocuments("src/golden/UsageAnalyzerCases.scala")
+    FixtureDocuments("src/golden/HktUsageAnalysis.scala")
 
   private lazy val baseIndex: CatsIndex = CatsIndex.load()
 
@@ -37,9 +37,13 @@ final class UsageAnalyzerSuite extends FunSuite {
   }
 
   test("map-only body requires the Functor map override root") {
+    val ops = abstractable("mapOnly").ops
+    val position = ops.headOption
+      .map(_.position)
+      .getOrElse(fail("mapOnly produced no operations"))
     assertEquals(
-      requiredMethods("mapOnly"),
-      Set(Symbol("cats/Functor#map()."))
+      ops,
+      List(RequiredOp(Symbol("cats/Functor#map()."), position, KindShape.Unary))
     )
   }
 
@@ -109,7 +113,9 @@ final class UsageAnalyzerSuite extends FunSuite {
         ambiguousIndex,
         widenPublic = false
       )
-    result.collectFirst { case declined: UsageResult.Declined => declined.reason } match {
+    result.collectFirst { case declined: UsageResult.Declined =>
+      declined.reason
+    } match {
       case Some(_: DeclineReason.AmbiguousCapability) => ()
       case other => fail(s"expected AmbiguousCapability, got $other")
     }
@@ -124,6 +130,13 @@ final class UsageAnalyzerSuite extends FunSuite {
 
   test("unsafe casts decline as unsafe bodies") {
     decline("unsafeCast").reason match {
+      case _: DeclineReason.UnsafeBody => ()
+      case other => fail(s"expected UnsafeBody, got $other")
+    }
+  }
+
+  test("unsafe effect execution declines as an unsafe body") {
+    decline("unsafeEffect").reason match {
       case _: DeclineReason.UnsafeBody => ()
       case other => fail(s"expected UnsafeBody, got $other")
     }
@@ -144,19 +157,36 @@ final class UsageAnalyzerSuite extends FunSuite {
   }
 
   test("isWidenable rejects bare protected") {
-    assert(!UsageAnalyzer.isWidenable(definition("bareProtected"), widenPublic = false))
+    assert(
+      !UsageAnalyzer.isWidenable(
+        definition("bareProtected"),
+        widenPublic = false
+      )
+    )
   }
 
   test("isWidenable accepts package-private") {
-    assert(UsageAnalyzer.isWidenable(definition("packagePrivate"), widenPublic = false))
+    assert(
+      UsageAnalyzer.isWidenable(
+        definition("packagePrivate"),
+        widenPublic = false
+      )
+    )
   }
 
   test("isWidenable accepts a local def") {
-    assert(UsageAnalyzer.isWidenable(definition("localDefinition"), widenPublic = false))
+    assert(
+      UsageAnalyzer.isWidenable(
+        definition("localDefinition"),
+        widenPublic = false
+      )
+    )
   }
 
   test("isWidenable accepts public when widenPublic is enabled") {
-    assert(UsageAnalyzer.isWidenable(definition("publicMap"), widenPublic = true))
+    assert(
+      UsageAnalyzer.isWidenable(definition("publicMap"), widenPublic = true)
+    )
   }
 
   test("a public head reports the body decline, not PublicBoundary") {
@@ -194,12 +224,15 @@ final class UsageAnalyzerSuite extends FunSuite {
   }
 
   private def requiredMethods(name: String): Set[Symbol] =
-    UsageAnalyzer
-      .analyze(definition(name), index, widenPublic = false)
-      .collect { case UsageResult.Abstractable(_, _, _, _, ops) => ops }
-      .flatten
+    abstractable(name).ops
       .map(_.method)
       .toSet
+
+  private def abstractable(name: String): UsageResult.Abstractable =
+    UsageAnalyzer
+      .analyze(definition(name), index, widenPublic = false)
+      .collectFirst { case result: UsageResult.Abstractable => result }
+      .getOrElse(fail(s"$name was not abstractable"))
 
   private def decline(name: String): UsageResult.Declined =
     UsageAnalyzer
@@ -208,12 +241,18 @@ final class UsageAnalyzerSuite extends FunSuite {
       .getOrElse(fail(s"$name did not decline"))
 
   private def definition(name: String): Defn.Def =
-    doc.tree.collect {
-      case defn: Defn.Def if defn.name.value == name => defn
-    }.headOption.getOrElse(fail(s"missing fixture definition: $name"))
+    doc.tree
+      .collect {
+        case defn: Defn.Def if defn.name.value == name => defn
+      }
+      .headOption
+      .getOrElse(fail(s"missing fixture definition: $name"))
 
   private def selectedMethod(defn: Defn.Def): Symbol =
-    defn.body.collect {
-      case Term.Select(_, method: Term.Name) => method.symbol
-    }.headOption.getOrElse(fail(s"missing selected method in ${defn.name.value}"))
+    defn.body
+      .collect { case Term.Select(_, method: Term.Name) =>
+        method.symbol
+      }
+      .headOption
+      .getOrElse(fail(s"missing selected method in ${defn.name.value}"))
 }
