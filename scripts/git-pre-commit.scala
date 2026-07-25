@@ -13,9 +13,7 @@ object GitPreCommit:
 
     val buildTool =
       if os.exists(repoRoot / "build.sbt") then "sbt"
-      else if os.exists(repoRoot / "build.mill") || os.exists(
-          repoRoot / "build.sc"
-        )
+      else if Seq("build.mill", "build.sc").exists(f => os.exists(repoRoot / f))
       then "mill"
       else "scala-cli"
 
