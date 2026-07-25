@@ -65,4 +65,11 @@ final class UsageAnalyzerCases {
 
     localDefinition(values)
   }
+
+  private def twoConstructors(values: List[Int], vs: Vector[Int]): List[Int] =
+    values
+}
+
+private object RestrictedOwner {
+  def restrictedOwner(values: List[Int]): List[Int] = values
 }
