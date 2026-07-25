@@ -23,6 +23,14 @@ import fix.arrow.ArrowIR._
   */
 object ArrowParser {
 
+  /** The Cats syntax extension behind `value.pure[F]`. This is deliberately a
+    * SemanticDB symbol rather than the spelling `pure`: a project can define an
+    * unrelated method with that name, which must not turn a Kleisli body into
+    * `ask`.
+    */
+  private val ApplicativeIdPureSymbol =
+    Symbol("cats/syntax/ApplicativeIdOps#pure().")
+
   /** A single effectful step: `binding <- callee.run(arg)`. `callee` is the
     * Kleisli receiver; `argSymbol` is the symbol of the value fed to it, which
     * decides whether steps chain (each consumes the previous) or fan out (all
@@ -70,6 +78,17 @@ object ArrowParser {
       aggressive: Boolean
   )(implicit doc: SemanticDocument): Option[ArrowIR] =
     peelTrailingReshape(body) match {
+      // `<effect>.as(<the arrow input itself>)`: the effect's result is thrown
+      // away and the input handed on, i.e. `ask <* work`. This case is
+      // exclusive: once claimed, an unparseable inner effect must decline
+      // rather than fall through to aggressive input-capturing fan-out.
+      case Some((inner, Reshape.Constant(value: Term.Name)))
+          if value.symbol == inputSymbol =>
+        for {
+          in <- input
+          effect <- in.effect
+          ir <- parseSpine(inner, inputSymbol, input, aggressive)
+        } yield ProductL(Ask(effect, in.tpe), ir)
       // `<effects>.map(fn)` / `<effects>.as(value)` -- pattern B and the tail
       // of a chain that ends in a pure reshape.
       case Some((inner, reshape)) =>
@@ -204,14 +223,48 @@ object ArrowParser {
       input: Option[Input],
       aggressive: Boolean
   )(implicit doc: SemanticDocument): Option[ArrowIR] =
-    choiceArrow(body, inputSymbol).orElse {
-      val (steps, yieldTerm) = spine(body)
-      val conservative =
-        if (steps.isEmpty) bareEffect(body, inputSymbol, input)
-        else classify(steps, yieldTerm, inputSymbol, input)
-      conservative.orElse(
-        if (aggressive) aggressiveFor(body, inputSymbol, input) else None
-      )
+    pureInput(body, inputSymbol, input)
+      .orElse(choiceArrow(body, inputSymbol))
+      .orElse {
+        val (steps, yieldTerm) = spine(body)
+        val conservative =
+          if (steps.isEmpty) bareEffect(body, inputSymbol, input)
+          else classify(steps, yieldTerm, inputSymbol, input)
+        conservative.orElse(
+          if (aggressive) aggressiveFor(body, inputSymbol, input) else None
+        )
+      }
+
+  /** `input.pure[F]` (or the expected-type-inferred `input.pure`) is the
+    * identity Kleisli. It must retain the enclosing effect and input types:
+    * unlike untyped `Kleisli.ask`, the typed form remains valid at a def return
+    * position. Only Cats' resolved `ApplicativeIdOps.pure` is accepted.
+    */
+  private def pureInput(
+      body: Term,
+      inputSymbol: Symbol,
+      input: Option[Input]
+  )(implicit doc: SemanticDocument): Option[ArrowIR] =
+    for {
+      in <- input
+      effect <- in.effect
+      value <- pureValue(body)
+      if value.symbol == inputSymbol
+    } yield Ask(effect, in.tpe)
+
+  private def pureValue(body: Term)(implicit
+      doc: SemanticDocument
+  ): Option[Term] =
+    body match {
+      case Term.ApplyType.After_4_6_0(
+            Term.Select(value, pure),
+            _
+          ) if pure.symbol == ApplicativeIdPureSymbol =>
+        Some(value)
+      case Term.Select(value, pure) if pure.symbol == ApplicativeIdPureSymbol =>
+        Some(value)
+      case _ =>
+        None
     }
 
   /** Aggressive fan-out (opt-in via `PreferArrow.aggressive`). Where the
