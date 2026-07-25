@@ -78,6 +78,17 @@ object ArrowParser {
       aggressive: Boolean
   )(implicit doc: SemanticDocument): Option[ArrowIR] =
     peelTrailingReshape(body) match {
+      // `<effect>.as(<the arrow input itself>)`: the effect's result is thrown
+      // away and the input handed on, i.e. `ask <* work`. This case is
+      // exclusive: once claimed, an unparseable inner effect must decline
+      // rather than fall through to aggressive input-capturing fan-out.
+      case Some((inner, Reshape.Constant(value: Term.Name)))
+          if value.symbol == inputSymbol =>
+        for {
+          in <- input
+          effect <- in.effect
+          ir <- parseSpine(inner, inputSymbol, input, aggressive)
+        } yield ProductL(Ask(effect, in.tpe), ir)
       // `<effects>.map(fn)` / `<effects>.as(value)` -- pattern B and the tail
       // of a chain that ends in a pure reshape.
       case Some((inner, reshape)) =>

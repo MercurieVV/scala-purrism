@@ -23,6 +23,7 @@ class ArrowEngineSuite extends munit.FunSuite {
       AndThen(eff("a"), ArrowIR.Lift(f)),
       AndThen(ArrowIR.Lift(f), eff("a")),
       Merge(eff("a"), Merge(eff("b"), eff("c"))),
+      ProductL(ProductL(eff("a"), eff("b")), eff("c")),
       Rmap(AndThen(eff("a"), eff("b")), f),
       Choice(eff("a"), eff("b")),
       Local(f, AndThen(eff("a"), eff("b")))
@@ -47,6 +48,42 @@ class ArrowEngineSuite extends munit.FunSuite {
   test("a leading pure step becomes a local") {
     val ir = AndThen(ArrowIR.Lift(f), eff("a"))
     assertEquals(ArrowRender.render(ArrowNormalize(ir)), "a.local(f)")
+  }
+
+  test("productL chains right-associate and flatten") {
+    val a = eff("a")
+    val b = eff("b")
+    val c = eff("c")
+    val ir = ProductL(ProductL(a, b), c)
+    val normalized = ProductL(a, ProductL(b, c))
+    assertEquals(ArrowNormalize(ir), normalized)
+    assertEquals(ArrowRender.render(normalized), "a <* b <* c")
+  }
+
+  test("productL removes only a trailing identity") {
+    val a = eff("a")
+    assertEquals(ArrowNormalize(ProductL(a, Id)), a)
+    assertEquals(ArrowNormalize(ProductL(Id, a)), ProductL(Id, a))
+  }
+
+  test("productL renders typed ask and parenthesises a composed operand") {
+    val ir =
+      ProductL(Ask("F", "Task"), AndThen(eff("validate"), eff("record")))
+    assertEquals(
+      ArrowRender.render(ir),
+      "Kleisli.ask[F, Task] <* (validate >>> record)"
+    )
+  }
+
+  test("mixed product operands are parenthesised") {
+    assertEquals(
+      ArrowRender.render(ProductR(eff("a"), ProductL(eff("b"), eff("c")))),
+      "a *> (b <* c)"
+    )
+    assertEquals(
+      ArrowRender.render(ProductL(eff("a"), ProductR(eff("b"), eff("c")))),
+      "a <* (b *> c)"
+    )
   }
 
   test("merge chains flatten and are left-associative") {
@@ -79,5 +116,16 @@ class ArrowEngineSuite extends munit.FunSuite {
     val ir = AndThen(eff("a"), Merge(eff("b"), Opaque(Term.Name("x"))))
     assertEquals(ArrowIR.effectCount(ir), 2)
     assert(ArrowIR.containsOpaque(ir))
+  }
+
+  test("readability budget sees an Opaque nested inside ProductL") {
+    val ir = ProductL(eff("work"), Opaque(Term.Name("mystery")))
+    assertEquals(ArrowIR.effectCount(ir), 1)
+    assertEquals(
+      ReadabilityBudget.verdict(ir, renderedLength = 0, sourceLength = 100),
+      ReadabilityBudget.Decline(
+        "body contains a subexpression the rule could not analyse"
+      )
+    )
   }
 }
