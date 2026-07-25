@@ -3,6 +3,8 @@ rules = [PreferHKTTypeclasses]
  */
 package golden
 
+import cats.syntax.functor._
+
 case class User(name: String)
 
 object AbstractFunctorListMap {
