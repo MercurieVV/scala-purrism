@@ -91,7 +91,8 @@ final class CatsIndexDriftSuite extends FunSuite {
   test("stdlib is byte-identical to its canonical re-serialisation") {
     val fileName = "stdlib.tsv"
     val table = load(fileName)
-    val rows = table.rows.sortWith((left, right) => compareRows(left, right) < 0)
+    val rows =
+      table.rows.sortWith((left, right) => compareRows(left, right) < 0)
     val serialised =
       ("#" + table.header.mkString("\t")) +
         "\n# hand-written; audited by CatsIndexDriftSuite\n" +
@@ -294,8 +295,7 @@ final class CatsIndexDriftSuite extends FunSuite {
     try {
       val properties = new java.util.Properties()
       properties.load(stream)
-      properties.asScala
-        .view
+      properties.asScala.view
         .mapValues(_.toString)
         .toMap
     } finally stream.close()

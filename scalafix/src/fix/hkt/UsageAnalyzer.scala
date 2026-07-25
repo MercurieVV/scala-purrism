@@ -20,9 +20,15 @@ import scalafix.v1.TypeRef
 import scalafix.v1.ValueSignature
 import scalafix.v1.XtensionTreeScalafix
 
-final case class RequiredOp(method: Symbol, position: Position, kind: KindShape)
+final case class RequiredOp(
+    method: Symbol,
+    position: Position,
+    kind: KindShape
+)
 
-sealed trait DeclineReason { def message: String }
+sealed trait DeclineReason {
+  def message: String
+}
 
 object DeclineReason {
   final case class ConcreteConstructorMatch(what: String)
@@ -79,6 +85,7 @@ object UsageResult {
       elementType: scala.meta.Type,
       ops: List[RequiredOp]
   ) extends UsageResult
+
   final case class Declined(position: Position, reason: DeclineReason)
       extends UsageResult
 }
@@ -94,7 +101,8 @@ object UsageAnalyzer {
   private final case class Call(
       receiver: Term,
       method: Symbol,
-      position: Position
+      position: Position,
+      span: Position
   )
 
   private final case class Resolved(
@@ -108,6 +116,60 @@ object UsageAnalyzer {
       symbols: List[Symbol]
   )
 
+  private sealed trait Lookup
+  private final case class Found(values: List[Resolved]) extends Lookup
+  private final case class Rejected(reason: DeclineReason) extends Lookup
+  private case object NotFound extends Lookup
+
+  private val constructorAliases: Map[Symbol, Symbol] = Map(
+    Symbol("scala/package.List#") -> Symbol("scala/collection/immutable/List#"),
+    Symbol("scala/package.Seq#") -> Symbol("scala/collection/immutable/Seq#")
+  )
+
+  private val patternConstructors: Map[Symbol, (Symbol, String)] = Map(
+    Symbol("scala/None.") -> (Symbol("scala/Option#"), "None"),
+    Symbol("scala/Some.") -> (Symbol("scala/Option#"), "Some"),
+    Symbol("scala/package.None.") -> (Symbol("scala/Option#"), "None"),
+    Symbol("scala/package.Some.") -> (Symbol("scala/Option#"), "Some"),
+    Symbol("scala/package.Nil.") -> (
+      Symbol("scala/collection/immutable/List#"),
+      "Nil"
+    ),
+    Symbol("scala/package.`::`.") -> (
+      Symbol("scala/collection/immutable/List#"),
+      "::"
+    ),
+    Symbol("scala/collection/immutable/Nil.") -> (
+      Symbol("scala/collection/immutable/List#"),
+      "Nil"
+    ),
+    Symbol("scala/collection/immutable/::.") -> (
+      Symbol("scala/collection/immutable/List#"),
+      "::"
+    ),
+    Symbol("scala/collection/immutable/`::`.") -> (
+      Symbol("scala/collection/immutable/List#"),
+      "::"
+    ),
+    Symbol("scala/collection/immutable/$colon$colon.") -> (
+      Symbol("scala/collection/immutable/List#"),
+      "::"
+    ),
+    Symbol("scala/util/Left.") -> (Symbol("scala/util/Either#"), "Left"),
+    Symbol("scala/util/Right.") -> (Symbol("scala/util/Either#"), "Right")
+  )
+
+  private val unsafeMethodSymbols: Set[Symbol] = Set(
+    Symbol("scala/Any#asInstanceOf()."),
+    Symbol("cats/effect/IO#unsafeRunSync()."),
+    Symbol("cats/effect/IO#unsafeRunAsync()."),
+    Symbol("cats/effect/IO#unsafeRunAsync(+1)."),
+    Symbol("cats/effect/IOPlatform#unsafeRunSync()."),
+    Symbol("cats/effect/IOPlatform#unsafeRunAsync()."),
+    Symbol("cats/effect/IOPlatform#unsafeRunAsync(+1)."),
+    Symbol("cats/effect/SyncIO#unsafeRunSync().")
+  )
+
   def analyze(
       defn: scala.meta.Defn.Def,
       index: CatsIndex,
@@ -115,18 +177,24 @@ object UsageAnalyzer {
   )(implicit
       doc: SemanticDocument
   ): List[UsageResult] = {
-    val targets = signatureTargets(defn)
     val calls = bodyCalls(defn)
     val synthetics = syntheticEvidence
-    val structuralDecline = firstStructuralDecline(defn)
+    val structuralDeclines = bodyStructureDeclines(defn)
 
-    targets
-      .sortBy(_.tpe.pos.start)
+    signatureTargets(defn)
+      .sortBy(target => (target.tpe.pos.start, target.constructor.value))
       .map { target =>
         kindDecline(target)
-          .orElse(structuralDecline)
-          .orElse(constructorMatchDecline(defn, target))
-          .orElse(analyzeCalls(target, calls, synthetics, index))
+          .orElse(
+            firstBodyDecline(
+              defn,
+              target,
+              calls,
+              synthetics,
+              structuralDeclines,
+              index
+            )
+          )
           .orElse(visibilityDecline(defn, widenPublic))
           .getOrElse(
             UsageResult.Abstractable(
@@ -174,33 +242,26 @@ object UsageAnalyzer {
         .flatMap(_.paramClauses)
         .flatMap(_.values)
         .flatMap(param =>
-          param.decltpe.map(tpe => (tpe, valueType(param.symbol)))
+          param.decltpe.map(tpe => tpe -> valueType(param.symbol))
         )
-    val resultType = defn.decltpe.toList.map(tpe =>
-      (
-        tpe,
-        defn.symbol.info.flatMap {
-          _.signature match {
-            case MethodSignature(_, _, result) => Some(result)
-            case _                             => None
-          }
+    val resultTypes = defn.decltpe.toList.map(tpe =>
+      tpe -> defn.symbol.info.flatMap {
+        _.signature match {
+          case MethodSignature(_, _, result) => Some(result)
+          case _                             => None
         }
-      )
+      }
     )
 
-    (parameterTypes ++ resultType)
+    (parameterTypes ++ resultTypes)
       .flatMap { case (written, semantic) =>
         outerConcreteTargets(written, semantic)
       }
-      .foldLeft(List.empty[Target]) { (acc, target) =>
-        if (
-          (target.constructor.isNone && target.kind != KindShape.Binary) ||
-          acc.exists(existing =>
-            !target.constructor.isNone &&
-              existing.constructor == target.constructor
-          )
-        ) acc
-        else acc :+ target
+      .foldLeft(List.empty[Target]) { (targets, target) =>
+        val duplicate =
+          !target.constructor.isNone &&
+            targets.exists(_.constructor == target.constructor)
+        if (duplicate) targets else targets :+ target
       }
   }
 
@@ -217,49 +278,73 @@ object UsageAnalyzer {
   private def outerConcreteTargets(
       tpe: Type,
       semantic: Option[SemanticType]
-  )(implicit
-      doc: SemanticDocument
-  ): List[Target] =
+  )(implicit doc: SemanticDocument): List[Target] =
     tpe match {
       case applied: Type.Apply =>
-        val args = applied.argClause.values
-        val semanticArguments = semantic
-          .collect { case TypeRef(_, _, arguments) =>
-            arguments
-          }
-          .getOrElse(Nil)
-        val writtenConstructor = applied.tpe.symbol
-        val constructor =
-          semantic.flatMap(typeConstructor).getOrElse(writtenConstructor)
+        val arguments = applied.argClause.values
         if (applied.tpe.is[Type.Lambda])
           List(
             Target(
               applied,
               Symbol.None,
-              args.lastOption.getOrElse(applied),
+              arguments.lastOption.getOrElse(applied),
               KindShape.Binary
             )
           )
-        else if (
-          writtenConstructor.isGlobal &&
-          !doc.info(writtenConstructor).exists(_.isTypeParameter) &&
-          !constructor.isNone
-        )
-          List(
-            Target(
-              applied,
-              constructor,
-              args.lastOption.getOrElse(applied),
-              kindOf(args.size)
-            )
+        else {
+          val writtenConstructor = applied.tpe.symbol
+          val constructor = canonicalConstructor(
+            semantic
+              .flatMap(typeConstructor)
+              .getOrElse(writtenConstructor)
           )
-        else
-          args.zipWithIndex.flatMap { case (argument, index) =>
-            outerConcreteTargets(argument, semanticArguments.lift(index))
+          val isConcrete =
+            constructor.isGlobal &&
+              writtenConstructor.isGlobal &&
+              !doc
+                .info(writtenConstructor)
+                .exists(_.isTypeParameter)
+
+          if (isConcrete)
+            List(
+              Target(
+                applied,
+                constructor,
+                arguments.lastOption.getOrElse(applied),
+                kindOf(arguments.size)
+              )
+            )
+          else {
+            val semanticArguments = semantic
+              .collect { case TypeRef(_, _, values) => values }
+              .getOrElse(Nil)
+            arguments.zipWithIndex.flatMap { case (argument, index) =>
+              outerConcreteTargets(argument, semanticArguments.lift(index))
+            }
           }
+        }
       case lambda: Type.Lambda =>
-        List(Target(lambda, lambda.symbol, lambda, KindShape.Binary))
-      case _ => Nil
+        List(Target(lambda, Symbol.None, lambda, KindShape.Binary))
+      case name: Type.Name =>
+        val writtenConstructor = name.symbol
+        val constructor = canonicalConstructor(
+          semantic
+            .flatMap(typeConstructor)
+            .getOrElse(writtenConstructor)
+        )
+        if (
+          constructor.isGlobal &&
+          writtenConstructor.isGlobal &&
+          !doc.info(writtenConstructor).exists(_.isTypeParameter)
+        )
+          List(Target(name, constructor, name, KindShape.Star))
+        else Nil
+      case other =>
+        other.children
+          .collect { case child: Type => child }
+          .flatMap(
+            outerConcreteTargets(_, None)
+          )
     }
 
   private def kindOf(arity: Int): KindShape =
@@ -268,49 +353,6 @@ object UsageAnalyzer {
       case 1 => KindShape.Unary
       case _ => KindShape.Binary
     }
-
-  private def firstStructuralDecline(
-      defn: Defn.Def
-  ): Option[UsageResult.Declined] = {
-    val structural = defn.body.collect {
-      case tree: Term.Throw if belongsTo(defn, tree) =>
-        UsageResult.Declined(tree.pos, DeclineReason.UnsafeBody("throw"))
-      case tree: Term.Return if belongsTo(defn, tree) =>
-        UsageResult.Declined(tree.pos, DeclineReason.UnsafeBody("return"))
-      case tree: Defn.Var if belongsTo(defn, tree) =>
-        UsageResult.Declined(
-          tree.pos,
-          DeclineReason.UnsafeBody("mutable variable")
-        )
-      case tree: Term.Assign if belongsTo(defn, tree) =>
-        UsageResult.Declined(tree.pos, DeclineReason.UnsafeBody("assignment"))
-    }
-
-    structural
-      .sortBy(_.position.start)
-      .headOption
-  }
-
-  private def constructorMatchDecline(
-      defn: Defn.Def,
-      target: Target
-  )(implicit doc: SemanticDocument): Option[UsageResult.Declined] =
-    defn.body
-      .collect {
-        case matched @ Term.Match.After_4_9_9(scrutinee: Term, casesBlock, _)
-            if belongsTo(defn, matched) &&
-              receiverConstructor(scrutinee).contains(target.constructor) =>
-          casesBlock.cases.flatMap(_.pat.collect {
-            case name: Term.Name if name.symbol.isGlobal =>
-              UsageResult.Declined(
-                name.pos,
-                DeclineReason.ConcreteConstructorMatch(name.symbol.value)
-              )
-          })
-      }
-      .flatten
-      .sortBy(_.position.start)
-      .headOption
 
   private def kindDecline(target: Target): Option[UsageResult.Declined] =
     target.kind match {
@@ -324,97 +366,98 @@ object UsageAnalyzer {
       case KindShape.Star | KindShape.Unary => None
     }
 
-  private def analyzeCalls(
+  private def firstBodyDecline(
+      defn: Defn.Def,
       target: Target,
       calls: List[Call],
       synthetics: List[SyntheticEvidence],
+      structuralDeclines: List[UsageResult.Declined],
       index: CatsIndex
-  )(implicit doc: SemanticDocument): Option[UsageResult.Declined] =
-    calls
-      .filter(call =>
-        receiverConstructor(call.receiver).contains(target.constructor)
+  )(implicit doc: SemanticDocument): Option[UsageResult.Declined] = {
+    val callDeclines = targetCalls(target, calls).flatMap { call =>
+      val symbols = allCallSymbols(call, synthetics)
+      symbols.find(unsafeMethodSymbols) match {
+        case Some(method) =>
+          Some(
+            UsageResult.Declined(
+              call.position,
+              DeclineReason.UnsafeBody(method.displayName)
+            )
+          )
+        case None =>
+          resolveCall(symbols, index) match {
+            case Left(reason) =>
+              Some(UsageResult.Declined(call.position, reason))
+            case Right(_) => None
+          }
+      }
+    }
+    val patternDeclines = constructorMatchDeclines(defn, target)
+
+    (structuralDeclines ++ patternDeclines ++ callDeclines)
+      .sortBy(declined =>
+        (
+          declined.position.start,
+          declined.position.end,
+          declined.reason.message
+        )
       )
-      .sortBy(_.position.start)
-      .flatMap { call =>
-        val symbols = allCallSymbols(call, synthetics)
-        resolveCall(symbols, index) match {
-          case Left(reason: DeclineReason.NoCapability) =>
-            unsafeCall(symbols, target)
-              .map(symbol =>
-                UsageResult.Declined(
-                  call.position,
-                  DeclineReason.UnsafeBody(symbol.value)
-                )
-              )
-              .orElse(
-                orderOrIndexCall(symbols, target).map(symbol =>
-                  UsageResult.Declined(
-                    call.position,
-                    DeclineReason.OrderOrIndexSpecific(symbol.value)
-                  )
-                )
-              )
-              .orElse(Some(UsageResult.Declined(call.position, reason)))
-          case Left(reason) =>
-            Some(UsageResult.Declined(call.position, reason))
-          case Right(_) =>
-            None
-        }
-      }
       .headOption
+  }
 
-  private def unsafeCall(
-      symbols: List[Symbol],
-      target: Target
-  )(implicit doc: SemanticDocument): Option[Symbol] =
-    symbols.find(isUnsafeCast).orElse {
-      symbols.find { symbol =>
-        symbol != Symbol.None &&
-        doc.info(symbol).exists { info =>
-          (info.isImplicit || info.isGiven) &&
-          !signatureMentions(info.signature, target.elementType.symbol)
-        }
+  private def bodyStructureDeclines(
+      defn: Defn.Def
+  )(implicit doc: SemanticDocument): List[UsageResult.Declined] =
+    defn.body
+      .collect {
+        case tree: Term.Throw if belongsTo(defn, tree) =>
+          UsageResult.Declined(tree.pos, DeclineReason.UnsafeBody("throw"))
+        case tree: Term.Return if belongsTo(defn, tree) =>
+          UsageResult.Declined(tree.pos, DeclineReason.UnsafeBody("return"))
+        case tree: Defn.Var if belongsTo(defn, tree) =>
+          UsageResult.Declined(
+            tree.pos,
+            DeclineReason.UnsafeBody("mutable variable")
+          )
+        case tree @ Term.Assign(lhs, _)
+            if belongsTo(defn, tree) &&
+              lhs.symbol.info.exists(_.isVar) =>
+          UsageResult.Declined(
+            tree.pos,
+            DeclineReason.UnsafeBody("assignment to mutable variable")
+          )
       }
-    }
+      .sortBy(declined => (declined.position.start, declined.position.end))
 
-  private def isUnsafeCast(symbol: Symbol)(implicit
-      doc: SemanticDocument
-  ): Boolean =
-    doc.info(symbol).exists { info =>
-      info.signature match {
-        case MethodSignature(typeParameters, _, TypeRef(_, result, _)) =>
-          typeParameters.exists(_.symbol == result)
-        case _ => false
-      }
-    }
-
-  private def signatureMentions(
-      signature: scalafix.v1.Signature,
-      target: Symbol
-  ): Boolean =
-    signature match {
-      case ValueSignature(tpe)        => semanticTypeMentions(tpe, target)
-      case MethodSignature(_, _, tpe) => semanticTypeMentions(tpe, target)
-      case _                          => false
-    }
-
-  private def semanticTypeMentions(tpe: SemanticType, target: Symbol): Boolean =
-    tpe match {
-      case TypeRef(prefix, symbol, arguments) =>
-        symbol == target ||
-        semanticTypeMentions(prefix, target) ||
-        arguments.exists(semanticTypeMentions(_, target))
-      case _ => false
-    }
-
-  private def orderOrIndexCall(
-      symbols: List[Symbol],
+  private def constructorMatchDeclines(
+      defn: Defn.Def,
       target: Target
-  ): Option[Symbol] =
-    symbols.find { symbol =>
-      symbol.isGlobal &&
-      symbol.owner != target.constructor
-    }
+  )(implicit doc: SemanticDocument): List[UsageResult.Declined] =
+    defn.body
+      .collect {
+        case matched @ Term.Match.After_4_9_9(scrutinee: Term, casesBlock, _)
+            if belongsTo(defn, matched) &&
+              receiverConstructor(scrutinee).contains(target.constructor) =>
+          casesBlock.cases.flatMap(
+            _.pat
+              .collect { case name: Term.Name =>
+                patternConstructors
+                  .get(name.symbol)
+                  .collect {
+                    case (constructor, label)
+                        if canonicalConstructor(constructor) ==
+                          target.constructor =>
+                      UsageResult.Declined(
+                        name.pos,
+                        DeclineReason.ConcreteConstructorMatch(label)
+                      )
+                  }
+              }
+              .flatten
+          )
+      }
+      .flatten
+      .sortBy(declined => (declined.position.start, declined.reason.message))
 
   private def requiredOps(
       target: Target,
@@ -422,11 +465,7 @@ object UsageAnalyzer {
       synthetics: List[SyntheticEvidence],
       index: CatsIndex
   )(implicit doc: SemanticDocument): List[RequiredOp] =
-    calls
-      .filter(call =>
-        receiverConstructor(call.receiver).contains(target.constructor)
-      )
-      .sortBy(_.position.start)
+    targetCalls(target, calls)
       .flatMap { call =>
         resolveCall(allCallSymbols(call, synthetics), index).toOption.map {
           resolved =>
@@ -434,82 +473,150 @@ object UsageAnalyzer {
         }
       }
       .distinctBy(op => (op.method, op.position.start, op.position.end))
+      .sortBy(op => (op.position.start, op.method.value))
+
+  private def targetCalls(target: Target, calls: List[Call])(implicit
+      doc: SemanticDocument
+  ): List[Call] =
+    calls.filter(call =>
+      receiverConstructor(call.receiver).contains(target.constructor)
+    )
 
   private def resolveCall(
       symbols: List[Symbol],
       index: CatsIndex
   ): Either[DeclineReason, Resolved] = {
-    val resolved = symbols.flatMap(resolveSymbol(_, index))
-    val byOwner = resolved.groupBy(_.owner).toList.sortBy(_._1.value)
+    val firstHit = symbols.iterator
+      .map(symbol => lookupSymbol(symbol, index))
+      .find(_ != NotFound)
 
-    if (byOwner.isEmpty)
-      symbols.find(!_.isNone) match {
-        case Some(method) => Left(DeclineReason.NoCapability(method))
-        case None         => Left(DeclineReason.MissingEvidence)
-      }
-    else {
-      val roots = byOwner.map(_._1)
-      val unrelated = roots.combinations(2).exists {
-        case List(left, right) =>
-          val leftProviders =
-            byOwner.find(_._1 == left).toList.flatMap(_._2).flatMap(_.providers)
-          val rightProviders =
-            byOwner
-              .find(_._1 == right)
-              .toList
-              .flatMap(_._2)
-              .flatMap(_.providers)
-          !capabilitiesRelated(leftProviders, rightProviders, index)
-        case _ => false
-      }
-
-      if (unrelated) Left(DeclineReason.AmbiguousCapability(roots))
-      else
-        Right(
-          byOwner
-            .flatMap(_._2)
-            .sortBy(resolved =>
-              (minimumDepth(resolved.providers, index), resolved.owner.value)
-            )
-            .head
+    firstHit match {
+      case Some(Rejected(reason)) => Left(reason)
+      case Some(Found(resolved))  => chooseCapability(resolved, index)
+      case Some(NotFound) | None =>
+        Left(
+          DeclineReason.NoCapability(
+            symbols.headOption.getOrElse(Symbol.None)
+          )
         )
     }
   }
 
-  private def resolveSymbol(symbol: Symbol, index: CatsIndex): List[Resolved] =
+  private def lookupSymbol(symbol: Symbol, index: CatsIndex): Lookup =
     index.resolveSyntax(symbol) match {
       case Some(capability) =>
-        List(
-          Resolved(
-            capability.owner,
-            List(capability.typeclass),
-            capability.kind
-          )
-        )
+        Found(List(fromCapability(capability)))
       case None =>
         val providers = index.providersOf(symbol)
         if (providers.nonEmpty)
-          providers
-            .groupBy(_.owner)
-            .toList
-            .sortBy(_._1.value)
-            .map { case (owner, capabilities) =>
-              Resolved(
-                owner,
-                capabilities.map(_.typeclass).distinct.sortBy(_.value),
-                capabilities.map(_.kind).sortBy(KindShape.arity).head
-              )
-            }
-        else
-          index.primitiveOwner(symbol).toList.map { owner =>
-            val ownerProviders = index.providersOf(owner)
-            Resolved(
-              owner,
-              ownerProviders.map(_.typeclass).distinct.sortBy(_.value),
-              ownerProviders.headOption.map(_.kind).getOrElse(KindShape.Unary)
-            )
-          }
+          Found(
+            providers
+              .groupBy(_.owner)
+              .toList
+              .sortBy(_._1.value)
+              .map { case (_, capabilities) =>
+                fromCapabilities(capabilities)
+              }
+          )
+        else lookupStdlib(symbol, index)
     }
+
+  private def lookupStdlib(symbol: Symbol, index: CatsIndex): Lookup = {
+    val entries = index.resolveStdlib(symbol)
+    entries
+      .collectFirst { case StdlibEntry(_, StdlibMapping.ToDecline(reason)) =>
+        Rejected(stdlibDecline(reason, symbol))
+      }
+      .getOrElse {
+        val resolved = entries.collect {
+          case StdlibEntry(
+                _,
+                StdlibMapping.ToCapability(owner, method)
+              ) =>
+            fromStdlib(owner, method, index)
+        }
+        if (resolved.nonEmpty) Found(resolved) else NotFound
+      }
+  }
+
+  private def stdlibDecline(reason: String, method: Symbol): DeclineReason =
+    reason match {
+      case "ConcreteConstructorMatch" =>
+        DeclineReason.ConcreteConstructorMatch(method.displayName)
+      case "OrderOrIndexSpecific" =>
+        DeclineReason.OrderOrIndexSpecific(method.displayName)
+      case "UnsafeBody" =>
+        DeclineReason.UnsafeBody(method.displayName)
+      case _ => DeclineReason.NoCapability(method)
+    }
+
+  private def fromCapability(capability: Capability): Resolved =
+    Resolved(
+      capability.owner,
+      List(capability.typeclass),
+      capability.kind
+    )
+
+  private def fromCapabilities(capabilities: List[Capability]): Resolved = {
+    val stable = capabilities.sortBy(capability =>
+      (
+        KindShape.arity(capability.kind),
+        capability.typeclass.value,
+        capability.method.value
+      )
+    )
+    Resolved(
+      stable.head.owner,
+      stable.map(_.typeclass).distinct.sortBy(_.value),
+      stable.head.kind
+    )
+  }
+
+  private def fromStdlib(
+      owner: Symbol,
+      method: Symbol,
+      index: CatsIndex
+  ): Resolved = {
+    val capabilities = index
+      .providersOf(method)
+      .filter(_.owner == owner)
+    if (capabilities.nonEmpty) fromCapabilities(capabilities)
+    else Resolved(owner, Nil, KindShape.Unary)
+  }
+
+  private def chooseCapability(
+      resolved: List[Resolved],
+      index: CatsIndex
+  ): Either[DeclineReason, Resolved] = {
+    val byOwner = resolved
+      .groupBy(_.owner)
+      .toList
+      .sortBy(_._1.value)
+      .map { case (owner, values) =>
+        owner -> Resolved(
+          owner,
+          values.flatMap(_.providers).distinct.sortBy(_.value),
+          values.map(_.kind).sortBy(KindShape.arity).head
+        )
+      }
+    val unrelated = byOwner.combinations(2).exists {
+      case List((_, left), (_, right)) =>
+        !capabilitiesRelated(left.providers, right.providers, index)
+      case _ => false
+    }
+
+    if (unrelated)
+      Left(DeclineReason.AmbiguousCapability(byOwner.map(_._1)))
+    else
+      Right(
+        byOwner
+          .map(_._2)
+          .sortBy(value =>
+            (minimumDepth(value.providers, index), value.owner.value)
+          )
+          .head
+      )
+  }
 
   private def capabilitiesRelated(
       left: List[Symbol],
@@ -525,7 +632,7 @@ object UsageAnalyzer {
     }
 
   private def minimumDepth(providers: List[Symbol], index: CatsIndex): Int =
-    providers.map(index.depth).minOption.getOrElse(0)
+    providers.map(index.depth).minOption.getOrElse(Int.MaxValue)
 
   private def bodyCalls(defn: Defn.Def)(implicit
       doc: SemanticDocument
@@ -534,31 +641,36 @@ object UsageAnalyzer {
       .collect {
         case select @ Term.Select(receiver: Term, method: Term.Name)
             if belongsTo(defn, select) =>
-          Call(receiver, method.symbol, method.pos)
+          Call(receiver, method.symbol, method.pos, select.pos)
         case apply @ Term.Apply.After_4_6_0(receiver: Term.Name, _)
             if belongsTo(defn, apply) =>
-          Call(receiver, Symbol.None, apply.pos)
+          Call(receiver, Symbol.None, apply.pos, apply.pos)
       }
-      .sortBy(_.position.start)
+      .sortBy(call =>
+        (call.position.start, call.position.end, call.method.value)
+      )
 
   private def receiverConstructor(term: Term)(implicit
       doc: SemanticDocument
   ): Option[Symbol] =
     term.symbol.info.flatMap { info =>
-        info.signature match {
-          case ValueSignature(tpe) =>
-            typeConstructor(tpe)
-          case MethodSignature(_, _, tpe) =>
-            typeConstructor(tpe)
-          case _ => None
-        }
+      info.signature match {
+        case ValueSignature(tpe) =>
+          typeConstructor(tpe).map(canonicalConstructor)
+        case MethodSignature(_, _, tpe) =>
+          typeConstructor(tpe).map(canonicalConstructor)
+        case _ => None
       }
+    }
 
   private def typeConstructor(tpe: SemanticType): Option[Symbol] =
     tpe match {
       case TypeRef(_, symbol, _) => Some(symbol)
       case _                     => None
     }
+
+  private def canonicalConstructor(symbol: Symbol): Symbol =
+    constructorAliases.getOrElse(symbol, symbol)
 
   private def syntheticEvidence(implicit
       doc: SemanticDocument
@@ -571,24 +683,13 @@ object UsageAnalyzer {
         )
       }
       .toList
-      .sortWith { (left, right) =>
-        if (left.position.start != right.position.start)
-          left.position.start < right.position.start
-        else if (left.position.end != right.position.end)
-          left.position.end < right.position.end
-        else compareSymbols(left.symbols, right.symbols) < 0
-      }
-
-  private def compareSymbols(left: List[Symbol], right: List[Symbol]): Int =
-    (left, right) match {
-      case (Nil, Nil) => 0
-      case (Nil, _)   => -1
-      case (_, Nil)   => 1
-      case (leftHead :: leftTail, rightHead :: rightTail) =>
-        val compared = leftHead.value.compareTo(rightHead.value)
-        if (compared == 0) compareSymbols(leftTail, rightTail)
-        else compared
-    }
+      .sortBy(evidence =>
+        (
+          evidence.position.start,
+          evidence.position.end,
+          evidence.symbols.map(_.value).mkString("\u0000")
+        )
+      )
 
   private def flattenSynthetic(
       tree: SemanticTree
@@ -626,7 +727,7 @@ object UsageAnalyzer {
       synthetics: List[SyntheticEvidence]
   ): List[Symbol] =
     (call.method :: synthetics
-      .filter(evidence => positionsOverlap(call.position, evidence.position))
+      .filter(evidence => positionsOverlap(call.span, evidence.position))
       .flatMap(_.symbols))
       .filter(!_.isNone)
       .distinct

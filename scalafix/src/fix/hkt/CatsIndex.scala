@@ -20,7 +20,9 @@ final class CatsIndex(
     */
   def providersOf(method: Symbol): List[Capability] =
     capabilities.valuesIterator.flatten
-      .filter(capability => capability.method == method || capability.owner == method)
+      .filter(capability =>
+        capability.method == method || capability.owner == method
+      )
       .toList
       .sortBy(_.typeclass.value)
 
@@ -93,8 +95,12 @@ object CatsIndex {
       stdlibRows: Iterator[String]
   ): Either[String, CatsIndex] =
     for {
-      typeclassList <- parseTable(typeclassesResource, typeclassRows)(parseTypeclassRow)
-      capabilityList <- parseTable(capabilitiesResource, capabilityRows)(parseCapabilityRow)
+      typeclassList <- parseTable(typeclassesResource, typeclassRows)(
+        parseTypeclassRow
+      )
+      capabilityList <- parseTable(capabilitiesResource, capabilityRows)(
+        parseCapabilityRow
+      )
       syntaxList <- parseTable(syntaxResource, syntaxRows)(parseSyntaxRow)
       capabilityRoots = capabilityList.iterator
         .map(capability => capability.owner -> capability.method)
@@ -118,14 +124,12 @@ object CatsIndex {
       .mapValues(_.sortBy(_.typeclass.value))
       .toMap
 
-    val syntaxMap = syntaxList
-      .flatMap { case (syntaxMethod, owner, method) =>
-        capabilitiesByOwnerMethod
-          .get((owner, method))
-          .flatMap(_.headOption)
-          .map(syntaxMethod -> _)
-      }
-      .toMap
+    val syntaxMap = syntaxList.flatMap { case (syntaxMethod, owner, method) =>
+      capabilitiesByOwnerMethod
+        .get((owner, method))
+        .flatMap(_.headOption)
+        .map(syntaxMethod -> _)
+    }.toMap
 
     val stdlibMap = stdlibList
       .groupBy(_.concreteMethod)
@@ -138,7 +142,11 @@ object CatsIndex {
 
   private def readResourceLines(resource: String): List[String] = {
     val stream = Option(getClass.getClassLoader.getResourceAsStream(resource))
-      .getOrElse(throw new IllegalStateException(s"missing classpath resource: $resource"))
+      .getOrElse(
+        throw new IllegalStateException(
+          s"missing classpath resource: $resource"
+        )
+      )
     try {
       val text = new String(stream.readAllBytes(), StandardCharsets.UTF_8)
       val lines = text.split("\n", -1).toList
@@ -147,9 +155,8 @@ object CatsIndex {
   }
 
   /** Parses `#`-prefixed-comment-skipping, tab-separated data rows out of
-    * `lines`, threading the 1-based line number of the underlying resource
-    * into every error so a malformed artifact fails loudly with a precise
-    * location.
+    * `lines`, threading the 1-based line number of the underlying resource into
+    * every error so a malformed artifact fails loudly with a precise location.
     */
   private def parseTable[A](resource: String, lines: Iterator[String])(
       build: List[String] => Either[String, A]
@@ -165,7 +172,7 @@ object CatsIndex {
         if (line.startsWith("#")) loop(acc)
         else
           build(line.split("\t", -1).toList) match {
-            case Right(a)   => loop(a :: acc)
+            case Right(a)    => loop(a :: acc)
             case Left(error) => Left(s"$resource:$lineNumber: $error")
           }
       }
@@ -173,11 +180,24 @@ object CatsIndex {
     loop(Nil)
   }
 
-  private def parseTypeclassRow(cells: List[String]): Either[String, CatsTypeclass] =
+  private def parseTypeclassRow(
+      cells: List[String]
+  ): Either[String, CatsTypeclass] =
     cells match {
-      case List(symbol, parents, kindToken, typeParams, depth, renderName, importPath, public) =>
+      case List(
+            symbol,
+            parents,
+            kindToken,
+            typeParams,
+            depth,
+            renderName,
+            importPath,
+            public
+          ) =>
         for {
-          kind <- KindShape.parse(kindToken).toRight(s"invalid kind: $kindToken")
+          kind <- KindShape
+            .parse(kindToken)
+            .toRight(s"invalid kind: $kindToken")
           typeParamCount <- parseInt(typeParams, "typeParams")
           depthValue <- parseInt(depth, "depth")
           isPublic <- parseBoolean(public, "public")
@@ -194,11 +214,15 @@ object CatsIndex {
       case other => Left(s"expected 8 columns, got ${other.size}")
     }
 
-  private def parseCapabilityRow(cells: List[String]): Either[String, Capability] =
+  private def parseCapabilityRow(
+      cells: List[String]
+  ): Either[String, Capability] =
     cells match {
       case List(typeclass, method, owner, kindToken, derived, arity) =>
         for {
-          kind <- KindShape.parse(kindToken).toRight(s"invalid kind: $kindToken")
+          kind <- KindShape
+            .parse(kindToken)
+            .toRight(s"invalid kind: $kindToken")
           isDerived <- parseBoolean(derived, "derived")
           arityValue <- parseInt(arity, "arity")
         } yield Capability(
@@ -212,7 +236,9 @@ object CatsIndex {
       case other => Left(s"expected 6 columns, got ${other.size}")
     }
 
-  private def parseSyntaxRow(cells: List[String]): Either[String, (Symbol, Symbol, Symbol)] =
+  private def parseSyntaxRow(
+      cells: List[String]
+  ): Either[String, (Symbol, Symbol, Symbol)] =
     cells match {
       case List(syntaxMethod, owner, method, _) =>
         Right((Symbol(syntaxMethod), Symbol(owner), Symbol(method)))
@@ -276,7 +302,10 @@ object CatsIndex {
   private def parseInt(cell: String, field: String): Either[String, Int] =
     cell.toIntOption.toRight(s"invalid $field: $cell")
 
-  private def parseBoolean(cell: String, field: String): Either[String, Boolean] =
+  private def parseBoolean(
+      cell: String,
+      field: String
+  ): Either[String, Boolean] =
     cell match {
       case "true"  => Right(true)
       case "false" => Right(false)
