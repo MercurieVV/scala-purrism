@@ -9,17 +9,21 @@ object CapabilitySolver {
       strengthSum: Int
   )
 
-  def solve(ops: List[RequiredOp], index: CatsIndex, maxConstraints: Int)
-      : Either[DeclineReason, Solution] = {
-    val requiredOwners = ops.foldLeft[Either[DeclineReason, List[Symbol]]](Right(Nil)) {
-      case (Right(owners), op) =>
-        index.primitiveOwner(op.method) match {
-          case Some(owner) if owners.contains(owner) => Right(owners)
-          case Some(owner)                           => Right(owners :+ owner)
-          case None                                  => Left(DeclineReason.NoCapability(op.method))
-        }
-      case (left, _) => left
-    }
+  def solve(
+      ops: List[RequiredOp],
+      index: CatsIndex,
+      maxConstraints: Int
+  ): Either[DeclineReason, Solution] = {
+    val requiredOwners =
+      ops.foldLeft[Either[DeclineReason, List[Symbol]]](Right(Nil)) {
+        case (Right(owners), op) =>
+          index.primitiveOwner(op.method) match {
+            case Some(owner) if owners.contains(owner) => Right(owners)
+            case Some(owner)                           => Right(owners :+ owner)
+            case None => Left(DeclineReason.NoCapability(op.method))
+          }
+        case (left, _) => left
+      }
 
     requiredOwners.flatMap { _ =>
       ops
@@ -42,13 +46,17 @@ object CapabilitySolver {
                     strength(constraints, index)
                   )
                 )
-              case None => Left(DeclineReason.TooManyConstraints(multi, maxConstraints))
+              case None =>
+                Left(DeclineReason.TooManyConstraints(multi, maxConstraints))
             }
       }
     }
   }
 
-  def candidates(ops: List[RequiredOp], index: CatsIndex): List[List[Symbol]] = {
+  def candidates(
+      ops: List[RequiredOp],
+      index: CatsIndex
+  ): List[List[Symbol]] = {
     val owners = ops.flatMap(op => index.primitiveOwner(op.method)).distinct
     val required = owners.flatMap(ownerTypeclass(_, index)).distinct
     val singles = index.typeclasses.valuesIterator
@@ -72,7 +80,10 @@ object CapabilitySolver {
       .distinct
   }
 
-  def rank(candidates: List[List[Symbol]], index: CatsIndex): List[List[Symbol]] = {
+  def rank(
+      candidates: List[List[Symbol]],
+      index: CatsIndex
+  ): List[List[Symbol]] = {
     val normalized = candidates.map(normalize)
     val sorted = normalized.sortWith { (left, right) =>
       compareKeys(left, right, index) < 0
@@ -91,12 +102,23 @@ object CapabilitySolver {
   def supports(typeclass: Symbol, index: CatsIndex): Boolean = {
     val ops = index.capabilities
       .getOrElse(typeclass, Nil)
-      .filter(capability => ownerTypeclass(capability.owner, index).contains(typeclass))
-      .map(capability => RequiredOp(capability.method, scala.meta.inputs.Position.None, capability.kind))
+      .filter(capability =>
+        ownerTypeclass(capability.owner, index).contains(typeclass)
+      )
+      .map(capability =>
+        RequiredOp(
+          capability.method,
+          scala.meta.inputs.Position.None,
+          capability.kind
+        )
+      )
     solve(ops, index, Int.MaxValue).isRight
   }
 
-  private def ownerTypeclass(owner: Symbol, index: CatsIndex): Option[Symbol] = {
+  private def ownerTypeclass(
+      owner: Symbol,
+      index: CatsIndex
+  ): Option[Symbol] = {
     val value = owner.value
     val separator = value.indexOf('#')
     if (separator < 0) None
@@ -107,16 +129,23 @@ object CapabilitySolver {
   }
 
   private def normalize(constraints: List[Symbol]): List[Symbol] =
-    constraints.distinct.sortWith((left, right) => left.value.compareTo(right.value) < 0)
+    constraints.distinct.sortWith((left, right) =>
+      left.value.compareTo(right.value) < 0
+    )
 
   private def strength(constraints: List[Symbol], index: CatsIndex): Int =
     constraints.map(index.depth).sum
 
-  private def compareKeys(left: List[Symbol], right: List[Symbol], index: CatsIndex): Int = {
+  private def compareKeys(
+      left: List[Symbol],
+      right: List[Symbol],
+      index: CatsIndex
+  ): Int = {
     val count = Integer.compare(left.size, right.size)
     if (count != 0) count
     else {
-      val strengthComparison = Integer.compare(strength(left, index), strength(right, index))
+      val strengthComparison =
+        Integer.compare(strength(left, index), strength(right, index))
       if (strengthComparison != 0) strengthComparison
       else compareSymbols(left, right)
     }
@@ -132,7 +161,10 @@ object CapabilitySolver {
         if (comparison != 0) comparison else compareSymbols(leftTail, rightTail)
     }
 
-  private def extraTypeParams(constraints: List[Symbol], index: CatsIndex): List[String] = {
+  private def extraTypeParams(
+      constraints: List[Symbol],
+      index: CatsIndex
+  ): List[String] = {
     val emitted = constraints.flatMap { constraint =>
       index.typeclasses.get(constraint).toList.flatMap { typeclass =>
         (1 until typeclass.typeParamCount).map { number =>
