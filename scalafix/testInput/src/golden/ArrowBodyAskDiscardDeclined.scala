@@ -63,14 +63,13 @@ object ArrowBodyAskDiscardDeclined {
   }
 
   // Same body as the projected sub-shape, without `aggressive`: the
-  // conservative length-ratio guard declines. Case 1 recognition is not yet
-  // wired up, so nothing fires here either way -- no diagnostic to assert.
+  // conservative length-ratio guard declines and reports why.
   final class ProjectedDeclined[F[_]: Monad] {
     val validatePath: Kleisli[F, String, Unit] =
       Kleisli { path => Monad[F].unit }
 
     def run: Kleisli[F, Task, Task] =
-      Kleisli { task =>
+      Kleisli { task => // assert: PreferArrow
         validatePath.run(task.path).as(task)
       }
   }
