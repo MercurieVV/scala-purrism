@@ -31,8 +31,6 @@ object CatsIndexGen {
     List("typeclass", "method", "owner", "kind", "derived", "arity")
   private val SyntaxHeader =
     List("syntaxMethod", "owner", "method", "importPath")
-  private val StdlibHeader =
-    List("concreteMethod", "owner", "method", "note")
   private val GapsHeader = List("typeclass", "reason", "tracked")
 
   private final case class Options(
@@ -162,12 +160,6 @@ object CatsIndexGen {
       syntaxRows
     )
     writeTsv(
-      options.output.resolve("stdlib.tsv"),
-      StdlibHeader,
-      generatedHeader,
-      Nil
-    )
-    writeTsv(
       options.output.resolve("gaps.tsv"),
       GapsHeader,
       generatedHeader,
@@ -178,7 +170,7 @@ object CatsIndexGen {
       s"wrote ${typeclassRows.distinct.size} typeclasses, " +
         s"${capabilityRows.distinct.size} capabilities, and " +
         s"${syntaxRows.distinct.size} syntax mappings; " +
-        s"wrote ${gapRows.size} tracked gaps and the stdlib schema to " +
+        s"wrote ${gapRows.size} tracked gaps to " +
         options.output
     )
   }
