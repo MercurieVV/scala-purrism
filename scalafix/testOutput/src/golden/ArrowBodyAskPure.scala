@@ -1,4 +1,3 @@
-
 package golden
 
 import cats.Monad
@@ -10,11 +9,9 @@ object ArrowBodyAskPure {
 
   final class Runner[F[_]: Monad] {
     def echo: Kleisli[F, Task, Task] =
-      Kleisli { task =>
-        task.pure[F]
-      }
+      Kleisli.ask[F, Task]
 
     val echoValue: Kleisli[F, Task, Task] =
-      Kleisli { task => task.pure }
+      Kleisli.ask[F, Task]
   }
 }

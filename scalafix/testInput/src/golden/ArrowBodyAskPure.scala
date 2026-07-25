@@ -2,12 +2,9 @@
 rules = [PreferArrow]
 
 # `Kleisli { task => task.pure[F] }` is the identity arrow written out by hand:
-# `Kleisli.ask` is defined as `Kleisli(F.pure)`. It would be recognised by the
-# symbol of the `pure` -- `cats/syntax/ApplicativeIdOps#pure().` -- applied to
-# a name that resolves to the arrow's own input, never by the spelling `pure`.
-#
-# This recognition ("case 2") is not implemented yet, so the rule leaves both
-# bodies untouched. Pinned as the executed oracle until case 2 lands.
+# `Kleisli.ask` is defined as `Kleisli(F.pure)`. Recognised by the symbol of
+# the `pure` -- `cats/syntax/ApplicativeIdOps#pure().` -- applied to a name
+# that resolves to the arrow's own input, not by the spelling `pure`.
  */
 package golden
 
