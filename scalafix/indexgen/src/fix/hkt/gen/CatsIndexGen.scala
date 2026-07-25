@@ -35,6 +35,177 @@ object CatsIndexGen {
     List("concreteMethod", "owner", "method", "note")
   private val GapsHeader = List("typeclass", "reason", "tracked")
 
+  private val StdlibSeed: List[List[String]] = List(
+    List(
+      "cats/Eval#defer().",
+      "cats/Defer#defer().",
+      "cats/Defer#defer().",
+      "Eval recursion is Defer"
+    ),
+    List(
+      "cats/Eval#flatMap().",
+      "cats/FlatMap#flatMap().",
+      "cats/FlatMap#flatMap().",
+      "Eval sequencing is FlatMap"
+    ),
+    List(
+      "cats/Eval#map().",
+      "cats/Functor#map().",
+      "cats/Functor#map().",
+      "Eval transformation is Functor"
+    ),
+    List(
+      "cats/data/NonEmptyList#flatMap().",
+      "cats/FlatMap#flatMap().",
+      "cats/FlatMap#flatMap().",
+      "NonEmptyList sequencing is FlatMap"
+    ),
+    List(
+      "cats/data/NonEmptyList#map().",
+      "cats/Functor#map().",
+      "cats/Functor#map().",
+      "NonEmptyList transformation is Functor"
+    ),
+    List(
+      "scala/Option#flatMap().",
+      "cats/FlatMap#flatMap().",
+      "cats/FlatMap#flatMap().",
+      "Option sequencing is FlatMap"
+    ),
+    List(
+      "scala/Option#map().",
+      "cats/Functor#map().",
+      "cats/Functor#map().",
+      "Option transformation is Functor"
+    ),
+    List(
+      "scala/collection/IndexedSeqOps#foldRight().",
+      "cats/Foldable#foldRight().",
+      "cats/Foldable#foldRight().",
+      "Vector right fold is Foldable"
+    ),
+    List(
+      "scala/collection/IterableOnceOps#foldLeft().",
+      "cats/Foldable#foldLeft().",
+      "cats/Foldable#foldLeft().",
+      "Vector and Seq left folds are Foldable"
+    ),
+    List(
+      "scala/collection/IterableOnceOps#foldRight().",
+      "cats/Foldable#foldRight().",
+      "cats/Foldable#foldRight().",
+      "Seq right fold is Foldable"
+    ),
+    List(
+      "scala/collection/IterableOnceOps#reduce().",
+      "cats/Reducible#reduceLeft().",
+      "cats/Reducible#reduceLeft().",
+      "partial reduction may require Reducible"
+    ),
+    List(
+      "scala/collection/IterableOnceOps#reduce().",
+      "cats/kernel/Semigroup#combine().",
+      "cats/kernel/Semigroup#combine().",
+      "partial reduction may require Semigroup"
+    ),
+    List(
+      "scala/collection/IterableOps#`++`().",
+      "cats/SemigroupK#combineK().",
+      "cats/SemigroupK#combineK().",
+      "collection concatenation is SemigroupK"
+    ),
+    List(
+      "scala/collection/IterableOps#collect().",
+      "cats/FunctorFilter#mapFilter().",
+      "cats/FunctorFilter#mapFilter().",
+      "Seq collect is FunctorFilter"
+    ),
+    List(
+      "scala/collection/IterableOps#flatMap().",
+      "cats/FlatMap#flatMap().",
+      "cats/FlatMap#flatMap().",
+      "Seq sequencing is FlatMap"
+    ),
+    List(
+      "scala/collection/IterableOps#map().",
+      "cats/Functor#map().",
+      "cats/Functor#map().",
+      "Seq transformation is Functor"
+    ),
+    List(
+      "scala/collection/LinearSeqOps#foldLeft().",
+      "cats/Foldable#foldLeft().",
+      "cats/Foldable#foldLeft().",
+      "List left fold is Foldable"
+    ),
+    List(
+      "scala/collection/SeqOps#concat().",
+      "cats/SemigroupK#combineK().",
+      "cats/SemigroupK#combineK().",
+      "sequence concat is SemigroupK"
+    ),
+    List(
+      "scala/collection/StrictOptimizedIterableOps#collect().",
+      "cats/FunctorFilter#mapFilter().",
+      "cats/FunctorFilter#mapFilter().",
+      "Vector collect is FunctorFilter"
+    ),
+    List(
+      "scala/collection/StrictOptimizedIterableOps#flatMap().",
+      "cats/FlatMap#flatMap().",
+      "cats/FlatMap#flatMap().",
+      "Vector sequencing is FlatMap"
+    ),
+    List(
+      "scala/collection/StrictOptimizedIterableOps#map().",
+      "cats/Functor#map().",
+      "cats/Functor#map().",
+      "Vector transformation is Functor"
+    ),
+    List(
+      "scala/collection/immutable/List#collect().",
+      "cats/FunctorFilter#mapFilter().",
+      "cats/FunctorFilter#mapFilter().",
+      "List collect is FunctorFilter"
+    ),
+    List(
+      "scala/collection/immutable/List#flatMap().",
+      "cats/FlatMap#flatMap().",
+      "cats/FlatMap#flatMap().",
+      "List sequencing is FlatMap"
+    ),
+    List(
+      "scala/collection/immutable/List#foldRight().",
+      "cats/Foldable#foldRight().",
+      "cats/Foldable#foldRight().",
+      "List right fold is Foldable"
+    ),
+    List(
+      "scala/collection/immutable/List#map().",
+      "cats/Functor#map().",
+      "cats/Functor#map().",
+      "List transformation is Functor"
+    ),
+    List(
+      "scala/util/Try#flatMap().",
+      "cats/FlatMap#flatMap().",
+      "cats/FlatMap#flatMap().",
+      "Try sequencing is FlatMap"
+    ),
+    List(
+      "scala/util/Try#map().",
+      "cats/Functor#map().",
+      "cats/Functor#map().",
+      "Try transformation is Functor"
+    ),
+    List(
+      "scala/util/Try#recoverWith().",
+      "cats/ApplicativeError#handleErrorWith().",
+      "cats/ApplicativeError#handleErrorWith().",
+      "Try recovery is ApplicativeError"
+    )
+  )
+
   private final case class Options(
       output: Path,
       jars: List[Path],
@@ -126,6 +297,13 @@ object CatsIndexGen {
 
     val capabilityMethods =
       capabilityRows.iterator.map(row => row(2) -> row(1)).toSet
+    val missingStdlibCapabilities = StdlibSeed.filterNot(row =>
+      capabilityMethods.contains(row(1) -> row(2))
+    )
+    require(
+      missingStdlibCapabilities.isEmpty,
+      s"stdlib mappings absent from capabilities: $missingStdlibCapabilities"
+    )
     val syntaxRows = (syntax.toList ++ legacyOpsSyntax(capabilities.toList))
       .filter(row => capabilityMethods.contains(row.owner -> row.method))
       .map(row => List(row.syntaxMethod, row.owner, row.method, row.importPath))
@@ -165,7 +343,7 @@ object CatsIndexGen {
       options.output.resolve("stdlib.tsv"),
       StdlibHeader,
       generatedHeader,
-      Nil
+      StdlibSeed
     )
     writeTsv(
       options.output.resolve("gaps.tsv"),
@@ -178,7 +356,8 @@ object CatsIndexGen {
       s"wrote ${typeclassRows.distinct.size} typeclasses, " +
         s"${capabilityRows.distinct.size} capabilities, and " +
         s"${syntaxRows.distinct.size} syntax mappings; " +
-        s"wrote ${gapRows.size} tracked gaps and the stdlib schema to " +
+        s"wrote ${StdlibSeed.distinct.size} stdlib mappings and " +
+        s"${gapRows.size} tracked gaps to " +
         options.output
     )
   }
