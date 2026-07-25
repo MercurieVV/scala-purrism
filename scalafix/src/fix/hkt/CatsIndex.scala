@@ -12,7 +12,7 @@ final class CatsIndex(
     val typeclasses: Map[Symbol, CatsTypeclass],
     val capabilities: Map[Symbol, List[Capability]],
     val syntax: Map[Symbol, Capability],
-    val stdlib: Map[Symbol, List[Capability]]
+    val stdlib: Map[Symbol, List[Capability]] = Map.empty
 ) {
 
   /** Every capability whose method or owner is `method`, across all
