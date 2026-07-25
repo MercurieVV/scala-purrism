@@ -24,9 +24,9 @@ import fix.arrow.ArrowIR._
 object ArrowParser {
 
   /** The Cats syntax extension behind `value.pure[F]`. This is deliberately a
-    * SemanticDB symbol rather than the spelling `pure`: a project can define
-    * an unrelated method with that name, which must not turn a Kleisli body
-    * into `ask`.
+    * SemanticDB symbol rather than the spelling `pure`: a project can define an
+    * unrelated method with that name, which must not turn a Kleisli body into
+    * `ask`.
     */
   private val ApplicativeIdPureSymbol =
     Symbol("cats/syntax/ApplicativeIdOps#pure().")
@@ -212,15 +212,17 @@ object ArrowParser {
       input: Option[Input],
       aggressive: Boolean
   )(implicit doc: SemanticDocument): Option[ArrowIR] =
-    pureInput(body, inputSymbol, input).orElse(choiceArrow(body, inputSymbol)).orElse {
-      val (steps, yieldTerm) = spine(body)
-      val conservative =
-        if (steps.isEmpty) bareEffect(body, inputSymbol, input)
-        else classify(steps, yieldTerm, inputSymbol, input)
-      conservative.orElse(
-        if (aggressive) aggressiveFor(body, inputSymbol, input) else None
-      )
-    }
+    pureInput(body, inputSymbol, input)
+      .orElse(choiceArrow(body, inputSymbol))
+      .orElse {
+        val (steps, yieldTerm) = spine(body)
+        val conservative =
+          if (steps.isEmpty) bareEffect(body, inputSymbol, input)
+          else classify(steps, yieldTerm, inputSymbol, input)
+        conservative.orElse(
+          if (aggressive) aggressiveFor(body, inputSymbol, input) else None
+        )
+      }
 
   /** `input.pure[F]` (or the expected-type-inferred `input.pure`) is the
     * identity Kleisli. It must retain the enclosing effect and input types:
@@ -248,8 +250,7 @@ object ArrowParser {
             _
           ) if pure.symbol == ApplicativeIdPureSymbol =>
         Some(value)
-      case Term.Select(value, pure)
-          if pure.symbol == ApplicativeIdPureSymbol =>
+      case Term.Select(value, pure) if pure.symbol == ApplicativeIdPureSymbol =>
         Some(value)
       case _ =>
         None

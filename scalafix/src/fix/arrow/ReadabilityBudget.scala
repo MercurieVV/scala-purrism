@@ -80,7 +80,7 @@ object ReadabilityBudget {
     // conservative mode declines it as nothing gained.
     else if (
       (ArrowIR.effectCount(ir) < 1 && !isBareAsk(ir)) ||
-        (isTrivial(ir) && !aggressive)
+      (isTrivial(ir) && !aggressive)
     )
       Decline("no composition to gain")
     else if (plumbingNodes(ir) > maxPlumbing)
