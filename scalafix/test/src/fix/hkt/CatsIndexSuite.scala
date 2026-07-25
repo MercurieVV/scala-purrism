@@ -21,6 +21,17 @@ final class CatsIndexSuite extends FunSuite {
     assertEquals(capability.owner, Symbol("cats/Functor#map()."))
   }
 
+  test("syntaxImport resolves a RequiredOp owner to its direct syntax module") {
+    assertEquals(
+      index.syntaxImport(Symbol("cats/Functor#map().")),
+      Some("cats.syntax.functor.*")
+    )
+    assertEquals(
+      index.syntaxImport(Symbol("cats/Traverse#traverse().")),
+      Some("cats.syntax.traverse.*")
+    )
+  }
+
   test("primitiveOwner and providersOf agree for Traverse#traverse()") {
     val method = Symbol("cats/Traverse#traverse().")
     assertEquals(index.primitiveOwner(method), Some(method))

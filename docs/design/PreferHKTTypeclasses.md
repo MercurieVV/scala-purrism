@@ -553,6 +553,7 @@ final class CatsIndex(
   def providersOf(method: Symbol): List[Capability] = ???
   def primitiveOwner(method: Symbol): Option[Symbol] = ???
   def resolveSyntax(method: Symbol): Option[Capability] = ???
+  def syntaxImport(method: Symbol): Option[String] = ???
   def isAncestor(ancestor: Symbol, descendant: Symbol): Boolean = ???
   def depth(typeclass: Symbol): Int = ???
   def publicTypeclasses: List[CatsTypeclass] = ???
@@ -788,6 +789,273 @@ final class PreferHKTTypeclasses(config: PreferHKTTypeclassesConfig)
 The config shape mirrors `PreferArrowConfig` exactly, including the
 `ConfDecoder.from` + `product` + `apply.tupled` idiom, so it needs no metaconfig
 derivation macro.
+
+---
+
+## 7a. Rendering contract
+
+This section is normative for the rewriter (#66), rule shell (#67), and executed
+fixtures (#42/#43). Where a general preference elsewhere in this document leaves
+formatting freedom, this section wins.
+
+### Syntax-import lookup and required import set
+
+`syntax.tsv`'s fourth column is retained by `CatsIndex`. The additive query
+`syntaxImport(method: Symbol): Option[String]` accepts either the syntax-wrapper symbol
+from column 1 or the resolved primitive owner/method carried by `RequiredOp.method`. It
+returns column 4 verbatim. When inherited syntax creates several rows for the same
+primitive, the row whose `*.Ops` symbol normalizes directly to that primitive wins;
+ties fall back to `(syntaxMethod.value, importPath)` ascending. Consequently
+`cats/Functor#map().` maps to `cats.syntax.functor.*`, not the inherited
+`cats.syntax.apply.*` row. `resolveSyntax` remains keyed by column 1 and is unchanged.
+
+The fixed two-argument seam cannot see `UsageResult.Abstractable.ops` because
+`CapabilitySolver.Solution` contains only `constraints`, `extraTypeParams`, and
+`strengthSum`. Its exact compatibility behaviour is therefore:
+
+```scala
+HktRewriter.requiredImports(solution, index)
+```
+
+returns the distinct `CatsTypeclass.importPath` values for `solution.constraints`,
+sorted by ordinary `String.compareTo`. `rewrite` then computes its final import list as:
+
+```scala
+requiredImports(solution, index) ++ usage.ops.flatMap(op => index.syntaxImport(op.method))
+```
+
+and normalizes that expression into one combined list containing:
+
+1. every typeclass import from the two-argument result; and
+2. `index.syntaxImport(op.method)` for every `op` actually present in `usage.ops`.
+
+Missing syntax-import metadata is not guessed and contributes no string. The combined
+strings are deduplicated by exact string equality and then sorted ascending with
+`String.compareTo`; typeclass imports are not placed in a separate group. For the
+Functor smoke case the result is exactly:
+
+```text
+cats.Functor
+cats.syntax.functor.*
+```
+
+Before rendering, remove an import if an equivalent import is already in lexical scope
+at the candidate def. Equivalence is determined from the existing `Import` trees, not
+by substring matching: a direct import or selector of the same path suppresses it, and
+an enclosing wildcard import suppresses a member beneath that prefix. Thus
+`import cats.Functor`, `import cats.{Functor}`, and `import cats.*` each suppress a new
+`cats.Functor`; `import cats.syntax.functor.*` suppresses that exact module import.
+Aliases and exclusions do not suppress the unaliased import. Imports in an unrelated
+local block are not in scope and do not suppress anything.
+
+An in-scope `import cats.syntax.all.*` suppresses **every** generated
+`cats.syntax.<module>.*` import. It does not suppress typeclass imports. Existing imports
+keep their original spelling and order; only the remaining newly emitted strings are
+sorted, and they are inserted as one contiguous block.
+
+### Signature rewrite
+
+For a unary `UsageResult.Abstractable`, walk only the declared parameter types and the
+declared result type of `usage.defn`. At every `Type.Apply` whose head resolves to
+`usage.constructor`, replace the head node with the chosen type-parameter name and do
+not descend into that application's arguments. Descend through non-matching wrappers
+so a target nested below an unrelated result wrapper is still reached. This is a
+pre-order, outermost-match rule:
+
+```text
+List[A]                 -> G[A]
+Option[List[A]]         -> Option[G[A]]
+List[List[A]]           -> G[List[A]]
+```
+
+The last line is intentional: once the outer matching application is rewritten, a
+nested occurrence of the same concrete constructor remains concrete. Every matching
+outer occurrence in every parameter clause and in the result type is rewritten; no
+term in the body and no local type annotation is rewritten.
+
+Preserve `elementType` byte-for-byte by patching only the constructor-head tree
+(`Type.Apply.tpe`), never by printing a replacement `Type.Apply` from scratch. For
+`AbstractTraverseListTraverse`, this produces
+`(xs: G[Int]): Option[G[Int]]`: `List` is the selected constructor, while the unrelated
+outer result wrapper `Option` stays concrete. The body is not rewritten.
+
+### Constraint-style detection
+
+Style detection scans the one enclosing `Source` represented by `doc.tree`, including
+all definitions and constructors in that source. It inspects:
+
+- every non-empty `Type.Param` context-bound list; and
+- every parameter clause marked `using`, whether its evidence parameter is named or
+  anonymous.
+
+Comments, strings, imports, and trees outside that `Source` do not participate. If the
+source contains at least one `using` clause, render a `using` clause. Otherwise, if it
+contains at least one context bound, render context bounds. On a mixed file, `using`
+wins. If the source contains neither style, default to context bounds.
+
+`solution.extraTypeParams.nonEmpty` overrides that file-style result and always forces
+a **named** `using` clause. Context-bound syntax cannot render the additional applied
+typeclass arguments without synthesizing a type lambda. Name the evidence parameter
+after the new or reused type parameter. Fixture 12 therefore renders exactly:
+
+```scala
+private def parse[F[_]](s: String)(using F: MonadError[F, Throwable]): F[Int]
+```
+
+When `extraTypeParams` is empty, context-bound style renders constraints in
+`solution.constraints` symbol order, for example `[G[_]: Functor: FunctorFilter]`.
+Using style renders one named evidence parameter per constraint, in the same order; use
+the type-parameter name for a single constraint and append stable numeric suffixes
+`2`, `3`, ... when there are several (`G`, `G2`, `G3`).
+
+### Existing-constraint reuse
+
+Search visible type parameters from the candidate def outward through enclosing defs
+and template owners, innermost scope first and source order within one owner. A candidate
+matches the requested kind exactly: `A` for `Star`, `G[_]` for `Unary`. Read its Cats
+constraints from both of these sources and union them:
+
+1. context bounds written on that `Type.Param`; and
+2. in-scope `using` evidence parameters whose type is an indexed Cats typeclass applied
+   to that candidate type parameter.
+
+Resolve every typeclass through SemanticDB. For an applied constraint with additional
+arguments, those non-constructor arguments must be semantically identical to the
+solution's rendered arguments; in particular `MonadError[G, Throwable]` does not match
+`MonadError[G, DomainError]`. A candidate constraint set is a superset of the solution
+iff, for every required typeclass `R`, the set contains some `C` where `C == R` or
+`index.isAncestor(R, C)`; a stronger constraint therefore satisfies a weaker one.
+This makes an existing `Traverse[G]` a valid superset of a `Functor[G]` solution.
+
+Choose the first matching candidate in the search order. Rewrite concrete constructor
+heads to that parameter, but emit no type parameter and no constraint. Do not emit the
+solution's typeclass imports: the existing evidence is already in scope. Emit only the
+syntax imports required by `usage.ops`, after applying the existing-import suppression
+rules above. This is the exact contract for `AbstractExistingConstraintReuse`.
+
+### Patch anchoring
+
+Every patch anchor is a node reachable from the original `doc.tree`:
+
+- When the def has no type parameters, insert the complete new type-parameter clause
+  with `Patch.addRight(defn.name, renderedTypeParams)`. `defn.name` is the anchor; do
+  not parse `doc.input.text` merely to manufacture a missing type-parameter-list node.
+- When a type-parameter clause exists, append relative to its last original
+  `Type.Param`; constraint edits anchor to the original `Type.Param` or original using
+  parameter clause involved.
+- Parameter type replacements anchor to each matching original `Type.Apply.tpe` below
+  a `Term.Param.decltpe`.
+- Result type replacements anchor to each matching original `Type.Apply.tpe` below
+  `defn.decltpe`.
+- Import insertion anchors after the last in-scope top-level/package `Import`. If there
+  is none, anchor after the enclosing unbraced package's `Pkg.ref`; for a source without
+  a package, anchor before its first original top-level `Stat`. A candidate def implies
+  such a stat exists.
+
+No edit may anchor to a tree obtained by reparsing `doc.input.text`, even when the def
+has no existing type parameters. Positions from a second parse are forbidden by
+`docs/RULES.md`.
+
+### Idempotence
+
+The current `UsageAnalyzer.signatureTargets`/`outerConcreteTargets` partially provides
+idempotence: an applied head whose symbol is a type parameter fails the
+`isGlobal && !isTypeParameter` test, so `G[A]` itself is not returned as a concrete
+target. It then descends into that application's arguments, however, and other concrete
+applications elsewhere in the signature (for example the preserved `Option` in
+`Option[G[A]]`) can still be discovered. Analyzer target discovery alone is therefore
+not a sufficient second-run guard.
+
+The shell must not call the analyzer for a def when both conditions hold:
+
+1. a declared parameter or result type contains a `Type.Apply` whose head resolves to
+   a visible type parameter; and
+2. that type parameter has at least one visible indexed Cats constraint according to
+   the context-bound/using lookup defined above.
+
+Such a def produces no candidate, no diagnostic, and no patch. Before the first rewrite
+`AbstractExistingConstraintReuse` has a constrained enclosing `G` but no `G[...]` in
+the candidate def's signature, so it does not trip the guard; after reuse it does. This
+predicate also makes every newly introduced context-bound or using-style abstraction a
+no-op on the second run.
+
+### Byte-exact smoke fixtures
+
+These are complete file bodies for the two #67 smoke pairs. #67 copies them verbatim to
+the flat executed-fixture paths shown. The negative pair follows
+`ArrowFlowFanOutNegativeShadow.scala`: its input places `// assert:` on the diagnostic
+line, while its expected output omits that testkit-only assertion comment.
+
+#### `scalafix/testInput/src/golden/AbstractFunctorListMap.scala`
+
+```scala
+/*
+rules = [PreferHKTTypeclasses]
+ */
+package golden
+
+final case class FunctorUser(name: String)
+
+object AbstractFunctorListMap {
+  private def names(users: List[FunctorUser]): List[String] =
+    users.map(_.name)
+}
+```
+
+#### `scalafix/testOutput/src/golden/AbstractFunctorListMap.scala`
+
+```scala
+/*
+rules = [PreferHKTTypeclasses]
+ */
+package golden
+
+import cats.Functor
+import cats.syntax.functor.*
+
+final case class FunctorUser(name: String)
+
+object AbstractFunctorListMap {
+  private def names[G[_]: Functor](users: G[FunctorUser]): G[String] =
+    users.map(_.name)
+}
+```
+
+#### `scalafix/testInput/src/golden/AbstractPublicBoundaryDecline.scala`
+
+```scala
+/*
+rules = [PreferHKTTypeclasses]
+
+PreferHKTTypeclasses.widenPublic = false
+ */
+package golden
+
+final case class PublicBoundaryUser(name: String)
+
+object AbstractPublicBoundaryDecline {
+  def names(users: List[PublicBoundaryUser]): List[String] = // assert: PreferHKTTypeclasses
+    users.map(_.name)
+}
+```
+
+#### `scalafix/testOutput/src/golden/AbstractPublicBoundaryDecline.scala`
+
+```scala
+/*
+rules = [PreferHKTTypeclasses]
+
+PreferHKTTypeclasses.widenPublic = false
+ */
+package golden
+
+final case class PublicBoundaryUser(name: String)
+
+object AbstractPublicBoundaryDecline {
+  def names(users: List[PublicBoundaryUser]): List[String] =
+    users.map(_.name)
+}
+```
 
 ---
 

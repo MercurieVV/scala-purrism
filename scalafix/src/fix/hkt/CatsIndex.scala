@@ -8,11 +8,18 @@ import scalafix.v1.Symbol
   * artifacts under `scalafix/resources/cats-index/` (see
   * `docs/design/PreferHKTTypeclasses.md`, item 2 and item 7).
   */
-final class CatsIndex(
+final class CatsIndex private (
     val typeclasses: Map[Symbol, CatsTypeclass],
     val capabilities: Map[Symbol, List[Capability]],
-    val syntax: Map[Symbol, Capability]
+    val syntax: Map[Symbol, Capability],
+    private val syntaxImports: Map[Symbol, String]
 ) {
+
+  def this(
+      typeclasses: Map[Symbol, CatsTypeclass],
+      capabilities: Map[Symbol, List[Capability]],
+      syntax: Map[Symbol, Capability]
+  ) = this(typeclasses, capabilities, syntax, Map.empty)
 
   /** Every capability whose method or owner is `method`, across all
     * typeclasses, in stable order (by typeclass symbol string).
@@ -33,6 +40,11 @@ final class CatsIndex(
       .map(_.owner)
 
   def resolveSyntax(method: Symbol): Option[Capability] = syntax.get(method)
+
+  /** The syntax wildcard import for a syntax method or its resolved primitive
+    * owner.
+    */
+  def syntaxImport(method: Symbol): Option[String] = syntaxImports.get(method)
 
   /** Transitive, cycle-safe ancestry over `CatsTypeclass.parents`. */
   def isAncestor(ancestor: Symbol, descendant: Symbol): Boolean = {
@@ -90,7 +102,7 @@ object CatsIndex {
   private def build(
       typeclassList: List[CatsTypeclass],
       capabilityList: List[Capability],
-      syntaxList: List[(Symbol, Symbol, Symbol)]
+      syntaxList: List[(Symbol, Symbol, Symbol, String)]
   ): CatsIndex = {
     val typeclassMap = typeclassList.map(tc => tc.symbol -> tc).toMap
     val capabilitiesByTypeclass = capabilityList.groupBy(_.typeclass)
@@ -101,7 +113,7 @@ object CatsIndex {
       .toMap
 
     val syntaxMap = syntaxList
-      .flatMap { case (syntaxMethod, owner, method) =>
+      .flatMap { case (syntaxMethod, owner, method, _) =>
         capabilitiesByOwnerMethod
           .get((owner, method))
           .flatMap(_.headOption)
@@ -109,7 +121,34 @@ object CatsIndex {
       }
       .toMap
 
-    new CatsIndex(typeclassMap, capabilitiesByTypeclass, syntaxMap)
+    val exactSyntaxImports = syntaxList.map { case (syntaxMethod, _, _, importPath) =>
+      syntaxMethod -> importPath
+    }.toMap
+    val resolvedSyntaxImports = syntaxList
+      .flatMap { entry =>
+        val (_, owner, method, _) = entry
+        List(owner, method).distinct.map(_ -> entry)
+      }
+      .groupBy(_._1)
+      .view
+      .mapValues { entries =>
+        entries
+          .map(_._2)
+          .sortBy { case (syntaxMethod, _, method, importPath) =>
+            val directOwner = syntaxMethod.value.replace(".Ops#", "#") == method.value
+            (if (directOwner) 0 else 1, syntaxMethod.value, importPath)
+          }
+          .head
+          ._4
+      }
+      .toMap
+
+    new CatsIndex(
+      typeclassMap,
+      capabilitiesByTypeclass,
+      syntaxMap,
+      exactSyntaxImports ++ resolvedSyntaxImports
+    )
   }
 
   private def readResourceLines(resource: String): List[String] = {
@@ -188,10 +227,12 @@ object CatsIndex {
       case other => Left(s"expected 6 columns, got ${other.size}")
     }
 
-  private def parseSyntaxRow(cells: List[String]): Either[String, (Symbol, Symbol, Symbol)] =
+  private def parseSyntaxRow(
+      cells: List[String]
+  ): Either[String, (Symbol, Symbol, Symbol, String)] =
     cells match {
-      case List(syntaxMethod, owner, method, _) =>
-        Right((Symbol(syntaxMethod), Symbol(owner), Symbol(method)))
+      case List(syntaxMethod, owner, method, importPath) =>
+        Right((Symbol(syntaxMethod), Symbol(owner), Symbol(method), importPath))
       case other => Left(s"expected 4 columns, got ${other.size}")
     }
 
