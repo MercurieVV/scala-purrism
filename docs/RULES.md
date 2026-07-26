@@ -11,6 +11,7 @@
 - Emit diagnostics as `LintSeverity.Warning` unless they should genuinely block. Scalafix withholds a rule's patches when it reports lint *errors*, so an over-severe diagnostic silently turns the rewrite into a no-op.
 - A rewrite that changes a *signature* must re-shape every call site, and scalafix can only patch the document it is handed. So either restrict the rewrite to definitions whose callers are provably in that file, or decide once for the whole project — never per file. A filter applied per file can decline a definition after another file has already re-split its calls, and the project stops compiling. `KleisliLiftScope` is the project-wide form: it reads the SemanticDB payload up front and every document then acts on that shared verdict, applying no judgement of its own.
 - A rule that consumes another rule's output needs a recompile between them. SemanticDB describes the code as it was compiled; after a signature rewrite the payload is stale, and a rule reading types from it is reasoning about code that no longer exists. `PreferKleisli` → recompile → `PreferArrow` is the pipeline, not one invocation listing both.
+- `PreferCatsFunctions` normalization/preservation/ranking/decline semantics are specified in [Prefer Cats Functions](PREFER_CATS_FUNCTIONS.md); conform to that contract rather than re-deriving equivalence rules ad hoc.
 
 ## Typelevel Style
 
