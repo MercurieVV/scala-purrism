@@ -21,6 +21,7 @@ import scala.meta.internal.{semanticdb => s}
   * anchoring patches on a tree parsed from a different `Input` than `doc.tree`.
   */
 @nowarn("cat=deprecation")
+@nowarn("cat=wartremover:Any")
 final class GraphBuilder(index: SemanticdbIndex, sourceroot: Path) {
 
   def build(): Graph = {
@@ -693,7 +694,11 @@ final class GraphBuilder(index: SemanticdbIndex, sourceroot: Path) {
         if (remaining.lastOption.exists(isRepeated)) {
           val fixed = remaining.dropRight(1)
           fixed.zip(positional) ++
-            positional.drop(fixed.length).map(remaining.last -> _)
+            positional
+              .drop(fixed.length)
+              .map(
+                remaining(remaining.length - 1) -> _
+              )
         } else remaining.zip(positional)
 
       (namedPairs ++ positionalPairs).flatMap { case (param, arg) =>
@@ -800,6 +805,7 @@ final class GraphBuilder(index: SemanticdbIndex, sourceroot: Path) {
   // -- position/symbol alignment ------------------------------------------
 
   /** Occurrences indexed by their start position, for tree alignment. */
+  @nowarn("cat=wartremover:Any")
   private final class OccurrenceLookup(document: s.TextDocument) {
     private val byStart: Map[(Int, Int), String] =
       document.occurrences.iterator
@@ -813,6 +819,7 @@ final class GraphBuilder(index: SemanticdbIndex, sourceroot: Path) {
       byStart.get((pos.startLine, pos.startColumn))
   }
 
+  @nowarn("cat=wartremover:Any")
   private final class DocumentContext(
       val uri: String,
       lookup: OccurrenceLookup
@@ -971,6 +978,7 @@ final class GraphBuilder(index: SemanticdbIndex, sourceroot: Path) {
 /** The flow edges, plus types for nodes that have no symbol of their own -- at
   * present the explicit type argument of a `Kleisli.local[...]` reshaping.
   */
+@nowarn("cat=wartremover:Any")
 final case class Graph(
     edges: List[Edge],
     syntheticTypes: Map[Node, String]
@@ -1009,6 +1017,7 @@ object GraphBuilder {
   )
 
   /** Origin lookup that understands the synthetic node symbols above. */
+  @nowarn("cat=wartremover:Any")
   def originOf(index: SemanticdbIndex, symbol: String): Origin =
     if (symbol.startsWith("expr:")) Origin.Expression
     else if (symbol.startsWith("foreign:")) Origin.Foreign
@@ -1019,6 +1028,7 @@ object GraphBuilder {
   /** The `Facts` view the closure runs over, combining SemanticDB signatures
     * with the synthetic nodes the builder introduced.
     */
+  @nowarn("cat=wartremover:Any")
   def facts(index: SemanticdbIndex, graph: Graph): Facts = new Facts {
     def edges: List[Edge] = graph.edges
     def origin(symbol: String): Origin = originOf(index, symbol)

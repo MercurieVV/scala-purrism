@@ -3,6 +3,7 @@ package fix.opaque
 import java.nio.file.Files
 import java.nio.file.Path
 
+import scala.annotation.nowarn
 import scala.jdk.CollectionConverters._
 import scala.meta.internal.{semanticdb => s}
 
@@ -19,6 +20,7 @@ import scala.meta.internal.{semanticdb => s}
   * `validatedClasspath = Classpath(targetrootClasspath) ++ baseClasspath`), so
   * no extra configuration key is needed.
   */
+@nowarn("cat=wartremover:Any")
 final class SemanticdbIndex(val documents: List[s.TextDocument]) {
 
   /** Every symbol defined anywhere in the analysed sources. */
@@ -157,6 +159,7 @@ final class SemanticdbIndex(val documents: List[s.TextDocument]) {
       .map(_.uri)
 }
 
+@nowarn("cat=wartremover:Any")
 object SemanticdbIndex {
 
   /** Type constructors whose *second* type argument is the input a value flows
@@ -230,6 +233,7 @@ object SemanticdbIndex {
       }
       .distinctBy(_.uri)
 
+  @nowarn("cat=wartremover:Any")
   private def md5(file: Path): String = {
     val digest = java.security.MessageDigest.getInstance("MD5")
     digest.digest(Files.readAllBytes(file)).map(b => f"$b%02X").mkString
