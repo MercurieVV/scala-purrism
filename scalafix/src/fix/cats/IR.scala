@@ -1,12 +1,13 @@
 package fix.prefercats
 
-/** Normalized representation shared by the Cats-side index (this phase) and,
-  * later, project-side candidate extraction. See docs/PREFER_CATS_FUNCTIONS.md
-  * §1-3 for the erasure/preservation contract this shape encodes structurally:
-  * binders are de Bruijn indices (alpha-equivalence is representational, not
-  * checked), free names carry resolved symbols (capture cannot be introduced),
-  * and argument order/count is positional (evaluation order and count are
-  * preserved by construction, never reordered or deduped).
+/** Normalized representation shared by the Cats-side index (task #99) and
+  * project-side candidate extraction (this phase). See
+  * docs/PREFER_CATS_FUNCTIONS.md §1-3 for the erasure/preservation contract
+  * this shape encodes structurally: binders are de Bruijn indices
+  * (alpha-equivalence is representational, not checked), free names carry
+  * resolved symbols (capture cannot be introduced), and argument order/count is
+  * positional (evaluation order and count are preserved by construction, never
+  * reordered or deduped).
   */
 enum Slot:
   case Bound(deBruijn: Int)
