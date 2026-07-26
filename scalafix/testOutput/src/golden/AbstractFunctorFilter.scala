@@ -5,6 +5,5 @@ package golden
 
 import cats.Functor
 import cats.FunctorFilter
-import cats.syntax.functorFilter._
 
-private def filter[G[_]: Functor: FunctorFilter](xs: G[Int]): G[Int] = xs.filter(_ > 0)
+private def filter[G[_]: Functor: FunctorFilter](xs: G[Int]): G[Int] = FunctorFilter[G].filter(xs)(_ > 0)
