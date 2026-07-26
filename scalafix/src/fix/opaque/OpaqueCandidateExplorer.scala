@@ -20,7 +20,6 @@ import scala.meta.internal.{semanticdb => s}
   * traversals. Seeds are considered in sorted order, so the cap truncates
   * deterministically rather than arbitrarily.
   */
-@nowarn("cat=wartremover:Any")
 final case class ExplorerConfig(
     basicTypes: List[String],
     minClusterSize: Int,
@@ -60,7 +59,6 @@ object ExplorerConfig {
 /** One ranked candidate: a value-flow cluster and the spec that would convert
   * it.
   */
-@nowarn("cat=wartremover:Any")
 final case class OpaqueCandidate(
     name: String,
     underlying: String,
@@ -98,7 +96,6 @@ final case class OpaqueCandidate(
   * for the reachable set, so a candidate's reported size is exactly the set
   * `PropagateOpaqueType` would rewrite.
   */
-@nowarn("cat=wartremover:Any")
 object OpaqueCandidateExplorer {
 
   /** Names that are never worth seeding from: compiler-generated members and
@@ -133,7 +130,6 @@ object OpaqueCandidateExplorer {
     explore(index, facts, ExplorerConfig.default)
 
   /** A cluster before it has been named. */
-  @nowarn("cat=wartremover:Any")
   private final case class Cluster(
       underlying: String,
       seeds: List[String],
@@ -392,7 +388,6 @@ object OpaqueCandidateExplorer {
     * parameter/type-parameter group, so `a/b/C#find().(id)` reads as `a/`,
     * `b/`, `C#`, `find().`, `(id)`.
     */
-  @nowarn("cat=wartremover:Var")
   def segments(symbol: String): List[String] = {
     val out = List.newBuilder[String]
     var start = 0
