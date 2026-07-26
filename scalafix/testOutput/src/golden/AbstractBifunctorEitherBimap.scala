@@ -1,6 +1,3 @@
-/*
-rules = [PreferHKTTypeclasses]
- */
 package golden
 
 import cats.Bifunctor

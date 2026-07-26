@@ -1,5 +1,5 @@
 /*
-rules = [PreferHKTTypeclasses]
+rules = []
  */
 package golden
 
