@@ -84,8 +84,9 @@ object GitPreCommit:
                 .flatMap { line =>
                   excludeRegex
                     .findFirstMatchIn(line.trim)
-                    .map(_.group(1).trim)
+                    .map(_.group(1).trim.split("\\s+").toList)
                 }
+                .flatten
                 .toList
             else Nil
           val result = os
