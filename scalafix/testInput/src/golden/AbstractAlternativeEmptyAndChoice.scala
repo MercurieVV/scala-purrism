@@ -5,4 +5,6 @@ package golden
 
 import cats.syntax.semigroupk._
 
-private def combine(x: List[Int], y: List[Int]): List[Int] = x <+> y
+object AbstractAlternativeEmptyAndChoice {
+  private def choose[G[_]: Alternative](x: G[Int], y: G[Int]): G[Int] = x <+> y
+}
