@@ -505,7 +505,7 @@ object catsIndex extends ScalaModule {
   def scalaVersion = Versions.scala3
   def moduleDeps = Seq(scalafix)
 
-  def indexOutputPath = mill.api.BuildCtx.workspaceRoot / "scalafix" / "resources" / "purrism" /
+  def indexOutputPath = mill.api.BuildCtx.workspaceRoot / "scalafix" / "src" / "resources" / "purrism" /
     s"cats-index-${Versions.catsCore}.ndjson.gz"
 
   /** `mill catsIndex.generate` -- downloads the cats-core sources jar pinned
