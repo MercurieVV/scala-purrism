@@ -2,6 +2,7 @@ fix.TypelevelPurrism
 fix.TypeclassWeakening
 fix.PreferKleisli
 fix.PreferArrow
+fix.PreferCatsFunctions
 fix.PreferCatsSyntax
 fix.SimplifyCatsExpressions
 fix.OpaqueTypePropagation
