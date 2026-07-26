@@ -3,6 +3,7 @@ package fix.opaque
 import java.nio.file.Files
 import java.nio.file.Path
 
+import scala.annotation.nowarn
 import scala.jdk.CollectionConverters._
 import scala.meta.internal.{semanticdb => s}
 
@@ -230,6 +231,7 @@ object SemanticdbIndex {
       }
       .distinctBy(_.uri)
 
+  @nowarn("cat=deprecation")
   private def md5(file: Path): String = {
     val digest = java.security.MessageDigest.getInstance("MD5")
     digest.digest(Files.readAllBytes(file)).map(b => f"$b%02X").mkString

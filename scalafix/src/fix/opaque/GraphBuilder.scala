@@ -693,7 +693,11 @@ final class GraphBuilder(index: SemanticdbIndex, sourceroot: Path) {
         if (remaining.lastOption.exists(isRepeated)) {
           val fixed = remaining.dropRight(1)
           fixed.zip(positional) ++
-            positional.drop(fixed.length).map(remaining.last -> _)
+            positional
+              .drop(fixed.length)
+              .map(
+                remaining(remaining.length - 1) -> _
+              )
         } else remaining.zip(positional)
 
       (namedPairs ++ positionalPairs).flatMap { case (param, arg) =>

@@ -6,3 +6,4 @@ fix.PreferCatsSyntax
 fix.SimplifyCatsExpressions
 fix.OpaqueTypePropagation
 fix.PropagateOpaqueType
+fix.PreferHKTTypeclasses
