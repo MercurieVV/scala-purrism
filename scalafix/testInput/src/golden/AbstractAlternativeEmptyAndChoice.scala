@@ -3,6 +3,7 @@ rules = [PreferHKTTypeclasses]
  */
 package golden
 
+import cats.Alternative
 import cats.syntax.semigroupk._
 
 object AbstractAlternativeEmptyAndChoice {
