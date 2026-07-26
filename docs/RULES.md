@@ -6,6 +6,7 @@
 - Prefer semantic information over syntax-only matching when a rewrite depends on symbols or inferred types. Identifier names are not identity: two unrelated fields can share one.
 - Rules must be deterministic, idempotent, and safe to run repeatedly.
 - Every automatic rewrite must have an executed fixture under `scalafix/testInput` and `scalafix/testOutput`. See [Golden Fixtures](GOLDEN_FIXTURES.md).
+- `PreferCatsFunctions` normalization/preservation/ranking/decline semantics are specified in [Prefer Cats Functions](PREFER_CATS_FUNCTIONS.md); conform to that contract rather than re-deriving equivalence rules ad hoc.
 - Checks that cannot be safely rewritten should report diagnostics instead of producing partial edits.
 - Anchor every `Patch` on a node from `doc.tree`. A tree parsed from any other `Input` — including a re-parse of `doc.input.text` — carries positions that only coincide by luck, and writing at those offsets corrupts the file.
 - Emit diagnostics as `LintSeverity.Warning` unless they should genuinely block. Scalafix withholds a rule's patches when it reports lint *errors*, so an over-severe diagnostic silently turns the rewrite into a no-op.
