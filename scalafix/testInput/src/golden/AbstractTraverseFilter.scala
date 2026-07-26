@@ -3,8 +3,8 @@ rules = [PreferHKTTypeclasses]
  */
 package golden
 
-import cats.syntax.traverseFilter._
+import cats.TraverseFilter
 
 object AbstractTraverseFilter {
-  private def filterMap(xs: List[Int]): Option[List[Int]] = xs.traverseFilter(i => Option(Option(i)))
+  private def filterMap(xs: List[Int]): Option[List[Int]] = TraverseFilter[List].traverseFilter(xs)(i => Option(Option(i)))
 }
