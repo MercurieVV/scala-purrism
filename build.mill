@@ -55,8 +55,8 @@ object scalafix
     "-Ysemanticdb",
     s"-sourceroot:${mill.api.BuildCtx.workspaceRoot}",
     "-Wunused:imports",
+    "-Wconf:msg=wartremover:s",
     "-Werror",
-    "-Xlint:-deprecation",
     "-P:wartremover:only-warn-traverser:org.wartremover.warts.Unsafe"
   )
   def mvnDeps = Seq(

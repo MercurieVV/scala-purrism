@@ -1,6 +1,4 @@
-/*
-rules = [PreferHKTTypeclasses]
- */
+
 package golden
 
 import cats.Alternative

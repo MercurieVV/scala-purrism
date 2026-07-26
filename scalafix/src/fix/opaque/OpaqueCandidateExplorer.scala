@@ -1,6 +1,5 @@
 package fix.opaque
 
-import scala.annotation.nowarn
 import scala.meta.internal.{semanticdb => s}
 
 /** What the explorer looks for, and how much of it to report.
@@ -21,9 +20,9 @@ import scala.meta.internal.{semanticdb => s}
   * deterministically rather than arbitrarily.
   */
 final case class ExplorerConfig(
-    basicTypes: List[String],
-    minClusterSize: Int,
-    maxSeedsPerType: Int
+    basicTypes: List[String] = ExplorerConfig.DefaultBasicTypes,
+    minClusterSize: Int = ExplorerConfig.DefaultMinClusterSize,
+    maxSeedsPerType: Int = 2000
 )
 
 object ExplorerConfig {
