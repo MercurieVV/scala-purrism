@@ -55,13 +55,8 @@ object scalafix
     "-Ysemanticdb",
     s"-sourceroot:${mill.api.BuildCtx.workspaceRoot}",
     "-Wunused:imports",
-    // wartremover's `only-warn-traverser` warnings must stay non-fatal even
-    // under -Werror below (`-Wconf` entries are first-match-wins, so this
-    // silencing rule has to precede -Werror's blanket "any:error"). The
-    // Unsafe group currently flags ~130 pre-existing spots (Any, Var,
-    // OptionPartial); promote to a hard `traverser` once those are cleaned up.
-    "-Wconf:msg=wartremover:s",
     "-Werror",
+    "-Xlint:-deprecation",
     "-P:wartremover:only-warn-traverser:org.wartremover.warts.Unsafe"
   )
   def mvnDeps = Seq(
