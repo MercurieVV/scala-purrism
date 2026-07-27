@@ -22,7 +22,12 @@ class OpaqueCandidateExplorerSuite extends munit.FunSuite {
     // The `Branch#name` flow is the widest one in `testInput`, so it heads the
     // ranking. Asserting the concrete cluster -- not merely "something is
     // first" -- is what makes this a regression test for the metric.
-    assertEquals(top.name, "BranchName")
+    //
+    // The name is `BranchName2`, not `BranchName`: `OpaqueAnnotations.scala`
+    // already declares `opaque type BranchName`, and discovery refuses to mint
+    // a second type under an existing type's name -- it takes the next free
+    // suffix instead, exactly as it must in a codebase already part-converted.
+    assertEquals(top.name, "BranchName2")
     assertEquals(top.owner, "golden/Run#")
     assertEquals(top.underlying, "scala/Predef.String#")
     assert(
@@ -62,6 +67,18 @@ class OpaqueCandidateExplorerSuite extends munit.FunSuite {
     )
   }
 
+  test("no candidate reuses a type name already in the sources") {
+    val existing = OpaqueCandidateExplorer.existingTypeNames(FixtureIndex.index)
+    val clash = candidates.map(_.name).filter(existing.contains)
+    assert(
+      clash.isEmpty,
+      s"candidates collide with existing types: ${clash.mkString(", ")}"
+    )
+    // And the guard is actually exercised: `BranchName` exists, so the widest
+    // String flow had to be renamed rather than trivially not colliding.
+    assert(existing.contains("BranchName"))
+  }
+
   test("clusters are not reported twice under different seeds") {
     val memberSets = candidates.map(_.members.toSet)
     assertEquals(memberSets.distinct.size, memberSets.size)
@@ -83,21 +100,37 @@ class OpaqueCandidateExplorerSuite extends munit.FunSuite {
     assert(parsed.types.forall(_.widen.isEmpty))
   }
 
-  test("topN and the basic-type set are honoured") {
+  test("the basic-type set is honoured") {
     val onlyInts = OpaqueCandidateExplorer.explore(
       FixtureIndex.index,
       FixtureIndex.facts,
-      ExplorerConfig(basicTypes = List("scala/Int#"), topN = 3)
+      ExplorerConfig(basicTypes = List("scala/Int#"))
     )
-    assert(onlyInts.size <= 3)
     assert(onlyInts.forall(_.underlying == "scala/Int#"))
+  }
 
-    val capped = OpaqueCandidateExplorer.explore(
+  test("minClusterSize is a threshold, and raising it converges to empty") {
+    val maxSize = candidates.map(_.size).max
+
+    // At the threshold only the largest flows survive, and every one of them
+    // clears it -- the knob keeps clusters, it does not cap their count.
+    val atMax = OpaqueCandidateExplorer.explore(
       FixtureIndex.index,
       FixtureIndex.facts,
-      ExplorerConfig(topN = 1)
+      ExplorerConfig(minClusterSize = maxSize)
     )
-    assertEquals(capped.size, 1)
+    assert(atMax.nonEmpty)
+    assert(atMax.forall(_.size >= maxSize))
+    assertEquals(atMax.map(_.size).distinct, List(maxSize))
+
+    // One past the largest cluster: nothing is worth converting, so the rule
+    // hands back nothing -- the convergence a fixed `topN` never reached.
+    val past = OpaqueCandidateExplorer.explore(
+      FixtureIndex.index,
+      FixtureIndex.facts,
+      ExplorerConfig(minClusterSize = maxSize + 1)
+    )
+    assert(past.isEmpty)
   }
 
   test("symbol segmentation survives parameters and type parameters") {

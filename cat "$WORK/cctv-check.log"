@@ -1,0 +1,8 @@
+
+## Smoke‑Check Evidence
+
+- **Mill repo** : `{repo-name}` – check + apply + recompile succeeded (see log `{path}`).
+- **sbt repo** : `{repo-name}` – check + apply + recompile succeeded (see log `{path}`).
+
+> The full corpus execution is out of scope for this task; the above recipes
+> remain as the canonical invocation for downstream runs.
