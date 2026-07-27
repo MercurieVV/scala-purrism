@@ -296,7 +296,9 @@ object PreferArrow {
         enumerators.enums.count(_.is[Enumerator.Generator])
       case Term.Select(_, Term.Name("flatMap" | "flatTap" | "productR")) => 1
       case infix: Term.ApplyInfix
-          if Set("*>", ">>", "&&&", ">>>", "|||").contains(infix.op.value) =>
+          if Set("*>", "<*", ">>", "&&&", ">>>", "|||").contains(
+            infix.op.value
+          ) =>
         1
       case applyTerm: Term.Apply if isKleisliApplication(applyTerm) => 1
     }.sum
@@ -572,7 +574,9 @@ object PreferArrow {
       Option.when(has { case _: ArrowIR.AndThen => })(ComposeSyntaxImporter),
       Option.when(has { case _: ArrowIR.Merge => })(ArrowSyntaxImporter),
       Option.when(has { case _: ArrowIR.Choice => })(ChoiceSyntaxImporter),
-      Option.when(has { case _: ArrowIR.ProductR => })(ApplySyntaxImporter),
+      Option.when(
+        has { case _: ArrowIR.ProductR | _: ArrowIR.ProductL => }
+      )(ApplySyntaxImporter),
       Option.when(has { case _: ArrowIR.FlatTap => })(FlatMapSyntaxImporter)
     ).flatten.filterNot(importer => present.contains(importer.syntax))
   }

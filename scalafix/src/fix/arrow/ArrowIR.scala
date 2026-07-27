@@ -68,6 +68,14 @@ object ArrowIR {
     */
   final case class ProductR(l: ArrowIR, r: ArrowIR) extends ArrowIR
 
+  /** `l <* r` -- both arrows fed the same input, right's result discarded.
+    *
+    * The mirror of [[ProductR]]. The shape a body writes as `work(x).as(x)`:
+    * the effect runs for its effect only and the arrow's own input is what
+    * continues, which is `Kleisli.ask <* work`.
+    */
+  final case class ProductL(l: ArrowIR, r: ArrowIR) extends ArrowIR
+
   /** `a.flatTap { <binders> => tap }` -- run `tap` on `a`'s result and keep
     * `a`'s result.
     *
@@ -108,6 +116,7 @@ object ArrowIR {
       case Merge(l, r)      => fold(r)(fold(l)(here)(op))(op)
       case Choice(l, r)     => fold(r)(fold(l)(here)(op))(op)
       case ProductR(l, r)   => fold(r)(fold(l)(here)(op))(op)
+      case ProductL(l, r)   => fold(r)(fold(l)(here)(op))(op)
       case FlatTap(a, _, t) => fold(t)(fold(a)(here)(op))(op)
       case Local(_, a)      => fold(a)(here)(op)
       case Rmap(a, _)       => fold(a)(here)(op)
