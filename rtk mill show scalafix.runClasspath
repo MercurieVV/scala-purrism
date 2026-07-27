@@ -1,0 +1,7 @@
+
+Export the result as `TOOL_CP`.
+
+### 2. Obtain the scalafix‑cli launcher
+
+Neither `scalafix` nor `cs` is assumed to be on `PATH`. Launch via Coursier:
+
