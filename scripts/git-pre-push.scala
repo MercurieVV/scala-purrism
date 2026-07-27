@@ -107,14 +107,11 @@ object GitPrePush:
       case "mill" =>
         val buildContent = os.read(millBuildFile.get)
         val prePushTarget =
-          // A `def prePush` at column 0 is a root-level task (`mill prePush`);
-          // an indented one lives inside the `app` module object.
           if buildContent.linesIterator.exists(_.startsWith("def prePush")) then
             Some("prePush")
-          else if buildContent.contains("def prePush") then Some("app.prePush")
           else None
         // Without a prePush task, fall back to every test module in the build
-        // rather than assuming an `app` module exists.
+        // rather than assuming a specific module exists.
         val cmd = Seq("mill", prePushTarget.getOrElse("__.test"))
         os.proc(cmd).call(cwd = repoRoot, check = false).exitCode
 
