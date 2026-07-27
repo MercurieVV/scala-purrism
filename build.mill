@@ -7,7 +7,6 @@ import javalib.*
 import mill.javalib.publish.*
 import mill.util.VcsVersionModule
 import com.github.lolgab.mill.mima.*
-import mill.define.Module
 
 object Versions {
   def scala3 = "3.8.4"
@@ -155,19 +154,11 @@ object docs extends ScalaModule {
   def mvnDeps = Seq(mvn"org.scalameta::mdoc:${Versions.mdoc}")
 }
 
-object app extends Module {
-  def prePush = T.command {
-    scalafix.compile()
-    scalafix.explorer.compile()
-    scalafix.testInput.compile()
-    scalafix.testOutput.compile()
-    scalafix.test.testForked()()
-  }
-}
-
-def prePush() = T.command {
+def prePush() = T.task {
   scalafix.compile()
   scalafix.explorer.compile()
+  // Compile fixtures before the suite so a broken fixture reports as a compile
+  // error rather than an opaque "SemanticDB not found" test failure.
   scalafix.testInput.compile()
   scalafix.testOutput.compile()
   scalafix.test.testForked()()
