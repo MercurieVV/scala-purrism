@@ -1,0 +1,14 @@
+
+## Per‑Repo Command Blocks
+
+Each block assumes the repo is cloned at `$HOME/corpus/<name>` and that
+`$TOOL_CP` has been resolved as above. Every run uses a throwaway
+`git worktree` so the original checkout is never modified.
+
+JDK and Scala versions are noted per repo; adjust launchers accordingly.
+
+### 1. `arrowstep` (Mill)
+
+- **Scala version** : `{scala-version}`
+- **JDK** : `{jdk-version}`
+
