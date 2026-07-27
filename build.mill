@@ -154,7 +154,7 @@ object docs extends ScalaModule {
   def mvnDeps = Seq(mvn"org.scalameta::mdoc:${Versions.mdoc}")
 }
 
-def prePush() = T.task {
+def prePush() = Task.Command {
   scalafix.compile()
   scalafix.explorer.compile()
   // Compile fixtures before the suite so a broken fixture reports as a compile
