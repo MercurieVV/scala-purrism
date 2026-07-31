@@ -107,6 +107,8 @@ object GitPrePush:
       case "mill" =>
         val buildContent = os.read(millBuildFile.get)
         val prePushTarget =
+          // A `def prePush` at column 0 is a root-level task (`mill prePush`);
+          // nested module tasks should be invoked explicitly by a root command.
           if buildContent.linesIterator.exists(_.startsWith("def prePush")) then
             Some("prePush")
           else None

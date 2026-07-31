@@ -34,6 +34,63 @@ final class CatsIndexSuite extends FunSuite {
     )
   }
 
+  test("resolveStdlib resolves List#map() to the Functor#map() owner") {
+    val capabilities =
+      index.resolveStdlib(Symbol("scala/collection/immutable/List#map()."))
+    assertEquals(capabilities.map(_.owner), List(Symbol("cats/Functor#map().")))
+  }
+
+  test("resolveStdlib keeps the two unrelated reduce capability roots") {
+    val capabilities =
+      index.resolveStdlib(Symbol("scala/collection/IterableOnceOps#reduce()."))
+    assertEquals(capabilities.size, 2)
+    assertEquals(
+      capabilities.map(_.typeclass),
+      List(Symbol("cats/Reducible#"), Symbol("cats/kernel/Semigroup#"))
+    )
+    val List(left, right) = capabilities.map(_.typeclass): @unchecked
+    assert(!index.isAncestor(left, right))
+    assert(!index.isAncestor(right, left))
+  }
+
+  test("resolveStdlib declines concrete-only operations") {
+    assertEquals(
+      index.resolveStdlib(Symbol("scala/collection/immutable/List#head().")),
+      Nil
+    )
+    val deliberatelyAbsent = List(
+      "head",
+      "tail",
+      "last",
+      "apply",
+      "sorted",
+      "sortBy",
+      "length",
+      "size",
+      "isDefined",
+      "get",
+      "reverse",
+      "distinct",
+      "zipWithIndex"
+    )
+    assert(
+      index.stdlib.keysIterator.forall { symbol =>
+        deliberatelyAbsent.forall(name => !symbol.value.contains(s"#$name("))
+      }
+    )
+  }
+
+  test("every stdlib owner and method pair exists in capabilities.tsv") {
+    val capabilityPairs = index.capabilities.valuesIterator.flatten
+      .map(capability => capability.owner -> capability.method)
+      .toSet
+    val stdlibPairs = resourceDataRows(CatsIndex.stdlibResource).map { line =>
+      val cells = line.split("\t", -1)
+      Symbol(cells(1)) -> Symbol(cells(2))
+    }
+    stdlibPairs.foreach(pair => assert(capabilityPairs(pair), pair.toString))
+  }
+
   test("primitiveOwner and providersOf agree for Traverse#traverse()") {
     val method = Symbol("cats/Traverse#traverse().")
     assertEquals(index.primitiveOwner(method), Some(method))
@@ -72,13 +129,25 @@ final class CatsIndexSuite extends FunSuite {
     )
     val capabilityRows = Iterator.empty[String]
     val syntaxRows = Iterator.empty[String]
+    val stdlibRows = Iterator.empty[String]
 
-    val result = CatsIndex.parse(typeclassRows, capabilityRows, syntaxRows)
+    val result =
+      CatsIndex.parse(typeclassRows, capabilityRows, syntaxRows, stdlibRows)
     result match {
       case Left(message) =>
         assert(message.contains(CatsIndex.typeclassesResource))
         assert(message.contains(":3:"))
       case Right(_) => fail("expected a Left for a malformed kind token")
     }
+  }
+
+  private def resourceDataRows(resource: String): List[String] = {
+    val stream = getClass.getClassLoader.getResourceAsStream(resource)
+    try {
+      new String(stream.readAllBytes(), StandardCharsets.UTF_8)
+        .split("\n", -1)
+        .toList
+        .filter(line => line.nonEmpty && !line.startsWith("#"))
+    } finally stream.close()
   }
 }

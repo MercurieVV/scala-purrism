@@ -185,6 +185,30 @@ final class UsageAnalyzerSuite extends FunSuite {
     }
   }
 
+  test("the stdlib table alone resolves List#map to the Functor map root") {
+    assertEquals(
+      UsageAnalyzer
+        .analyze(definition("mapOnly"), baseIndex, widenPublic = false)
+        .collect { case UsageResult.Abstractable(_, _, _, _, ops) => ops }
+        .flatten
+        .map(_.method)
+        .toSet,
+      Set(Symbol("cats/Functor#map()."))
+    )
+  }
+
+  test("an operation absent from the stdlib table still declines") {
+    UsageAnalyzer
+      .analyze(definition("missingCapability"), baseIndex, widenPublic = false)
+      .collectFirst { case declined: UsageResult.Declined =>
+        declined.reason
+      } match {
+      case Some(_: DeclineReason.OrderOrIndexSpecific) => ()
+      case Some(_: DeclineReason.NoCapability)         => ()
+      case other => fail(s"expected a decline, got $other")
+    }
+  }
+
   test("analysis is deterministic") {
     val defn = definition("mapOnly")
     assertEquals(

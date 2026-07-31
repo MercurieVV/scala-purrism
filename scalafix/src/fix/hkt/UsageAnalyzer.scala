@@ -428,6 +428,10 @@ object UsageAnalyzer {
     }
   }
 
+  /** Resolves one call-site symbol against the index in the fixed order syntax
+    * -> capabilities -> stdlib; the first non-empty step wins, and an empty
+    * result is what turns into `NoCapability` in `resolveCall`.
+    */
   private def resolveSymbol(symbol: Symbol, index: CatsIndex): List[Resolved] =
     index.resolveSyntax(symbol) match {
       case Some(capability) =>
@@ -453,14 +457,18 @@ object UsageAnalyzer {
               )
             }
         else
-          index.primitiveOwner(symbol).toList.map { owner =>
-            val ownerProviders = index.providersOf(owner)
-            Resolved(
-              owner,
-              ownerProviders.map(_.typeclass).distinct.sortBy(_.value),
-              ownerProviders.headOption.map(_.kind).getOrElse(KindShape.Unary)
-            )
-          }
+          index
+            .resolveStdlib(symbol)
+            .groupBy(_.owner)
+            .toList
+            .sortBy(_._1.value)
+            .map { case (owner, capabilities) =>
+              Resolved(
+                owner,
+                capabilities.map(_.typeclass).distinct.sortBy(_.value),
+                capabilities.map(_.kind).sortBy(KindShape.arity).head
+              )
+            }
     }
 
   private def capabilitiesRelated(

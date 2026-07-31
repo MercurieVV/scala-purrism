@@ -1,0 +1,7 @@
+
+*If BLOCKED, downstream leaves stay blocked. No rule logic is implemented here.*
+
+## Pinned Consumption Recipe
+
+### 1. Resolve the tool classpath
+
