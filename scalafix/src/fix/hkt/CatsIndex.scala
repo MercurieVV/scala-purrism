@@ -12,7 +12,7 @@ final class CatsIndex private (
     val typeclasses: Map[Symbol, CatsTypeclass],
     val capabilities: Map[Symbol, List[Capability]],
     val syntax: Map[Symbol, Capability],
-    val stdlib: Map[Symbol, List[Capability]],
+    val stdlib: Map[Symbol, List[StdlibEntry]],
     private val syntaxImports: Map[Symbol, String]
 ) {
 
@@ -20,7 +20,7 @@ final class CatsIndex private (
       typeclasses: Map[Symbol, CatsTypeclass],
       capabilities: Map[Symbol, List[Capability]],
       syntax: Map[Symbol, Capability],
-      stdlib: Map[Symbol, List[Capability]] = Map.empty
+      stdlib: Map[Symbol, List[StdlibEntry]] = Map.empty
   ) = this(typeclasses, capabilities, syntax, stdlib, Map.empty)
 
   /** Every capability whose method or owner is `method`, across all
@@ -45,12 +45,7 @@ final class CatsIndex private (
 
   def resolveSyntax(method: Symbol): Option[Capability] = syntax.get(method)
 
-  /** The Cats capabilities a concrete stdlib (or concrete Cats data type)
-    * method maps onto, in stable order (by typeclass symbol string). Empty for
-    * methods with no abstract counterpart, which is what makes a concrete-only
-    * operation decline instead of resolving.
-    */
-  def resolveStdlib(method: Symbol): List[Capability] =
+  def resolveStdlib(method: Symbol): List[StdlibEntry] =
     stdlib.getOrElse(method, Nil)
 
   /** The syntax wildcard import for a syntax method or its resolved primitive
@@ -120,14 +115,19 @@ object CatsIndex {
         parseCapabilityRow
       )
       syntaxList <- parseTable(syntaxResource, syntaxRows)(parseSyntaxRow)
-      stdlibList <- parseTable(stdlibResource, stdlibRows)(parseStdlibRow)
+      capabilityRoots = capabilityList.iterator
+        .map(capability => capability.owner -> capability.method)
+        .toSet
+      stdlibList <- parseTable(stdlibResource, stdlibRows)(
+        parseStdlibRow(_, capabilityRoots)
+      )
     } yield build(typeclassList, capabilityList, syntaxList, stdlibList)
 
   private def build(
       typeclassList: List[CatsTypeclass],
       capabilityList: List[Capability],
       syntaxList: List[(Symbol, Symbol, Symbol, String)],
-      stdlibList: List[(Symbol, Symbol, Symbol)]
+      stdlibList: List[StdlibEntry]
   ): CatsIndex = {
     val typeclassMap = typeclassList.map(tc => tc.symbol -> tc).toMap
     val capabilitiesByTypeclass = capabilityList.groupBy(_.typeclass)
@@ -170,20 +170,9 @@ object CatsIndex {
       .toMap
 
     val stdlibMap = stdlibList
-      .flatMap { case (concreteMethod, owner, method) =>
-        capabilitiesByOwnerMethod
-          .get((owner, method))
-          .flatMap { capabilities =>
-            val ownerTypeclass = typeclassOf(owner)
-            capabilities
-              .find(_.typeclass == ownerTypeclass)
-              .orElse(capabilities.headOption)
-          }
-          .map(concreteMethod -> _)
-      }
-      .groupBy(_._1)
+      .groupBy(_.concreteMethod)
       .view
-      .mapValues(_.map(_._2).sortBy(_.typeclass.value))
+      .mapValues(_.sortBy(stdlibSortKey))
       .toMap
 
     new CatsIndex(
@@ -301,19 +290,55 @@ object CatsIndex {
     }
 
   private def parseStdlibRow(
-      cells: List[String]
-  ): Either[String, (Symbol, Symbol, Symbol)] =
+      cells: List[String],
+      capabilityRoots: Set[(Symbol, Symbol)]
+  ): Either[String, StdlibEntry] =
     cells match {
-      case List(concreteMethod, owner, method, _) =>
-        Right((Symbol(concreteMethod), Symbol(owner), Symbol(method)))
-      case other => Left(s"expected 4 columns, got ${other.size}")
+      case List(concreteMethod, "capability", owner, method, _) =>
+        val target = Symbol(owner) -> Symbol(method)
+        if (concreteMethod.isEmpty) Left("concreteMethod must not be empty")
+        else if (owner.isEmpty) Left("capability owner must not be empty")
+        else if (method.isEmpty) Left("capability method must not be empty")
+        else if (!capabilityRoots(target))
+          Left(s"unknown capability target: $owner / $method")
+        else
+          Right(
+            StdlibEntry(
+              Symbol(concreteMethod),
+              StdlibMapping.ToCapability(target._1, target._2)
+            )
+          )
+      case List(concreteMethod, "decline", owner, reason, _) =>
+        if (concreteMethod.isEmpty) Left("concreteMethod must not be empty")
+        else if (owner.nonEmpty) Left("decline owner must be empty")
+        else if (!stdlibDeclineReasons(reason))
+          Left(s"invalid decline reason: $reason")
+        else
+          Right(
+            StdlibEntry(
+              Symbol(concreteMethod),
+              StdlibMapping.ToDecline(reason)
+            )
+          )
+      case List(_, kind, _, _, _) =>
+        Left(s"invalid stdlib kind: $kind")
+      case other => Left(s"expected 5 columns, got ${other.size}")
     }
 
-  /** The declaring typeclass symbol of a capability method symbol. */
-  private def typeclassOf(method: Symbol): Symbol = {
-    val end = method.value.lastIndexOf('#')
-    if (end < 0) Symbol.None else Symbol(method.value.take(end + 1))
-  }
+  private val stdlibDeclineReasons: Set[String] =
+    Set(
+      "ConcreteConstructorMatch",
+      "OrderOrIndexSpecific",
+      "UnsafeBody"
+    )
+
+  private def stdlibSortKey(entry: StdlibEntry): (String, String, String) =
+    entry.mapping match {
+      case StdlibMapping.ToCapability(owner, method) =>
+        ("capability", owner.value, method.value)
+      case StdlibMapping.ToDecline(reason) =>
+        ("decline", "", reason)
+    }
 
   private def parseSymbolList(cell: String): List[Symbol] =
     if (cell.isEmpty) Nil else cell.split(",", -1).toList.map(Symbol(_))
