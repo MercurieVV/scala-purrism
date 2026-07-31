@@ -5,10 +5,6 @@
 
 import os._
 
-// Pre-commit auto-fixes code (scalafmt, scalafix) then compiles it (scalac).
-// Fixes are re-staged for whichever of the changed files were already staged,
-// so the commit picks them up automatically. Compile errors are not
-// auto-fixable and abort the commit.
 object GitPreCommit:
   def main(args: Array[String]): Unit =
     val repoRoot = os.Path(
@@ -17,9 +13,7 @@ object GitPreCommit:
 
     val buildTool =
       if os.exists(repoRoot / "build.sbt") then "sbt"
-      else if os.exists(repoRoot / "build.mill") || os.exists(
-          repoRoot / "build.sc"
-        )
+      else if Seq("build.mill", "build.sc").exists(f => os.exists(repoRoot / f))
       then "mill"
       else "scala-cli"
 
@@ -32,38 +26,43 @@ object GitPreCommit:
       )
       sys.exit(0)
 
-    println("=== Git Pre-Commit Auto-Fix ===")
-
-    val stagedFiles = os
-      .proc("git", "diff", "--cached", "--name-only", "--diff-filter=ACM")
-      .call(cwd = repoRoot)
-      .out
-      .lines()
-      .toList
+    println("=== Git Pre-Commit Quality Checks ===")
 
     if hasScalafmt then
-      println("Formatting code (Scalafmt)...")
+      println("Checking code formatting (Scalafmt)...")
       val fmtExit = buildTool match
         case "sbt" =>
-          os.proc("sbt", "scalafmtAll").call(cwd = repoRoot, check = false).exitCode
+          os.proc("sbt", "scalafmtCheckAll")
+            .call(cwd = repoRoot, check = false)
+            .exitCode
         case "scala-cli" =>
-          os.proc("scala-cli", "fmt", ".").call(cwd = repoRoot, check = false).exitCode
+          os.proc("scala-cli", "fmt", "--check", ".")
+            .call(cwd = repoRoot, check = false)
+            .exitCode
         case "mill" =>
           os.proc(
             "mill",
-            "mill.scalalib.scalafmt.ScalafmtModule/reformatAll"
+            "mill.scalalib.scalafmt.ScalafmtModule/checkFormatAll"
           ).call(cwd = repoRoot, check = false)
             .exitCode
 
       if fmtExit != 0 then
-        println("\n[ERROR] Scalafmt failed to run!")
+        println("\n[ERROR] Code formatting check failed!")
+        println("Please run the formatting tool to fix it:")
+        buildTool match
+          case "sbt"       => println("  sbt scalafmtAll")
+          case "scala-cli" => println("  scala-cli fmt .")
+          case "mill" =>
+            println("  mill mill.scalalib.scalafmt.ScalafmtModule/reformatAll")
         sys.exit(1)
 
     if hasScalafix then
-      println("Fixing code (Scalafix)...")
+      println("Checking code linting (Scalafix)...")
       val lintExit = buildTool match
         case "sbt" =>
-          os.proc("sbt", "scalafixAll").call(cwd = repoRoot, check = false).exitCode
+          os.proc("sbt", "scalafixAll --check")
+            .call(cwd = repoRoot, check = false)
+            .exitCode
         // Mill has no working built-in/contrib Scalafix module to delegate to
         // (`mill.scalalib.contrib.ScalafixModule` doesn't exist on Maven
         // Central), so the "mill" case runs the same scalafix-cli-via-scala-cli
@@ -90,7 +89,7 @@ object GitPreCommit:
                 .toList
             else Nil
           val result = os
-            .proc("scala-cli", "--power", "fix", ".")
+            .proc("scala-cli", "--power", "fix", "--check", ".")
             .call(
               cwd = repoRoot,
               check = false,
@@ -125,31 +124,11 @@ object GitPreCommit:
               0
 
       if lintExit != 0 then
-        println("\n[ERROR] Scalafix failed to run!")
+        println("\n[ERROR] Code linting check failed!")
+        println("Please run linting to fix it:")
+        buildTool match
+          case "sbt"                 => println("  sbt scalafixAll")
+          case "scala-cli" | "mill" => println("  scala-cli --power fix .")
         sys.exit(1)
-
-    // Re-stage whichever originally-staged files scalafmt/scalafix rewrote,
-    // so the fixes ride along in this commit instead of being left unstaged.
-    if stagedFiles.nonEmpty then
-      val stillPresent = stagedFiles.filter(f => os.exists(repoRoot / os.RelPath(f)))
-      if stillPresent.nonEmpty then
-        os.proc("git", "add", "--", stillPresent).call(cwd = repoRoot)
-
-    println("Compiling (scalac)...")
-    val compileExit = buildTool match
-      case "sbt" =>
-        os.proc("sbt", "compile", "Test/compile")
-          .call(cwd = repoRoot, check = false)
-          .exitCode
-      case "mill" =>
-        os.proc("mill", "__.compile").call(cwd = repoRoot, check = false).exitCode
-      case "scala-cli" =>
-        os.proc("scala-cli", "compile", ".")
-          .call(cwd = repoRoot, check = false)
-          .exitCode
-
-    if compileExit != 0 then
-      println("\n[ERROR] Compilation failed! Commit aborted.")
-      sys.exit(1)
 
     println("✓ All pre-commit checks passed successfully!")

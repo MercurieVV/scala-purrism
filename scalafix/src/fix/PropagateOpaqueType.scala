@@ -448,7 +448,8 @@ object PropagateOpaqueType {
     val claimedSeeds = manual.flatMap(_.seeds).toSet
     val explorerConfig = ExplorerConfig(
       basicTypes = autoDiscover.basicTypes,
-      minClusterSize = autoDiscover.minClusterSize
+      minClusterSize = autoDiscover.minClusterSize,
+      maxSeedsPerType = ExplorerConfig.default.maxSeedsPerType
     )
     val candidates = OpaqueCandidateExplorer.withPlacement(
       bundle.index,

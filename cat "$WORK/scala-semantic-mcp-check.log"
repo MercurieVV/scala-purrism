@@ -1,0 +1,9 @@
+
+### 3. `gh-tasks-llm-executor` (Scala‑CLI / Mill)
+
+- **Scala version** : `{scala-version}`
+- **JDK** : `{jdk-version}`
+
+*The repo can be built with either tool. The recipe uses Mill for consistency;
+adjust as needed.*
+
