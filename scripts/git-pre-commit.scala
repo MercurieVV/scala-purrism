@@ -63,106 +63,71 @@ object GitPreCommit:
           os.proc("sbt", "scalafixAll --check")
             .call(cwd = repoRoot, check = false)
             .exitCode
-        case "scala-cli" =>
-          val targets = Seq("app/src", "app/test/src").filter(p =>
-            os.exists(repoRoot / os.RelPath(p))
-          )
-          if targets.nonEmpty then
-            // `scala-cli --power fix` must be given `.` (not explicit dirs) so it
-            // picks up root project.scala's dependencies, incl. test.dep. That
-            // also makes it walk excluded scripts (Setup.scala, scripts/, ...)
-            // that were never compiled, so filter out the resulting noise.
-            val excludePrefixes =
-              val projectScalaPath = repoRoot / "project.scala"
-              if os.exists(projectScalaPath) then
-                val excludeRegex = "//>\\s*using\\s+exclude\\s+(.+)".r
-                os.read
-                  .lines(projectScalaPath)
-                  .flatMap { line =>
-                    excludeRegex
-                      .findFirstMatchIn(line.trim)
-                      .map(_.group(1).trim)
-                  }
-                  .toList
-              else Nil
-            val result = os
-              .proc("scala-cli", "--power", "fix", "--check", ".")
-              .call(
-                cwd = repoRoot,
-                check = false,
-                stdout = os.Pipe,
-                stderr = os.Pipe,
-                mergeErrIntoOut = true
-              )
-            if result.exitCode == 0 then 0
-            else
-              val noiseRegex = "^error: SemanticDB not found: (.+)$".r
-              def isNoise(line: String): Boolean =
-                noiseRegex.findFirstMatchIn(line) match
-                  case Some(m) =>
-                    val path = m.group(1)
-                    excludePrefixes.exists(prefix =>
-                      path == prefix || path.startsWith(prefix + "/")
-                    )
-                  case None => false
-              val meaningfulLines =
-                result.out.text().linesIterator.toList.filterNot(isNoise)
-              val hasRealError = meaningfulLines.exists(l =>
-                l.contains("error:") || l.trim.startsWith("[error]") || l
-                  .startsWith("--- ")
-              )
-              if hasRealError then
-                meaningfulLines.foreach(println)
-                1
-              else
-                println(
-                  "✓ Linting clean (ignored known noise from excluded scripts)"
-                )
-                0
-          else 0
-        case "mill" =>
-          // `fix` comes from the mill-scalafix plugin's ScalafixModule, which a
-          // build has to mix into its modules. Without it there is nothing to
-          // run -- a bare `.scalafix.conf` only configures the scalafix CLI.
-          val millBuildFile =
-            Seq("build.mill", "build.sc").map(repoRoot / _).find(os.exists)
-          val hasScalafixModule = millBuildFile.exists(f =>
-            os.read(f).contains("ScalafixModule")
-          )
-          if hasScalafixModule then
-            val result = os.proc("mill", "__.fix", "--check").call(
+        // Mill has no working built-in/contrib Scalafix module to delegate to
+        // (`mill.scalalib.contrib.ScalafixModule` doesn't exist on Maven
+        // Central), so the "mill" case runs the same scalafix-cli-via-scala-cli
+        // path as the "scala-cli" case. That's fine for this repo's rules
+        // (OrganizeImports, DisableSyntax, etc.), which are all syntactic and
+        // don't need a semanticdb build.
+        case "scala-cli" | "mill" =>
+          // `scala-cli --power fix` must be given `.` (not explicit dirs) so it
+          // picks up root project.scala's dependencies, incl. test.dep. That
+          // also makes it walk excluded scripts (Setup.scala, scripts/, ...)
+          // that were never compiled, so filter out the resulting noise.
+          val excludePrefixes =
+            val projectScalaPath = repoRoot / "project.scala"
+            if os.exists(projectScalaPath) then
+              val excludeRegex = "//>\\s*using\\s+exclude\\s+(.+)".r
+              os.read
+                .lines(projectScalaPath)
+                .flatMap { line =>
+                  excludeRegex
+                    .findFirstMatchIn(line.trim)
+                    .map(_.group(1).trim)
+                }
+                .toList
+            else Nil
+          val result = os
+            .proc("scala-cli", "--power", "fix", "--check", ".")
+            .call(
               cwd = repoRoot,
               check = false,
               stdout = os.Pipe,
-              stderr = os.Pipe
+              stderr = os.Pipe,
+              mergeErrIntoOut = true
             )
-            if result.exitCode == 0 then 0
-            else
-              val output = result.out.text() + result.err.text()
-              val plainOutput = output.replaceAll("\u001b\\[[;\\d]*m", "")
-              if plainOutput.contains("Cannot resolve external module") then
-                println(
-                  "✓ Scalafix is not configured in Mill. Skipping Scalafix check."
-                )
-                0
-              else
-                System.out.print(result.out.text())
-                System.err.print(result.err.text())
-                result.exitCode
+          if result.exitCode == 0 then 0
           else
-            println(
-              "No module mixes in ScalafixModule. Scalafix check skipped."
+            val noiseRegex = "^error: SemanticDB not found: (.+)$".r
+            def isNoise(line: String): Boolean =
+              noiseRegex.findFirstMatchIn(line) match
+                case Some(m) =>
+                  val path = m.group(1)
+                  excludePrefixes.exists(prefix =>
+                    path == prefix || path.startsWith(prefix + "/")
+                  )
+                case None => false
+            val meaningfulLines =
+              result.out.text().linesIterator.toList.filterNot(isNoise)
+            val hasRealError = meaningfulLines.exists(l =>
+              l.contains("error:") || l.trim.startsWith("[error]") || l
+                .startsWith("--- ")
             )
-            0
+            if hasRealError then
+              meaningfulLines.foreach(println)
+              1
+            else
+              println(
+                "✓ Linting clean (ignored known noise from excluded scripts)"
+              )
+              0
 
       if lintExit != 0 then
         println("\n[ERROR] Code linting check failed!")
         println("Please run linting to fix it:")
         buildTool match
-          case "sbt"       => println("  sbt scalafixAll")
-          case "scala-cli" => println("  scala-cli --power fix .")
-          case "mill" =>
-            println("  mill mill.scalalib.contrib.ScalafixModule/fix")
+          case "sbt"                 => println("  sbt scalafixAll")
+          case "scala-cli" | "mill" => println("  scala-cli --power fix .")
         sys.exit(1)
 
     println("✓ All pre-commit checks passed successfully!")

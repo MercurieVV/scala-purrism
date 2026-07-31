@@ -1,8 +1,13 @@
 #concreteMethod	kind	owner	method	note
 # hand-written; audited by CatsIndexDriftSuite
+cats/Eval#defer().	capability	cats/Defer#defer().	cats/Defer#defer().	Eval recursion is Defer
+cats/Eval#flatMap().	capability	cats/FlatMap#flatMap().	cats/FlatMap#flatMap().	Eval sequencing is FlatMap
+cats/Eval#map().	capability	cats/Functor#map().	cats/Functor#map().	Eval transformation is Functor
 cats/Foldable.Ops#foldMap().	capability	cats/Foldable#foldMap().	cats/Foldable#foldMap().	Cats foldMap syntax on a covered concrete constructor
 cats/Traverse.Ops#sequence().	capability	cats/Traverse#sequence().	cats/Traverse#sequence().	Cats sequence syntax on a covered concrete constructor
 cats/Traverse.Ops#traverse().	capability	cats/Traverse#traverse().	cats/Traverse#traverse().	Cats traverse syntax on a covered concrete constructor
+cats/data/NonEmptyList#flatMap().	capability	cats/FlatMap#flatMap().	cats/FlatMap#flatMap().	NonEmptyList sequencing is FlatMap
+cats/data/NonEmptyList#map().	capability	cats/Functor#map().	cats/Functor#map().	NonEmptyList transformation is Functor
 cats/syntax/SemigroupOps#combine().	capability	cats/kernel/Semigroup#combine().	cats/kernel/Semigroup#combine().	Cats Semigroup combine syntax on a covered concrete value
 scala/Option#flatMap().	capability	cats/FlatMap#flatMap().	cats/FlatMap#flatMap().	Option flatMap
 scala/Option#get().	decline		ConcreteConstructorMatch	Option extraction
@@ -20,11 +25,14 @@ scala/collection/IterableOnceOps#reduce().	capability	cats/Reducible#reduceLeft(
 scala/collection/IterableOnceOps#reduce().	capability	cats/kernel/Semigroup#combine().	cats/kernel/Semigroup#combine().	Ambiguous reduction candidate requiring element combination
 scala/collection/IterableOnceOps#size().	decline		OrderOrIndexSpecific	Map size
 scala/collection/IterableOps#`++`().	capability	cats/SemigroupK#combineK().	cats/SemigroupK#combineK().	List and Vector concatenation
+scala/collection/IterableOps#collect().	capability	cats/FunctorFilter#mapFilter().	cats/FunctorFilter#mapFilter().	Seq collect is FunctorFilter
 scala/collection/IterableOps#drop().	decline		OrderOrIndexSpecific	Map drop
+scala/collection/IterableOps#flatMap().	capability	cats/FlatMap#flatMap().	cats/FlatMap#flatMap().	Seq sequencing is FlatMap
 scala/collection/IterableOps#head().	decline		OrderOrIndexSpecific	List and Map head
 scala/collection/IterableOps#headOption().	decline		OrderOrIndexSpecific	Map headOption
 scala/collection/IterableOps#init().	decline		OrderOrIndexSpecific	List and Map init
 scala/collection/IterableOps#last().	decline		OrderOrIndexSpecific	Map last
+scala/collection/IterableOps#map().	capability	cats/Functor#map().	cats/Functor#map().	Seq transformation is Functor
 scala/collection/IterableOps#tail().	decline		OrderOrIndexSpecific	List and Map tail
 scala/collection/IterableOps#take().	decline		OrderOrIndexSpecific	Map take
 scala/collection/IterableOps#zipWithIndex().	decline		OrderOrIndexSpecific	Map zipWithIndex
@@ -36,14 +44,17 @@ scala/collection/MapOps#apply().	decline		OrderOrIndexSpecific	Map key lookup by
 scala/collection/MapOps#flatMap().	capability	cats/FlatMap#flatMap().	cats/FlatMap#flatMap().	Map flatMap
 scala/collection/MapOps#map().	capability	cats/Functor#map().	cats/Functor#map().	Map map
 scala/collection/SeqOps#apply().	decline		OrderOrIndexSpecific	Vector indexing
+scala/collection/SeqOps#concat().	capability	cats/SemigroupK#combineK().	cats/SemigroupK#combineK().	sequence concat is SemigroupK
 scala/collection/SeqOps#indexOf(+1).	decline		OrderOrIndexSpecific	List and Vector indexOf
 scala/collection/SeqOps#size().	decline		OrderOrIndexSpecific	List and Vector size
 scala/collection/SeqOps#sortBy().	decline		OrderOrIndexSpecific	List and Vector sortBy
 scala/collection/SeqOps#sortWith().	decline		OrderOrIndexSpecific	List and Vector sortWith
+scala/collection/StrictOptimizedIterableOps#collect().	capability	cats/FunctorFilter#mapFilter().	cats/FunctorFilter#mapFilter().	Vector collect is FunctorFilter
 scala/collection/StrictOptimizedIterableOps#flatMap().	capability	cats/FlatMap#flatMap().	cats/FlatMap#flatMap().	Vector flatMap
 scala/collection/StrictOptimizedIterableOps#map().	capability	cats/Functor#map().	cats/Functor#map().	Vector map
 scala/collection/StrictOptimizedIterableOps#zipWithIndex().	decline		OrderOrIndexSpecific	List and Vector zipWithIndex
 scala/collection/StrictOptimizedLinearSeqOps#drop().	decline		OrderOrIndexSpecific	List drop
+scala/collection/immutable/List#collect().	capability	cats/FunctorFilter#mapFilter().	cats/FunctorFilter#mapFilter().	List collect is FunctorFilter
 scala/collection/immutable/List#flatMap().	capability	cats/FlatMap#flatMap().	cats/FlatMap#flatMap().	List flatMap
 scala/collection/immutable/List#foldRight().	capability	cats/Foldable#foldRight().	cats/Foldable#foldRight().	List foldRight
 scala/collection/immutable/List#last().	decline		OrderOrIndexSpecific	List last
@@ -62,3 +73,4 @@ scala/collection/immutable/Vector#take().	decline		OrderOrIndexSpecific	Vector t
 scala/util/Try#flatMap().	capability	cats/FlatMap#flatMap().	cats/FlatMap#flatMap().	Try flatMap
 scala/util/Try#get().	decline		ConcreteConstructorMatch	Try extraction
 scala/util/Try#map().	capability	cats/Functor#map().	cats/Functor#map().	Try map
+scala/util/Try#recoverWith().	capability	cats/ApplicativeError#handleErrorWith().	cats/ApplicativeError#handleErrorWith().	Try recovery is ApplicativeError

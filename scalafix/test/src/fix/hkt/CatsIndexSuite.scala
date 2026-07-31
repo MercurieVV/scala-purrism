@@ -23,6 +23,17 @@ final class CatsIndexSuite extends FunSuite {
     assertEquals(capability.owner, Symbol("cats/Functor#map()."))
   }
 
+  test("syntaxImport resolves a RequiredOp owner to its direct syntax module") {
+    assertEquals(
+      index.syntaxImport(Symbol("cats/Functor#map().")),
+      Some("cats.syntax.functor.*")
+    )
+    assertEquals(
+      index.syntaxImport(Symbol("cats/Traverse#traverse().")),
+      Some("cats.syntax.traverse.*")
+    )
+  }
+
   test("resolveStdlib maps List.map to the Functor map root") {
     assertEquals(
       index.resolveStdlib(Symbol("scala/collection/immutable/List#map().")),
@@ -68,6 +79,17 @@ final class CatsIndexSuite extends FunSuite {
     )
   }
 
+  test("every stdlib capability target exists in capabilities.tsv") {
+    val capabilityPairs = index.capabilities.valuesIterator.flatten
+      .map(capability => capability.owner -> capability.method)
+      .toSet
+    val stdlibPairs = index.stdlib.valuesIterator.flatten.collect {
+      case StdlibEntry(_, StdlibMapping.ToCapability(owner, method)) =>
+        owner -> method
+    }
+    stdlibPairs.foreach(pair => assert(capabilityPairs(pair), pair.toString))
+  }
+
   test("primitiveOwner and providersOf agree for Traverse#traverse()") {
     val method = Symbol("cats/Traverse#traverse().")
     assertEquals(index.primitiveOwner(method), Some(method))
@@ -106,6 +128,7 @@ final class CatsIndexSuite extends FunSuite {
     )
     val capabilityRows = Iterator.empty[String]
     val syntaxRows = Iterator.empty[String]
+    val stdlibRows = Iterator.empty[String]
 
     val result =
       CatsIndex.parse(

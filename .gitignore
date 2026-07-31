@@ -56,3 +56,6 @@ stdout.log
 prompt.txt
 /.gh-tasks-llm-executor/
 /.worktrees/
+.aider*
+/run-ide.sh
+.aider*

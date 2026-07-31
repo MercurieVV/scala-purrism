@@ -419,6 +419,27 @@ final class KleisliLawSuite extends ScalaCheckSuite {
   }
 
   property(
+    "PreferArrow: ask <* work preserves work effects and returns the input"
+  ) {
+    forAll {
+      (
+          input: Int,
+          outputs: Map[Int, Option[String]],
+          fallback: Option[String]
+      ) =>
+        val work: Kleisli[Option, Int, String] =
+          Kleisli(value => outputs.getOrElse(value, fallback))
+
+        val original: Option[Int] =
+          work.run(input).map(_ => input)
+        val refactored: Option[Int] =
+          (Kleisli.ask[Option, Int] <* work).run(input)
+
+        assertEquals(refactored, original)
+    }
+  }
+
+  property(
     "PreferArrow aggressive: a leading discard generator matches announce *> work"
   ) {
     forAll {

@@ -8,12 +8,20 @@ import scalafix.v1.Symbol
   * artifacts under `scalafix/resources/cats-index/` (see
   * `docs/design/PreferHKTTypeclasses.md`, item 2 and item 7).
   */
-final class CatsIndex(
+final class CatsIndex private (
     val typeclasses: Map[Symbol, CatsTypeclass],
     val capabilities: Map[Symbol, List[Capability]],
     val syntax: Map[Symbol, Capability],
-    val stdlib: Map[Symbol, List[StdlibEntry]] = Map.empty
+    val stdlib: Map[Symbol, List[StdlibEntry]],
+    private val syntaxImports: Map[Symbol, String]
 ) {
+
+  def this(
+      typeclasses: Map[Symbol, CatsTypeclass],
+      capabilities: Map[Symbol, List[Capability]],
+      syntax: Map[Symbol, Capability],
+      stdlib: Map[Symbol, List[StdlibEntry]] = Map.empty
+  ) = this(typeclasses, capabilities, syntax, stdlib, Map.empty)
 
   /** Every capability whose method or owner is `method`, across all
     * typeclasses, in stable order (by typeclass symbol string).
@@ -39,6 +47,11 @@ final class CatsIndex(
 
   def resolveStdlib(method: Symbol): List[StdlibEntry] =
     stdlib.getOrElse(method, Nil)
+
+  /** The syntax wildcard import for a syntax method or its resolved primitive
+    * owner.
+    */
+  def syntaxImport(method: Symbol): Option[String] = syntaxImports.get(method)
 
   /** Transitive, cycle-safe ancestry over `CatsTypeclass.parents`. */
   def isAncestor(ancestor: Symbol, descendant: Symbol): Boolean = {
@@ -92,7 +105,7 @@ object CatsIndex {
       typeclassRows: Iterator[String],
       capabilityRows: Iterator[String],
       syntaxRows: Iterator[String],
-      stdlibRows: Iterator[String]
+      stdlibRows: Iterator[String] = Iterator.empty
   ): Either[String, CatsIndex] =
     for {
       typeclassList <- parseTable(typeclassesResource, typeclassRows)(
@@ -113,7 +126,7 @@ object CatsIndex {
   private def build(
       typeclassList: List[CatsTypeclass],
       capabilityList: List[Capability],
-      syntaxList: List[(Symbol, Symbol, Symbol)],
+      syntaxList: List[(Symbol, Symbol, Symbol, String)],
       stdlibList: List[StdlibEntry]
   ): CatsIndex = {
     val typeclassMap = typeclassList.map(tc => tc.symbol -> tc).toMap
@@ -124,12 +137,37 @@ object CatsIndex {
       .mapValues(_.sortBy(_.typeclass.value))
       .toMap
 
-    val syntaxMap = syntaxList.flatMap { case (syntaxMethod, owner, method) =>
-      capabilitiesByOwnerMethod
-        .get((owner, method))
-        .flatMap(_.headOption)
-        .map(syntaxMethod -> _)
+    val syntaxMap = syntaxList.flatMap {
+      case (syntaxMethod, owner, method, _) =>
+        capabilitiesByOwnerMethod
+          .get((owner, method))
+          .flatMap(_.headOption)
+          .map(syntaxMethod -> _)
     }.toMap
+
+    val exactSyntaxImports = syntaxList.map {
+      case (syntaxMethod, _, _, importPath) =>
+        syntaxMethod -> importPath
+    }.toMap
+    val resolvedSyntaxImports = syntaxList
+      .flatMap { entry =>
+        val (_, owner, method, _) = entry
+        List(owner, method).distinct.map(_ -> entry)
+      }
+      .groupBy(_._1)
+      .view
+      .mapValues { entries =>
+        entries
+          .map(_._2)
+          .sortBy { case (syntaxMethod, _, method, importPath) =>
+            val directOwner =
+              syntaxMethod.value.replace(".Ops#", "#") == method.value
+            (if (directOwner) 0 else 1, syntaxMethod.value, importPath)
+          }
+          .head
+          ._4
+      }
+      .toMap
 
     val stdlibMap = stdlibList
       .groupBy(_.concreteMethod)
@@ -137,7 +175,13 @@ object CatsIndex {
       .mapValues(_.sortBy(stdlibSortKey))
       .toMap
 
-    new CatsIndex(typeclassMap, capabilitiesByTypeclass, syntaxMap, stdlibMap)
+    new CatsIndex(
+      typeclassMap,
+      capabilitiesByTypeclass,
+      syntaxMap,
+      stdlibMap,
+      exactSyntaxImports ++ resolvedSyntaxImports
+    )
   }
 
   private def readResourceLines(resource: String): List[String] = {
@@ -238,10 +282,10 @@ object CatsIndex {
 
   private def parseSyntaxRow(
       cells: List[String]
-  ): Either[String, (Symbol, Symbol, Symbol)] =
+  ): Either[String, (Symbol, Symbol, Symbol, String)] =
     cells match {
-      case List(syntaxMethod, owner, method, _) =>
-        Right((Symbol(syntaxMethod), Symbol(owner), Symbol(method)))
+      case List(syntaxMethod, owner, method, importPath) =>
+        Right((Symbol(syntaxMethod), Symbol(owner), Symbol(method), importPath))
       case other => Left(s"expected 4 columns, got ${other.size}")
     }
 
