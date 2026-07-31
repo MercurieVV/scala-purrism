@@ -113,7 +113,7 @@ object GitPrePush:
             Some("prePush")
           else None
         // Without a prePush task, fall back to every test module in the build
-        // rather than assuming an `app` module exists.
+        // rather than assuming a specific module exists.
         val cmd = Seq("mill", prePushTarget.getOrElse("__.test"))
         os.proc(cmd).call(cwd = repoRoot, check = false).exitCode
 

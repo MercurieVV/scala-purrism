@@ -48,7 +48,11 @@ object ExplorerConfig {
     */
   val DefaultMinClusterSize: Int = 4
 
-  val default: ExplorerConfig = ExplorerConfig()
+  val default: ExplorerConfig = ExplorerConfig(
+    DefaultBasicTypes,
+    DefaultMinClusterSize,
+    2000
+  )
 }
 
 /** One ranked candidate: a value-flow cluster and the spec that would convert
@@ -102,7 +106,7 @@ object OpaqueCandidateExplorer {
   def explore(
       index: SemanticdbIndex,
       facts: Facts,
-      config: ExplorerConfig = ExplorerConfig.default
+      config: ExplorerConfig
   ): List[OpaqueCandidate] = {
     val ranked = config.basicTypes.flatMap(clustersFor(index, facts, config, _))
 
@@ -117,6 +121,12 @@ object OpaqueCandidateExplorer {
     // so the emitted set is exactly "all flows still worth an opaque type".
     nameAll(index, dropSubsumed(ordered))
   }
+
+  def explore(
+      index: SemanticdbIndex,
+      facts: Facts
+  ): List[OpaqueCandidate] =
+    explore(index, facts, ExplorerConfig.default)
 
   /** A cluster before it has been named. */
   private final case class Cluster(
@@ -233,7 +243,7 @@ object OpaqueCandidateExplorer {
         .from(2)
         .map(suffix => s"$base$suffix")
         .find(!taken.contains(_))
-        .get
+        .getOrElse(throw new AssertionError("unreachable: infinite numbers"))
 
   /** Names of every type already declared in the analysed sources -- classes,
     * traits, opaque types and type aliases, all of which reach SemanticDB with
@@ -326,7 +336,7 @@ object OpaqueCandidateExplorer {
   def ownerOf(symbol: String): String = {
     val parts = segments(symbol)
     if (parts.length <= 1) ""
-    else parts.init.mkString
+    else parts.dropRight(1).mkString
   }
 
   /** The enclosing class, trait or object of a symbol; its package otherwise.
