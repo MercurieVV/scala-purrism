@@ -51,6 +51,16 @@ object ReadabilityBudget {
       case _      => false
     }
 
+  /** `Kleisli.ask[F, A]` is the one zero-effect tree that removes real source
+    * ceremony: it replaces a Kleisli wrapper whose body merely lifts that
+    * wrapper's own input. Do not generalise this to arbitrary pure trees.
+    */
+  private def isBareAsk(ir: ArrowIR): Boolean =
+    ir match {
+      case _: Ask => true
+      case _      => false
+    }
+
   def verdict(
       ir: ArrowIR,
       renderedLength: Int,
@@ -68,13 +78,18 @@ object ReadabilityBudget {
       Decline("body contains a subexpression the rule could not analyse")
     // Aggressive mode accepts the eta-collapse `Kleisli { x => k.run(x) } => k`;
     // conservative mode declines it as nothing gained.
-    else if (ArrowIR.effectCount(ir) < 1 || (isTrivial(ir) && !aggressive))
+    else if (
+      (ArrowIR.effectCount(ir) < 1 && !isBareAsk(ir)) ||
+      (isTrivial(ir) && !aggressive)
+    )
       Decline("no composition to gain")
     else if (plumbingNodes(ir) > maxPlumbing)
       Decline(
         s"needs more than $maxPlumbing plumbing steps to stay point-free"
       )
-    else if (!aggressive && renderedLength > sourceLength * 3 / 2)
+    else if (
+      !aggressive && !isBareAsk(ir) && renderedLength > sourceLength * 3 / 2
+    )
       // The structural plumbing budget already bounds readability; the length
       // check is a secondary guard against pathological bloat only. A
       // point-free form that is merely a little longer than a verbose

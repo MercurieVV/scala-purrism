@@ -17,6 +17,7 @@ object Versions {
   def munitScalaCheck = "1.3.0"
   def scalafix = "0.14.7"
   def scalaSemantic = "0.4.2"
+  def wartremover = "3.6.1"
 }
 
 object Project {
@@ -52,8 +53,11 @@ object scalafix
 
   def scalacOptions = Seq(
     "-Ysemanticdb",
+    s"-sourceroot:${mill.api.BuildCtx.workspaceRoot}",
     "-Wunused:imports",
-    "-Werror"
+    "-Wconf:msg=wartremover:s",
+    "-Werror",
+    "-P:wartremover:only-warn-traverser:org.wartremover.warts.Unsafe"
   )
   def mvnDeps = Seq(
     // [dependencies-start]
@@ -68,7 +72,12 @@ object scalafix
   // ch.epfl.lara:stainless-* artifact is published to Maven Central under any
   // version/name). Other projects run it as a standalone CLI over an
   // unmanaged stainless-library.jar instead of a compiler plugin dependency.
-  def scalacPluginMvnDeps = Seq()
+  //
+  // Wartremover uses CrossVersion.full (`:::`) because it hooks the Scala 3
+  // compiler API directly and must match the exact compiler build.
+  def scalacPluginMvnDeps = Seq(
+    mvn"org.wartremover:::wartremover:${Versions.wartremover}"
+  )
 
   // Fixture sources for scalafix-testkit. Compiled with SemanticDB so the
   // testkit can find a payload for each input file. Deliberately does NOT
@@ -110,6 +119,98 @@ object scalafix
     )
   }
 
+  // Tooling-only generator for the checked-in Cats capability inventory.
+  // Kept out of the published module: TASTy inspection is a build-time concern.
+  object indexgen extends ScalaModule {
+    def scalaVersion = Versions.scala3
+    def moduleDeps = Seq(scalafix)
+    def mvnDeps = Seq(
+      mvn"org.scala-lang:scala3-tasty-inspector_3:${Versions.scala3}",
+      mvn"org.typelevel::scalac-compat-annotation:0.1.4"
+    )
+  }
+
+  private def runCatsIndex(
+      output: os.Path,
+      classpath: Seq[os.Path]
+  ): Unit = {
+    def requiredJar(fileName: String): os.Path =
+      classpath
+        .find(_.last == fileName)
+        .getOrElse(
+          throw new RuntimeException(
+            s"required Cats index input is missing from the resolved classpath: $fileName"
+          )
+        )
+
+    val generatorArgs = Seq(
+      "--output",
+      output.toString,
+      "--cats-version",
+      Versions.catsCore,
+      "--scala-version",
+      Versions.scala3,
+      "--jar",
+      requiredJar(s"cats-core_3-${Versions.catsCore}.jar").toString,
+      "--jar",
+      requiredJar(s"cats-kernel_3-${Versions.catsCore}.jar").toString
+    )
+    val javaExecutable =
+      os.Path(sys.props("java.home")) / "bin" / "java"
+    val command =
+      Seq(
+        javaExecutable.toString,
+        "-cp",
+        classpath.mkString(java.io.File.pathSeparator),
+        "fix.hkt.gen.CatsIndexGen"
+      ) ++ generatorArgs
+    os.proc(command).call(
+      cwd = mill.api.BuildCtx.workspaceRoot,
+      stdout = os.Inherit,
+      stderr = os.Inherit
+    )
+  }
+
+  /** Regenerate the checked-in Cats capability inventory in place. */
+  def catsIndex() = Task.Command {
+    val output =
+      mill.api.BuildCtx.workspaceRoot / "scalafix" / "resources" / "cats-index"
+    runCatsIndex(output, indexgen.runClasspath().map(_.path))
+  }
+
+  /** Generate a private snapshot consumed by drift checks and tests. */
+  def catsIndexGenerated = Task {
+    val output = Task.dest / "cats-index"
+    runCatsIndex(output, indexgen.runClasspath().map(_.path))
+    PathRef(output)
+  }
+
+  /** Fail when generated Cats inventory files differ from their checked-in bytes. */
+  def catsIndexCheck() = Task.Command {
+    val generated = catsIndexGenerated().path
+
+    val checkedIn =
+      mill.api.BuildCtx.workspaceRoot / "scalafix" / "resources" / "cats-index"
+    Seq(
+      "typeclasses.tsv",
+      "capabilities.tsv",
+      "syntax.tsv",
+      "stdlib.tsv",
+      "gaps.tsv"
+    ).foreach { fileName =>
+      val expected = checkedIn / fileName
+      val actual = generated / fileName
+      val identical =
+        os.exists(expected) &&
+          os.exists(actual) &&
+          java.util.Arrays.equals(os.read.bytes(expected), os.read.bytes(actual))
+      if (!identical)
+        throw new RuntimeException(
+          s"Cats index drift in $fileName; run: rtk mill scalafix.catsIndex"
+        )
+    }
+  }
+
   object test extends ScalaTests {
     def testFramework = "munit.Framework"
     def mvnDeps = Seq(
@@ -136,6 +237,7 @@ object scalafix
           .mkString(sep),
         "sourceroot" -> mill.api.BuildCtx.workspaceRoot.toString,
         "scalaVersion" -> Versions.scala3,
+        "catsIndexGenerated" -> catsIndexGenerated().path.toString,
         "scalacOptions" -> testInput.scalacOptions().mkString("|")
       ).map { case (key, value) => s"$key=$value" }
       os.write(
@@ -152,9 +254,341 @@ object scalafix
 object docs extends ScalaModule {
   def scalaVersion = "3.3.8"
   def mvnDeps = Seq(mvn"org.scalameta::mdoc:${Versions.mdoc}")
+  def scalacOptions = Seq("-Ysemanticdb", s"-sourceroot:${mill.api.BuildCtx.workspaceRoot}")
+}
+
+// IntelliJ IDEA plugin: wraps the `scalafix` module's rules as a Refactor
+// menu action, and adds a Navigate menu action opening a Three.js + textbox
+// viewer. The IntelliJ Platform is not published to Maven Central, so its
+// jars are fetched directly (curl + unzip) from JetBrains' own repository
+// instead of via a mvnDep, and added to compileClasspath only -- at runtime
+// the sandbox IDE process supplies those classes itself, so bundling them
+// into the plugin distribution would duplicate (and could conflict with)
+// classes already on the platform's classloader.
+object ijPlugin extends ScalaModule {
+  def scalaVersion = Versions.scala3
+  def moduleDeps = Seq(scalafix)
+  def pluginId = "io.github.mercurievv.purrism.ideaplugin"
+  def ideVersion = "2026.1.4"
+  def scalacOptions = Seq("-Ysemanticdb", s"-sourceroot:${mill.api.BuildCtx.workspaceRoot}")
+
+  def mvnDeps = Seq(
+    mvn"ch.epfl.scala:scalafix-interfaces:${Versions.scalafix}"
+  )
+
+  // Cached outside out/ so `mill clean` doesn't force a multi-hundred-MB
+  // re-download of the IDE distribution.
+  def platformCacheDir: os.Path =
+    os.home / ".cache" / "purrism-ijplatform" / ideVersion
+
+  def platformHome = Task {
+    val dir = platformCacheDir
+    if (!os.exists(dir / "lib")) {
+      os.makeDir.all(dir)
+      val zip = Task.dest / "ideaIC.zip"
+      os.proc(
+        "curl",
+        "-L",
+        "-o",
+        zip.toString,
+        s"https://www.jetbrains.com/intellij-repository/releases/com/jetbrains/intellij/idea/ideaIC/${ideVersion}/ideaIC-${ideVersion}.zip"
+      ).call(stdout = os.Inherit, stderr = os.Inherit)
+      os.proc("unzip", "-q", zip.toString, "-d", dir.toString)
+        .call(stdout = os.Inherit, stderr = os.Inherit)
+    }
+    PathRef(dir)
+  }
+
+  /** JetBrains' Scala plugin, resolved to whichever build is actually
+    * compatible with `ideVersion` and downloaded straight into the sandbox
+    * on every `runIde`. This sidesteps installing it by hand through the
+    * in-IDE Marketplace: that flow relies on the platform's "Restart IDE"
+    * button, which needs a native relauncher we don't have (see runIde's
+    * doc comment) -- a plugin installed that way was never actually
+    * committed to disk before the process died.
+    */
+  def scalaPluginHome = Task {
+    val buildNumber = platformBuildNumber()
+    val dir = os.home / ".cache" / "purrism-ijplatform" / s"scala-plugin-$buildNumber"
+    if (!os.exists(dir)) {
+      val tmp = Task.dest / "scala-plugin.zip"
+      os.proc(
+        "curl",
+        "-L",
+        "-o",
+        tmp.toString,
+        s"https://plugins.jetbrains.com/pluginManager?action=download&id=org.intellij.scala&build=IC-$buildNumber"
+      ).call(stdout = os.Inherit, stderr = os.Inherit)
+      os.makeDir.all(dir)
+      os.proc("unzip", "-q", tmp.toString, "-d", dir.toString)
+        .call(stdout = os.Inherit, stderr = os.Inherit)
+    }
+    PathRef(dir)
+  }
+
+  def platformBuildNumber = Task {
+    ujson.read(os.read(platformHome().path / "product-info.json"))("buildNumber").str
+  }
+
+  /** All platform jars, including the split-out jars IntelliJ introduced
+    * under `lib/modules` in recent releases.
+    */
+  def platformJars = Task {
+    val home = platformHome().path
+    Seq(home / "lib", home / "lib" / "modules")
+      .filter(os.exists)
+      .flatMap(os.list(_))
+      .filter(_.ext == "jar")
+      .map(PathRef(_))
+  }
+
+  override def compileClasspath = Task {
+    super.compileClasspath() ++ platformJars()
+  }
+
+  /** Assembles the on-disk plugin layout IntelliJ expects: a top-level
+    * directory named after the plugin, with all runtime jars under lib/.
+    * Platform jars are deliberately excluded (see module doc).
+    */
+  def pluginDist = Task {
+    val dest = Task.dest / pluginId
+    val libDir = dest / "lib"
+    os.remove.all(dest)
+    os.makeDir.all(libDir)
+
+    def stage(path: os.Path): Unit =
+      if (os.exists(path)) {
+        val target = libDir / path.last
+        if (os.isDir(path)) os.copy(path, target, mergeFolders = true, replaceExisting = true)
+        else os.copy(path, target, replaceExisting = true)
+      }
+
+    val ownOutputPaths = Set(compile().classes.path, resources().head.path)
+    stage(jar().path)
+    for (ref <- runClasspath() if !ownOutputPaths.contains(ref.path))
+      stage(ref.path)
+
+    PathRef(dest)
+  }
+
+  /** The distribution zip used here (see module doc) ships no launcher
+    * script, so the `--add-opens`, `-Djna.boot.library.path`,
+    * `-Dskiko.library.path`, etc. that the real macOS launcher would pass
+    * are missing. Rather than hand-maintain that list, read it straight out
+    * of the platform's own `product-info.json` (the same file the official
+    * launcher scripts are generated from) and substitute `$APP_PACKAGE` for
+    * the actual install dir.
+    */
+  def platformLaunchVmArgs = Task {
+    val home = platformHome().path
+    val arch = System.getProperty("os.arch") match {
+      case "aarch64" => "aarch64"
+      case _         => "amd64"
+    }
+    val script =
+      s"""import json
+         |data = json.load(open(r'${home / "product-info.json"}'))
+         |for l in data['launch']:
+         |    if l.get('os') == 'macOS' and l.get('arch') == '$arch':
+         |        for arg in l.get('additionalJvmArguments', []):
+         |            print(arg.replace('$$APP_PACKAGE', r'$home'))
+         |        break
+         |""".stripMargin
+    os.proc("python3", "-c", script).call().out.lines()
+  }
+
+  /** Arbitrary sentinel exit code, chosen to not collide with any exit code
+    * the JVM itself would ever produce. Passed to the sandbox via the
+    * `IDEA_RESTART_VIA_EXIT_CODE` environment variable that
+    * `com.intellij.util.Restarter.scheduleRestart` checks for: when set, a
+    * "Restart IDE" click (e.g. after installing/updating a plugin) just
+    * calls `System.exit(restartExitCode)` instead of trying to spawn a
+    * native relauncher -- which doesn't exist here, since we launch via a
+    * bare `java` invocation rather than a real app bundle/launcher script.
+    * `runIde` treats that exit code as "relaunch me" and loops.
+    */
+  def restartExitCode = 66
+
+  /** Launches the IDE distribution in a sandbox with this plugin and the
+    * JetBrains Scala plugin installed, with this repo opened as the project.
+    * Note: JCEF (used by the Three.js viewer action) needs the JetBrains
+    * Runtime's bundled native cef libraries -- if `java` on PATH is a plain
+    * OpenJDK build rather than a JBR, `JBCefApp.isSupported` will be false
+    * and PurrismThreeJsAction will show its "not supported" dialog instead
+    * of the viewer. Set `PURRISM_JBR_HOME` to a JetBrains Runtime install to
+    * get a fully working JCEF.
+    */
+  def runIde() = Task.Command {
+    val home = platformHome().path
+    val dist = pluginDist().path
+    val scalaPlugin = scalaPluginHome().path
+    val sandbox = Task.dest / "sandbox"
+    val pluginsDir = sandbox / "plugins"
+    os.makeDir.all(pluginsDir)
+    os.copy(dist, pluginsDir / dist.last, mergeFolders = true, replaceExisting = true)
+    for (entry <- os.list(scalaPlugin))
+      os.copy(entry, pluginsDir / entry.last, mergeFolders = true, replaceExisting = true)
+
+    val javaBin = Option(System.getenv("PURRISM_JBR_HOME"))
+      .map(h => os.Path(h) / "bin" / "java")
+      .filter(os.exists)
+      .getOrElse(os.Path(sys.props("java.home")) / "bin" / "java")
+
+    val classpath = (os.list(home / "lib") ++
+      (if (os.exists(home / "lib" / "modules")) os.list(home / "lib" / "modules") else Nil))
+      .filter(_.ext == "jar")
+      .map(_.toString)
+      .mkString(java.io.File.pathSeparator)
+
+    val vmOptionsFile = home / "bin" / "mac" / "idea.vmoptions"
+    val bundledVmOptions =
+      if (os.exists(vmOptionsFile))
+        os.read.lines(vmOptionsFile).map(_.trim).filter(l => l.nonEmpty && !l.startsWith("#"))
+      else Nil
+
+    val projectPath = mill.api.BuildCtx.workspaceRoot
+
+    val cmd =
+      Seq(javaBin.toString, "-cp", classpath) ++
+        bundledVmOptions ++
+        platformLaunchVmArgs() ++
+        Seq(
+          s"-Didea.config.path=${sandbox / "config"}",
+          s"-Didea.system.path=${sandbox / "system"}",
+          s"-Didea.plugins.path=$pluginsDir",
+          "-Didea.is.internal=true",
+          "com.intellij.idea.Main",
+          projectPath.toString
+        )
+
+    var exitCode = restartExitCode
+    while (exitCode == restartExitCode) {
+      exitCode = os
+        .proc(cmd)
+        .call(
+          stdout = os.Inherit,
+          stderr = os.Inherit,
+          cwd = home,
+          env = Map("IDEA_RESTART_VIA_EXIT_CODE" -> restartExitCode.toString),
+          check = false
+        )
+        .exitCode
+      if (exitCode == restartExitCode) println(s"[purrism] IDE requested restart, relaunching...")
+    }
+  }
+
+  /** Writes a standalone `run-ide.sh` to the repo root that does the same restart-aware launch as
+    * `runIde()`, but as a plain shell script instead of a Mill task. `runIde()` holds Mill's `out/`
+    * lock for as long as the sandbox IDE window stays open (Mill locks the whole workspace for a
+    * running task's duration, daemon or not), so every other `mill` command blocks until you close
+    * it. This script launches the same way but exits Mill immediately after generating it, so the
+    * sandbox IDE runs fully outside Mill's task lifecycle -- `mill` stays usable while it's open.
+    *
+    * Plugin/Scala-plugin jars and platform VM args are copied/read at script *run* time (not baked
+    * in). The script rebuilds the plugin itself (`mill ijPlugin.pluginDist`) before staging it, so a
+    * plain rerun of `./run-ide.sh` always picks up source changes -- that briefly needs Mill's
+    * workspace lock (blocks if another `mill` command is mid-run, same as any other `mill` call), but
+    * releases it once the rebuild finishes and the sandbox IDE launches outside Mill's lifecycle same
+    * as before. Regenerate (`mill ijPlugin.genRunIdeScript`) only if `ideVersion` changes or the
+    * platform download itself moves.
+    */
+  def genRunIdeScript() = Task.Command {
+    val home = platformHome().path
+    val dist = pluginDist().path
+    val scalaPlugin = scalaPluginHome().path
+    val projectPath = mill.api.BuildCtx.workspaceRoot
+    val sandbox = projectPath / "out" / "ijPlugin" / "standalone-sandbox"
+
+    val classpath = (os.list(home / "lib") ++
+      (if (os.exists(home / "lib" / "modules")) os.list(home / "lib" / "modules") else Nil))
+      .filter(_.ext == "jar")
+      .map(_.toString)
+      .mkString(java.io.File.pathSeparator)
+
+    val vmOptionsFile = home / "bin" / "mac" / "idea.vmoptions"
+    val bundledVmOptions =
+      if (os.exists(vmOptionsFile))
+        os.read.lines(vmOptionsFile).map(_.trim).filter(l => l.nonEmpty && !l.startsWith("#"))
+      else Nil
+
+    val allVmArgs = (bundledVmOptions ++ platformLaunchVmArgs())
+      .map(arg => s"'${arg.replace("'", "'\\''")}'")
+      .mkString(" ")
+
+    val script =
+      s"""#!/usr/bin/env bash
+         |# Generated by `mill ijPlugin.genRunIdeScript` -- do not edit by hand.
+         |set -euo pipefail
+         |
+         |HOME_DIR='${home.toString.replace("'", "'\\''")}'
+         |DIST='${dist.toString.replace("'", "'\\''")}'
+         |SCALA_PLUGIN='${scalaPlugin.toString.replace("'", "'\\''")}'
+         |PROJECT_PATH='${projectPath.toString.replace("'", "'\\''")}'
+         |SANDBOX='${sandbox.toString.replace("'", "'\\''")}'
+         |PLUGINS_DIR="$$SANDBOX/plugins"
+         |RESTART_EXIT_CODE=$restartExitCode
+         |
+         |echo "[purrism] rebuilding plugin (mill ijPlugin.pluginDist)..."
+         |(cd "$$PROJECT_PATH" && mill ijPlugin.pluginDist)
+         |
+         |rm -rf "$$PLUGINS_DIR"
+         |mkdir -p "$$PLUGINS_DIR"
+         |cp -R "$$DIST" "$$PLUGINS_DIR/"
+         |for entry in "$$SCALA_PLUGIN"/*; do
+         |  cp -R "$$entry" "$$PLUGINS_DIR/"
+         |done
+         |
+         |# Prefer an explicit override, then the newest cached JBR-with-JCEF under
+         |# ~/.cache/purrism-jbr (JetBrains Runtime, not a stock JDK -- needed for JCEF and for
+         |# IntelliJ's native Mac screen-menu bridge, which crashes on a plain JDK), then whatever
+         |# JVM Mill itself ran on as a last resort.
+         |if [ -n "$${PURRISM_JBR_HOME:-}" ] && [ -x "$$PURRISM_JBR_HOME/bin/java" ]; then
+         |  JAVA_BIN="$$PURRISM_JBR_HOME/bin/java"
+         |else
+         |  CACHED_JBR=$$(ls -d "$$HOME/.cache/purrism-jbr"/jbr_jcef-*/Contents/Home 2>/dev/null | sort -V | tail -1 || true)
+         |  if [ -n "$$CACHED_JBR" ] && [ -x "$$CACHED_JBR/bin/java" ]; then
+         |    JAVA_BIN="$$CACHED_JBR/bin/java"
+         |  else
+         |    JAVA_BIN='${(os.Path(sys.props("java.home")) / "bin" / "java").toString.replace("'", "'\\''")}'
+         |  fi
+         |fi
+         |
+         |# Serve the Three.js viewer HTML/JS straight from source (see ViewerAssets.dir) instead of a
+         |# one-time jar-resource copy, so editing e.g. purrism-graph.html and reloading the dialog's
+         |# browser (right-click -> Reload, or Cmd+R) picks up the change immediately -- no plugin
+         |# rebuild or IDE restart needed for pure UI/JS edits.
+         |export PURRISM_WEB_DIR="$$PROJECT_PATH/ijPlugin/resources/web"
+         |
+         |EXIT_CODE=$$RESTART_EXIT_CODE
+         |while [ "$$EXIT_CODE" -eq "$$RESTART_EXIT_CODE" ]; do
+         |  IDEA_RESTART_VIA_EXIT_CODE=$$RESTART_EXIT_CODE "$$JAVA_BIN" -cp '$classpath' \\
+         |    $allVmArgs \\
+         |    "-Didea.config.path=$$SANDBOX/config" \\
+         |    "-Didea.system.path=$$SANDBOX/system" \\
+         |    "-Didea.plugins.path=$$PLUGINS_DIR" \\
+         |    -Didea.is.internal=true \\
+         |    com.intellij.idea.Main "$$PROJECT_PATH" \\
+         |    && EXIT_CODE=0 || EXIT_CODE=$$?
+         |  if [ "$$EXIT_CODE" -eq "$$RESTART_EXIT_CODE" ]; then
+         |    echo "[purrism] IDE requested restart, relaunching..."
+         |  fi
+         |done
+         |""".stripMargin
+
+    val target = projectPath / "run-ide.sh"
+    os.write.over(target, script)
+    os.perms.set(target, "rwxr-xr-x")
+    println(s"[purrism] wrote $target -- run it directly (not through mill) so mill stays free while the IDE is open")
+    PathRef(target)
+  }
 }
 
 def prePush() = Task.Command {
+  // scalac (incl. wartremover, via scalafix.scalacOptions); scalafmt-format
+  // and scalafix-lint checks run in scripts/git-pre-push.scala before this
+  // task, as real `mill` subprocess invocations rather than in-task API
+  // calls.
+  scalafix.catsIndexCheck()()
   scalafix.compile()
   scalafix.explorer.compile()
   // Compile fixtures before the suite so a broken fixture reports as a compile
