@@ -594,6 +594,63 @@ object ijPlugin extends ScalaModule {
   }
 }
 
+// Regenerates the checked-in Cats-side normalized-body index from the
+// pinned cats-core sources jar (docs/PREFER_CATS_FUNCTIONS.md / #96 §1, #4).
+// Kept as a separate, unpublished module (like `explorer`) so the published
+// `scalafix` artifact never needs network access or a Scalameta parse of
+// cats-core at a consumer's build time -- the rule only ever reads the
+// checked-in gzipped NDJSON resource off the classpath.
+object catsIndex extends ScalaModule {
+  def scalaVersion = Versions.scala3
+  def moduleDeps = Seq(scalafix)
+
+  def indexOutputPath = mill.api.BuildCtx.workspaceRoot / "scalafix" / "resources" / "purrism" /
+    s"cats-index-${Versions.catsCore}.ndjson.gz"
+
+  /** `mill catsIndex.generate` -- downloads the cats-core sources jar pinned
+    * to `Versions.catsCore`, parses it, and overwrites the checked-in index.
+    */
+  def generate() = Task.Command {
+    val classpath = runClasspath()
+    os
+      .proc(
+        mill.util.Jvm.javaExe(None),
+        "-cp",
+        classpath.map(_.path.toString).mkString(java.io.File.pathSeparator),
+        "purrism.catsindex.GenerateCatsIndex",
+        Versions.catsCore,
+        indexOutputPath.toString
+      )
+      .call(stdout = os.Inherit, stderr = os.Inherit)
+  }
+
+  /** Regenerates to a scratch path and byte-diffs against the checked-in
+    * index, so drift from a `Versions.catsCore` bump (or a hand-edit of the
+    * checked-in file) is caught rather than silently ignored.
+    */
+  def check() = Task.Command {
+    val classpath = runClasspath()
+    val scratch = Task.dest / s"cats-index-${Versions.catsCore}.ndjson.gz"
+    os
+      .proc(
+        mill.util.Jvm.javaExe(None),
+        "-cp",
+        classpath.map(_.path.toString).mkString(java.io.File.pathSeparator),
+        "purrism.catsindex.GenerateCatsIndex",
+        Versions.catsCore,
+        scratch.toString
+      )
+      .call(stdout = os.Inherit, stderr = os.Inherit)
+    val regenerated = os.read.bytes(scratch)
+    val checkedIn = os.read.bytes(indexOutputPath)
+    if !regenerated.sameElements(checkedIn) then
+      throw new RuntimeException(
+        s"Cats index is stale: $indexOutputPath does not match a fresh " +
+          s"`mill catsIndex.generate` run for cats-core ${Versions.catsCore}."
+      )
+  }
+}
+
 def prePush() = Task.Command {
   // scalac (incl. wartremover, via scalafix.scalacOptions); scalafmt-format
   // and scalafix-lint checks run in scripts/git-pre-push.scala before this

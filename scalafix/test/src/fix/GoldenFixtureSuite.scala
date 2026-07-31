@@ -39,6 +39,7 @@ final class GoldenFixtureSuite extends munit.FunSuite {
     assert(services.toSet.contains("fix.TypeclassWeakening"))
     assert(services.toSet.contains("fix.PreferKleisli"))
     assert(services.toSet.contains("fix.PreferArrow"))
+    assert(services.toSet.contains("fix.PreferCatsFunctions"))
     assert(services.toSet.contains("fix.PreferCatsSyntax"))
     assert(services.toSet.contains("fix.SimplifyCatsExpressions"))
     assert(services.toSet.contains("fix.OpaqueTypePropagation"))
