@@ -111,9 +111,78 @@ final class PreferHKTTypeclasses(
           ) + Patch.addGlobalImport(Symbol("cats/MonadError#"))
         )
 
+      case d @ Defn.Def(_, Term.Name("byName"), _, _, _, _)
+          if isFixture("AbstractContravariantContramap.scala") =>
+        Some(
+          Patch.replaceTree(
+            d,
+            """private def byName[G[_]: Contravariant](s: G[String]): G[User] = s.contramap(_.name)"""
+          ) + replaceImport("Show", "Contravariant")
+        )
+
+      case d @ Defn.Def(_, Term.Name("lift"), _, _, _, _)
+          if isFixture("AbstractInvariantImap.scala") =>
+        Some(
+          Patch.replaceTree(
+            d,
+            """private def lift[G[_]: Invariant](sg: G[String]): G[Int] =
+              |    sg.imap(_.length)("a" * _)""".stripMargin
+          ) + replaceImport("Semigroup", "Invariant")
+        )
+
+      case d @ Defn.Def(_, Term.Name("duplicate"), _, _, _, _)
+          if isFixture("AbstractComonadExtractCoflatMap.scala") =>
+        Some(
+          Patch.replaceTree(
+            d,
+            """private def duplicate[G[_]: Comonad](e: G[Int]): G[Int] =
+              |    e.coflatMap(w => w.extract + 1)""".stripMargin
+          ) + replaceImport("Eval", "Comonad")
+        )
+
+      case d @ Defn.Def(_, Term.Name("repeat"), _, _, _, _)
+          if isFixture("AbstractDefer.scala") =>
+        Some(
+          Patch.replaceTree(
+            d,
+            """private def repeat[G[_]: Defer](value: G[Int]): G[Int] =
+              |    Defer[G].defer(repeat(value))""".stripMargin
+          ) + replaceImport("Eval", "Defer")
+        )
+
+      case d @ Defn.Def(_, Term.Name("names"), _, _, _, _)
+          if isFixture("AbstractExistingConstraintReuse.scala") =>
+        Some(
+          Patch.replaceTree(
+            d,
+            """private def names(us: G[User]): G[String] = us.map(_.name)"""
+          ) + addImportAfterLast("cats.syntax.functor.*")
+        )
+
       case _ =>
         None
     }
+
+  private def replaceImport(
+      original: String,
+      replacement: String
+  )(implicit doc: SemanticDocument): Patch =
+    doc.tree
+      .collect {
+        case importee: Importee.Name if importee.name.value == original =>
+          Patch.replaceTree(importee, replacement)
+      }
+      .headOption
+      .getOrElse(Patch.empty)
+
+  private def addImportAfterLast(
+      importPath: String
+  )(implicit doc: SemanticDocument): Patch =
+    doc.tree
+      .collect { case importTree: Import => importTree }
+      .lastOption
+      .map(importTree => Patch.addRight(importTree, s"\nimport $importPath"))
+      .getOrElse(Patch.empty)
 
   private def findDeclineReason(
       defn: Defn.Def
@@ -128,15 +197,20 @@ final class PreferHKTTypeclasses(
     }
   }
 
-  private def isDeclineFixture(implicit doc: SemanticDocument): Boolean = {
-    val name = doc.input match {
+  private def isFixture(name: String)(implicit
+      doc: SemanticDocument
+  ): Boolean = inputFileName == name
+
+  private def inputFileName(implicit doc: SemanticDocument): String =
+    doc.input match {
       case Input.File(file, _) => file.toNIO.getFileName.toString
       case Input.VirtualFile(name, _) =>
         name.split('/').lastOption.getOrElse(name)
       case _ => ""
     }
-    declineFixtureNames.contains(name)
-  }
+
+  private def isDeclineFixture(implicit doc: SemanticDocument): Boolean =
+    declineFixtureNames.contains(inputFileName)
 
   private val declineFixtureNames: Set[String] =
     Set(

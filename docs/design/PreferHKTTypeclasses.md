@@ -133,9 +133,9 @@ Snapshot for Cats 2.13.0 on Scala 3.8.4 (data rows exclude headers):
 | `typeclasses.tsv` | 59 | 5,337 |
 | `capabilities.tsv` | 1,471 | 130,439 |
 | `syntax.tsv` | 354 | 42,998 |
-| `stdlib.tsv` | 0 | 159 |
+| `stdlib.tsv` | 28 | 3,489 |
 | `gaps.tsv` | 3 | 411 |
-| **Total** | **1,887** | **179,344** |
+| **Total** | **1,915** | **182,674** |
 
 TSV, not JSON: the rows are flat and uniform, a TSV diff is reviewable line-by-line in
 a PR, and parsing needs no dependency. `symbol`/`method`/`owner` are **SemanticDB symbol
@@ -143,11 +143,18 @@ strings** (`cats/Functor#`, `cats/Functor#map().`) so they compare directly agai
 `scalafix.v1.Symbol` values obtained from a `SemanticDocument`. Multi-valued cells
 (`parents`) are `,`-separated, themselves sorted by the same rule.
 
-`stdlib.tsv` is generator-owned like the other four files. Its schema reserves the map
+`stdlib.tsv` is generator-owned like the other four files. Its schema carries the map
 from concrete stdlib/Cats-data methods (`scala/collection/immutable/List#map().`) to the
-capability they demand; the Cats 2.13.0 snapshot has no such rows yet. Policy-defined
+capability they demand. Policy-defined
 `gaps.tsv` rows are emitted by the same generator so regeneration and drift checking
 cover the complete artifact set.
+
+Concrete symbols are the declarations recorded at real call sites, not synthesized from
+the receiver type. For example, `List#reduce` resolves to
+`scala/collection/IterableOnceOps#reduce().`, while `foldMap`, `traverse`, `mapFilter`,
+`NonEmptyList#reduceLeftTo`, `Eval#coflatMap`, and `Comonad#extract` resolve to Cats ops
+symbols already covered by `syntax.tsv`; `stdlib.tsv` does not duplicate those syntax
+mappings.
 
 ### Stable sort — exact specification
 
@@ -1187,7 +1194,7 @@ Every row: **no patch + exactly one warning**, at the position given.
 | 3 | `AbstractConcreteOptionBranchingWithoutCapability` | `if (o.isDefined) o.get else d` | `ConcreteConstructorMatch("isDefined")` | the `.isDefined` call |
 | 4 | `AbstractConcreteEitherLeftSpecificWithoutBifunctor` | `e.left.map(f)` on `Either[String, Int]` | `UnsupportedKind(Binary)` | the def name |
 | 5 | `AbstractPublicBoundaryDecline` | a **public** def otherwise identical to fixture 1 of the positive table | `PublicBoundary("names")` | the def name |
-| 6 | `AbstractAmbiguousWeakestCapability` | `xs.reduce(_ + _)` on `List` | `AmbiguousCapability(List(cats/Reducible#reduceLeft()., cats/Semigroup#combine().))` — `stdlib.tsv` maps `reduce` to two unrelated capability roots, and `List` is not provably non-empty | the `.reduce` call |
+| 6 | `AbstractAmbiguousWeakestCapability` | `xs.reduce(_ + _)` on `List` | `AmbiguousCapability(List(cats/Reducible#reduceLeft()., cats/kernel/Semigroup#combine().))` — `stdlib.tsv` maps `reduce` to two unrelated capability roots, and `List` is not provably non-empty | the `.reduce` call |
 | 7 | `AbstractTypeParamNameConflict` | enclosing scope declares type params named `G`, `H` **and** `K` | `NameConflict(List("G", "H", "K"))` | the def name |
 | 8 | `AbstractMissingCatsEvidence` | `private def total[B](xs: List[B]): B = xs.foldMap(identity)` — `foldMap` needs `Monoid[B]`, `B` has no such bound | `MissingEvidence` | the `.foldMap` call |
 | 9 | `AbstractMutableOrThrowingBody` | body contains `var acc` and `throw new IllegalStateException(...)` | `UnsafeBody("var")` | the `var` definition |

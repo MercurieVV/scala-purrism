@@ -251,6 +251,18 @@ object scalafix
   }
 }
 
+object app extends Module {
+  def prePush() = Task.Command {
+    scalafix.compile()
+    scalafix.explorer.compile()
+    // Compile fixtures before the suite so a broken fixture reports as a compile
+    // error rather than an opaque "SemanticDB not found" test failure.
+    scalafix.testInput.compile()
+    scalafix.testOutput.compile()
+    scalafix.test.testForked()()
+  }
+}
+
 object docs extends ScalaModule {
   def scalaVersion = "3.3.8"
   def mvnDeps = Seq(mvn"org.scalameta::mdoc:${Versions.mdoc}")
