@@ -116,7 +116,14 @@ final class UsageAnalyzerSuite extends FunSuite {
     result.collectFirst { case declined: UsageResult.Declined =>
       declined.reason
     } match {
-      case Some(_: DeclineReason.AmbiguousCapability) => ()
+      case Some(DeclineReason.AmbiguousCapability(roots)) =>
+        assertEquals(
+          roots.toSet,
+          Set(
+            Symbol("cats/Reducible#reduceLeft()."),
+            Symbol("cats/kernel/Semigroup#combine().")
+          )
+        )
       case other => fail(s"expected AmbiguousCapability, got $other")
     }
   }
