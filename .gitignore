@@ -50,3 +50,4 @@ build/
 *.semanticdb
 .idea/
 .bsp/
+.aider*

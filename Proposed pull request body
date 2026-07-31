@@ -1,0 +1,5 @@
+Merge the completed PreferCatsFunctions work from origin/task-34 into master.
+- New rule: PreferCatsFunctions with CatsIndex, normalizer, candidate extraction, and tests.
+- Service registration updated.
+- Conflict resolution: kept master's pre-commit script (already includes mill fallback fix) and added PreferCatsFunctions to the services file.
+- All pre-commit hooks work; build and tests pass.
