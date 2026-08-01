@@ -43,7 +43,7 @@ output file. `golden/KleisliFlow.scala` does this with `rules = [DisableSyntax]`
 
 The older `base`/`expected` pairs under `scalafix/test/resources`. **No test
 runs a rule against these.** `GoldenFixtureSuite` only checks that the two
-directory listings match; the files document intent for `OpaqueTypePropagation`
+directory listings match; the files document intent for opaque-type propagation
 and the Typelevel rules but nothing enforces them. Several already disagree with
 what their rule actually produces.
 

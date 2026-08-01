@@ -6,30 +6,41 @@ import metaconfig.Configured
 import scalafix.v1._
 
 /** The umbrella rule threads its shared config down to the sub-rules that read
-  * it. `PreferArrow` honours `PreferArrow.aggressive` whether invoked directly
-  * or through this umbrella, so a corpus that opts into aggressive arrow
-  * lifting gets it under `class:fix.TypelevelPurrism` too.
+  * it. `PreferArrow` honours `PreferArrow.aggressive` and
+  * `PreferHKTTypeclasses` honours `PreferHKTTypeclasses.widenPublic` whether
+  * invoked directly or through this umbrella, so a corpus that opts into either
+  * gets it under `class:fix.TypelevelPurrism` too.
   */
 final class TypelevelPurrism(
     preferArrow: PreferArrowConfig,
+    preferHKT: PreferHKTConfig,
     classpath: List[java.nio.file.Path]
 ) extends SemanticRule("TypelevelPurrism") {
 
-  def this() = this(PreferArrowConfig.default, Nil)
+  def this() = this(PreferArrowConfig.default, PreferHKTConfig.default, Nil)
 
   override def withConfiguration(config: Configuration): Configured[Rule] =
     config.conf
       .getOrElse("PreferArrow")(PreferArrowConfig.default)
+      .product(
+        config.conf.getOrElse("PreferHKTTypeclasses")(PreferHKTConfig.default)
+      )
       // The classpath carries the SemanticDB payloads `PreferArrow` needs to
       // recognise a Kleisli declared in another file; dropping it here would
       // silently make the umbrella weaker than the rule run on its own.
-      .map(new TypelevelPurrism(_, config.scalacClasspath.map(_.toNIO)))
+      .map { case (preferArrow, preferHKT) =>
+        new TypelevelPurrism(
+          preferArrow,
+          preferHKT,
+          config.scalacClasspath.map(_.toNIO)
+        )
+      }
 
   override def fix(implicit doc: SemanticDocument): Patch =
     new TypeclassWeakening().fix + new PreferKleisli().fix +
       new PreferArrow(preferArrow, classpath).fix +
-      new PreferCatsSyntax().fix + new SimplifyCatsExpressions().fix +
-      new OpaqueTypePropagation().fix
+      new PreferCatsFunctions().fix + new PreferHKTTypeclasses(preferHKT).fix +
+      new PreferCatsSyntax().fix + new SimplifyCatsExpressions().fix
 }
 
 final class TypeclassWeakening extends SemanticRule("TypeclassWeakening") {

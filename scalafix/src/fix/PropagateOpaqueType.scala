@@ -153,8 +153,8 @@ final case class MergePointDiagnostic(
   * carries SemanticDB symbol strings and positions, never trees, and every
   * patch is anchored on `doc.tree`. That separation is deliberate. Anchoring a
   * patch on a tree parsed from anything other than `doc.input` writes at
-  * offsets that only coincide by luck, which is how the older
-  * `OpaqueTypePropagation` rule could corrupt a file outright.
+  * offsets that only coincide by luck, which is how an earlier, single-file
+  * opaque-propagation rule could corrupt a file outright.
   */
 final class PropagateOpaqueType(
     config: PropagateOpaqueTypeConfig,

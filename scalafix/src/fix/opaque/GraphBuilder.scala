@@ -17,7 +17,7 @@ import scala.meta.internal.{semanticdb => s}
   *
   * These parses exist only to derive edges. Nothing here is ever a patch
   * target; the closure carries symbol strings and `Provenance`, never a `Tree`.
-  * That wall is what keeps this from repeating `OpaqueTypePropagation`'s bug of
+  * That wall is what keeps this from repeating an earlier rule's bug of
   * anchoring patches on a tree parsed from a different `Input` than `doc.tree`.
   */
 @nowarn("cat=deprecation")

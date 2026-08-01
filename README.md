@@ -175,6 +175,9 @@ otherwise fail the whole run with "SemanticDB not found".
 | [`PreferCatsSyntax`](#prefercatssyntax) | typeclass calls → Cats syntax | none |
 | [`SimplifyCatsExpressions`](#simplifycatsexpressions) | collapse expressions into existing combinators | none |
 | [`PropagateOpaqueType`](#propagateopaquetype) | propagate an `opaque type` through the program | required — seeds |
+| `PreferCatsFunctions` | match project bodies against the Cats source index, rewrite to the winning public function | none |
+| `PreferHKTTypeclasses` | abstract concrete `F`-returning functions to Cats typeclass constraints | optional — `widenPublic` |
+| `TypelevelPurrism` | umbrella rule: runs `TypeclassWeakening` + `PreferKleisli` + `PreferArrow` + `PreferCatsFunctions` + `PreferHKTTypeclasses` + `PreferCatsSyntax` + `SimplifyCatsExpressions` in one pass | optional — `PreferArrow.aggressive`, `PreferHKTTypeclasses.widenPublic` |
 
 ### TypeclassWeakening
 
