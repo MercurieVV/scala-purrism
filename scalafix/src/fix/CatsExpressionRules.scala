@@ -42,8 +42,38 @@ object SimplifyCatsExpressions {
 private[fix] object CatsExpressionRules {
   final case class Rewrite(tree: Tree, replacement: String)
 
+  /** `Patch.addGlobalImport(Symbol("cats/syntax/all."))` renders as `import
+    * cats.syntax.all` -- the object itself, not its members -- which brings no
+    * syntax into scope and leaves the rewritten file uncompilable. The importer
+    * form emits the wildcard the rewrites actually need.
+    */
+  private val catsSyntaxAll: Importer =
+    Importer(
+      Term.Select(
+        Term.Select(Term.Name("cats"), Term.Name("syntax")),
+        Term.Name("all")
+      ),
+      List(Importee.Wildcard())
+    )
+
   def catsSyntaxImport(implicit doc: SemanticDocument): Patch =
-    Patch.addGlobalImport(Symbol("cats/syntax/all."))
+    if (importsCatsSyntax(doc.tree)) Patch.empty
+    else Patch.addGlobalImport(catsSyntaxAll)
+
+  /** Scalafix dedupes a global import against the symbol it resolves, so an
+    * `import cats.syntax.all.*` already in the file does not stop it adding a
+    * second wildcard importer. Check for one directly.
+    */
+  private def importsCatsSyntax(tree: Tree): Boolean =
+    tree.collect {
+      case Importer(ref, importees)
+          if CatsSyntaxWildcardRefs(ref.syntax) &&
+            importees.exists(_.is[Importee.Wildcard]) =>
+        ()
+    }.nonEmpty
+
+  private val CatsSyntaxWildcardRefs: Set[String] =
+    Set("cats.syntax.all", "cats.implicits")
 
   def preferCatsSyntaxRewrites(tree: Tree): List[Rewrite] =
     tree.collect { case term: Term =>
