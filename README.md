@@ -173,7 +173,7 @@ otherwise fail the whole run with "SemanticDB not found".
 | [`PreferKleisli`](#preferkleisli) | effectful functions → `Kleisli` | optional — `crossFile` |
 | [`PreferArrow`](#preferarrow) | `Kleisli` bodies → point-free `>>>`, `.map`, `&&&` | optional — `aggressive` |
 | [`PreferCatsSyntax`](#prefercatssyntax) | typeclass calls → Cats syntax | none |
-| [`SimplifyCatsExpressions`](#simplifycatsexpressions) | collapse expressions into existing combinators | none |
+| [`SimplifyCatsExpressions`](#simplifycatsexpressions) | collapse expressions into existing Cats combinators | none |
 | [`PropagateOpaqueType`](#propagateopaquetype) | propagate an `opaque type` through the program | required — seeds |
 | `PreferCatsFunctions` | match project bodies against the Cats source index, rewrite to the winning public function | none |
 | `PreferHKTTypeclasses` | abstract concrete `F`-returning functions to Cats typeclass constraints | optional — `widenPublic` |
@@ -254,12 +254,40 @@ Replaces direct Cats typeclass calls such as `Applicative[F].pure(a)`,
 `MonadThrow[F].raiseError[A](e)`, `Functor[F].map(fa)(f)` and
 `FlatMap[F].flatMap(fa)(f)` with Cats syntax.
 
+Every match resolves a symbol. A receiver spelled `Monad` that is not
+`cats.Monad`, or a `map` that belongs to `List` rather than to Cats syntax, is
+left alone, and an unresolved symbol means no rewrite at all.
+
 **Configuration:** none. Add `PreferCatsSyntax` to `rules`.
 
 ### SimplifyCatsExpressions
 
-Simplifies common Cats and FP expressions using existing combinators: `.void`,
-`.as`, `*>`, narrow `.mapN`, `Option(value)`, `Either.cond`.
+Simplifies common Cats and FP expressions using existing combinators.
+
+| written as | rewritten to |
+| --- | --- |
+| `fa.map(_ => ())`, `fa.as(())` | `fa.void` |
+| `fa.map(_ => c)` | `fa.as(c)` |
+| `fa.flatMap(a => f(a).pure[F])` | `fa.map(a => f(a))` |
+| `fa.flatMap(_ => fb)` | `fa *> fb` |
+| `fa.flatMap(a => fb.map(b => (a, b)))` | `(fa, fb).mapN((a, b) => (a, b))` |
+| `fa.flatMap(identity)`, `fa.flatMap(a => a)` | `fa.flatten` |
+| `fa.map(identity)`, `fa.map(a => a)` | `fa` |
+| `fa.map(f).flatten` | `fa.flatMap(f)` |
+| `xs.map(f).sequence` | `xs.traverse(f)` |
+| `xs.map(f).sequence_` | `xs.traverse_(f)` |
+| `if (c) fa else F.unit` | `fa.whenA(c)` |
+| `if (c) F.unit else fa` | `fa.unlessA(c)` |
+| `fa.flatMap(a => g(a).map(b => (a, b)))` | `fa.mproduct(g)` |
+| `opt.fold(F.pure(d))(f)` | `opt.fold(d.pure[F])(f)` |
+| `if (x == null) None else Some(x)` | `Option(x)` |
+| `if (c) Right(r) else Left(l)` | `Either.cond(c, r, l)` |
+
+The receiver has to be a Cats one: `List(1, 2).map(_ => 42)` keeps its `map`,
+and `Some` / `None` / `Right` / `Left` are matched by symbol, so shadowed
+constructors are left alone. `whenA` and `unlessA` return `F[Unit]`, so those
+two only fire when the branch is already `F[Unit]`. Where an outer and an inner
+expression both match, only the outer rewrite is emitted.
 
 **Configuration:** none. Add `SimplifyCatsExpressions` to `rules`.
 

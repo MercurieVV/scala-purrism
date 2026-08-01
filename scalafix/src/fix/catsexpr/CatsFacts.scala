@@ -2,7 +2,10 @@ package fix.catsexpr
 
 import scala.meta._
 
+import scalafix.v1.MethodSignature
 import scalafix.v1.SemanticDocument
+import scalafix.v1.TypeRef
+import scalafix.v1.ValueSignature
 import scalafix.v1.XtensionTreeScalafix
 
 import fix.SemanticSupport
@@ -33,6 +36,16 @@ trait CatsFacts {
     * symbols such as `"scala/util/Right."`.
     */
   def resolvesTo(term: Term, symbols: Set[String]): Boolean
+
+  /** Whether `term` is an effect of `Unit`, i.e. its type is `F[Unit]` for some
+    * `F`.
+    *
+    * `whenA` and `unlessA` return `F[Unit]`, so rewriting `if (c) fa else
+    * F.unit` to `fa.whenA(c)` only preserves the type when `fa` is already
+    * `F[Unit]`. Answers false whenever the type is not plainly resolvable,
+    * which costs a rewrite rather than a compile.
+    */
+  def isUnitEffect(term: Term): Boolean
 }
 
 object CatsFacts {
@@ -44,6 +57,8 @@ object CatsFacts {
     */
   private val CatsSymbolPrefix = "cats/"
 
+  private val UnitTypeSymbol = "scala/Unit#"
+
   def semantic(implicit doc: SemanticDocument): CatsFacts =
     new SemanticCatsFacts
 
@@ -54,7 +69,8 @@ object CatsFacts {
   def bySpelling(
       typeclasses: Map[String, String] = defaultTypeclassSpellings,
       catsReceivers: Option[Set[String]] = None,
-      constructors: Map[String, String] = defaultConstructorSpellings
+      constructors: Map[String, String] = defaultConstructorSpellings,
+      unitEffects: Set[String] = Set.empty
   ): CatsFacts = new CatsFacts {
     def typeclassObject(term: Term): Option[String] =
       spelling(term).flatMap(typeclasses.get)
@@ -64,6 +80,8 @@ object CatsFacts {
 
     def resolvesTo(term: Term, symbols: Set[String]): Boolean =
       spelling(term).flatMap(constructors.get).exists(symbols)
+
+    def isUnitEffect(term: Term): Boolean = unitEffects(term.syntax)
 
     private def spelling(term: Term): Option[String] =
       term match {
@@ -120,6 +138,24 @@ object CatsFacts {
         symbols.exists(expected =>
           symbol == expected || symbol.startsWith(expected)
         )
+      }
+
+    def isUnitEffect(term: Term): Boolean =
+      effectElementType(term).contains(UnitTypeSymbol)
+
+    /** The `A` of a `F[A]`-typed term, when the term is a plain reference whose
+      * signature SemanticDB carries.
+      */
+    private def effectElementType(term: Term): Option[String] =
+      term.symbol.info.flatMap { info =>
+        val tpe = info.signature match {
+          case ValueSignature(value)           => Some(value)
+          case MethodSignature(_, _, returned) => Some(returned)
+          case _                               => None
+        }
+        tpe.collect { case TypeRef(_, _, List(TypeRef(_, element, _))) =>
+          element.value
+        }
       }
 
     private def constructorSymbol(term: Term): Option[String] =

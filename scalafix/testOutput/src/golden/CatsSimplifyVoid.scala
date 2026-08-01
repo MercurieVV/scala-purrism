@@ -9,5 +9,5 @@ final class CatsSimplifyVoid[F[_]: Functor] {
     seed.void
 
   def discardWithAs(seed: F[Int]): F[Unit] =
-    seed.as(())
+    seed.void
 }
