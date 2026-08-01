@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<style>
+  html, body { margin: 0; padding: 0; overflow: hidden; background: #1e1f22; }
+  canvas { display: block; }
+</style>
+<script src="three.min.js"></script>
+</head>
+<body>
+<script>
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+  const renderer = new THREE.WebGLRenderer({antialias: true});
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  document.body.appendChild(renderer.domElement);
+
+  const geometry = new THREE.BoxGeometry(1.5, 1.5, 1.5);
+  const material = new THREE.MeshStandardMaterial({color: 0x7aa2f7});
+  const cube = new THREE.Mesh(geometry, material);
+  scene.add(cube);
+
+  scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+  const light = new THREE.DirectionalLight(0xffffff, 1);
+  light.position.set(3, 3, 3);
+  scene.add(light);
+
+  camera.position.z = 4;
+
+  function animate() {
+    requestAnimationFrame(animate);
+    cube.rotation.x += 0.008;
+    cube.rotation.y += 0.012;
+    renderer.render(scene, camera);
+  }
+  animate();
+
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  // Called from Kotlin/Scala side via browser.cefBrowser.executeJavaScript
+  window.purrismSetLabel = function(text) {
+    cube.material.color.set(text.length % 2 === 0 ? 0x7aa2f7 : 0xf7768e);
+  };
+</script>
+</body>
+</html>
