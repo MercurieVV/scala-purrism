@@ -7,11 +7,13 @@ rules = [SimplifyCatsExpressions]
  */
 package golden
 
-final case class Right[A](value: A)
-final case class Left[A](value: A)
-final case class Some[A](value: A)
-
+// Declared inside the class, not at package level: a package-level `Right`
+// would shadow `scala.Right` for every other fixture in package `golden` too.
 final class CatsNegativeShadowedRight {
+  final case class Right[A](value: A)
+  final case class Left[A](value: A)
+  final case class Some[A](value: A)
+
   def validated(valid: Boolean, value: String): Any =
     if (valid) Right(value) else Left("invalid")
 
