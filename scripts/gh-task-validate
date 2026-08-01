@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+#
+# Local quality gate for gh-tasks-llm-executor.
+#
+# The executor runs this in the task's worktree after the agent returns and
+# before it commits, pushes, opens a PR or closes the issue. A non-zero exit
+# rejects the run, which is what makes the escalation ladder work: without a
+# hook the executor verifies nothing and records every run as `unverified`,
+# so a broken change reaches a PR unchallenged.
+#
+# It must live at one of the three paths the executor searches. NOT
+# `.gh-tasks-llm-executor/validate` — .gitignore ignores that directory, and
+# worktrees are created fresh from origin/<branch>, so an ignored hook is
+# simply absent when validation runs.
+#
+# Mirrors .github/workflows/ci.yml and adds the two fixture modules. Catching
+# a broken fixture here costs one local build; catching it in CI costs a
+# round trip through a pushed branch and a failing check.
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+if command -v mill >/dev/null 2>&1; then
+  MILL=mill
+elif [ -x ./mill ]; then
+  MILL=./mill
+else
+  echo "gh-task-validate: no mill launcher found (not on PATH, no ./mill)." >&2
+  exit 1
+fi
+
+run() {
+  echo "gh-task-validate: $MILL $*"
+  "$MILL" "$@"
+}
+
+run scalafix.compile
+
+# Fixture sources are compiled in their own modules, and a golden fixture that
+# does not compile is the most common way this repository breaks. `scalafix.test`
+# reports it as a testkit error rather than a compile error, so these run first
+# and fail with the actual message.
+run scalafix.testInput.compile
+run scalafix.testOutput.compile
+
+run scalafix.test
+run docs.compile
+
+echo "gh-task-validate: all checks passed."
