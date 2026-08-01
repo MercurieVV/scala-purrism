@@ -445,7 +445,10 @@ object GenerateCatsIndex:
         try
           Some(
             IR.dropInstanceReceivers(
-              IR.receiverize(Normalizer.normalize(d.body, params, members)),
+              IR.receiverize(
+                Normalizer
+                  .normalize(BlockInliner.inlineLets(d.body), params, members)
+              ),
               instanceSlots
             )
           )

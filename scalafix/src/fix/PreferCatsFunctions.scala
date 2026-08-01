@@ -236,7 +236,13 @@ object PreferCatsFunctions {
       byHead: Map[String, Seq[CatsFn]],
       wildcardImports: Set[String]
   )(implicit doc: SemanticDocument): MatchOutcome = {
-    val head = candidate.term match {
+    // A block is compared by what it computes, not by how it is spelled: its
+    // single-use `val`s are substituted first, so `{ val t = ...; t.map(f) }`
+    // reaches the same patterns the equivalent one-liner does. Holes still bind
+    // to the original subtrees, and the patch still replaces the whole block.
+    val subject = BlockInliner.inlineLets(candidate.term)
+
+    val head = subject match {
       case Term.Apply.After_4_6_0(Term.Select(_, Term.Name(name)), _) =>
         Some(name)
       case Term.ApplyInfix.After_4_6_0(_, Term.Name(name), _, _) => Some(name)
@@ -247,9 +253,7 @@ object PreferCatsFunctions {
 
     val fullMatches = head.toList
       .flatMap(byHead.getOrElse(_, Nil))
-      .flatMap(cf =>
-        PatternMatcher.matches(cf.body, candidate.term).map(cf -> _)
-      )
+      .flatMap(cf => PatternMatcher.matches(cf.body, subject).map(cf -> _))
 
     if (fullMatches.isEmpty) MatchOutcome.NoMatch
     else {

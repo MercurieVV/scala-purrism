@@ -33,10 +33,24 @@ object Normalizer:
     */
   type MemberTable = Map[String, String]
 
-  /** Innermost-first list of names currently bound by enclosing
+  /** One de Bruijn slot.
+    *
+    * A slot usually carries one name, but `val (oa, ob) = ior.pad` binds two
+    * names to one value: the pair occupies a single slot, and each name is
+    * reached through it as `._1`/`._2`. That is exactly how Scala compiles the
+    * destructuring, and it cannot be expressed by a scope of bare names.
+    */
+  private sealed trait Binder
+  private object Binder:
+    final case class Plain(name: String) extends Binder
+    final case class Destructured(names: List[String]) extends Binder
+
+  /** Innermost-first list of slots currently bound by enclosing
     * lambdas/lets/case patterns.
     */
-  private type Scope = List[String]
+  private type Scope = List[Binder]
+
+  private def plain(names: List[String]): Scope = names.map(Binder.Plain(_))
 
   private sealed trait Resolver:
     /** Resolved symbol for a bare (non-member-select) free name. Throws
@@ -113,7 +127,7 @@ object Normalizer:
       initialScope: List[String],
       members: MemberTable
   ): IR =
-    go(term, initialScope, new TableResolver(members))
+    go(term, plain(initialScope), new TableResolver(members))
 
   /** Project-side path (this phase): SemanticDB available, free names and
     * by-name parameter shapes resolved from the compiler's own signatures.
@@ -121,7 +135,7 @@ object Normalizer:
   def normalize(term: Term, initialScope: List[String])(implicit
       doc: SemanticDocument
   ): IR =
-    go(term, initialScope, new SemanticResolver(doc))
+    go(term, plain(initialScope), new SemanticResolver(doc))
 
   // ---------------------------------------------------------------------
   // Shared core
@@ -158,7 +172,7 @@ object Normalizer:
 
     case Term.Function.After_4_6_0(params, body) =>
       val names = params.map(_.name.value)
-      IR.Lam(params.length, go(body, names ::: scope, r))
+      IR.Lam(params.length, go(body, plain(names) ::: scope, r))
 
     case Term.If.After_4_4_0(cond, thenp, elsep, _) =>
       IR.App(
@@ -194,7 +208,7 @@ object Normalizer:
     // author would write for the same thing.
     case Term.PartialFunction(cases) =>
       val scrutName = "$pfScrutinee"
-      val innerScope = scrutName :: scope
+      val innerScope = Binder.Plain(scrutName) :: scope
       val caseIrs = cases.map(goCase(_, innerScope, r))
       IR.Lam(
         1,
@@ -221,8 +235,8 @@ object Normalizer:
       r: Resolver,
       calleePosition: Boolean
   ): IR =
-    scope.indexOf(name.value) match
-      case -1 =>
+    lookup(name.value, scope) match
+      case None =>
         val symbol = r.freeSymbol(name)
         val ref = IR.Ref(Slot.Free(symbol))
         if calleePosition then ref
@@ -232,7 +246,19 @@ object Normalizer:
               val args = (0 until n).toList.map(i => IR.Ref(Slot.Bound(i)))
               IR.Lam(n, IR.App(ref, args, r.byNameFlags(symbol, n)))
             case _ => ref
-      case idx => IR.Ref(Slot.Bound(idx))
+      case Some(ir) => ir
+
+  /** The IR a bound name resolves to, or `None` if it is free.
+    *
+    * A `Destructured` slot holds the whole value, so a name bound by it
+    * resolves to a projection out of that slot rather than to the slot itself.
+    */
+  private def lookup(name: String, scope: Scope): Option[IR] =
+    scope.zipWithIndex.collectFirst {
+      case (Binder.Plain(`name`), slot) => IR.Ref(Slot.Bound(slot))
+      case (Binder.Destructured(names), slot) if names.contains(name) =>
+        IR.Sel(IR.Ref(Slot.Bound(slot)), s"_${names.indexOf(name) + 1}")
+    }
 
   private def resolveCallee(fn: Term, scope: Scope, r: Resolver): IR =
     fn match
@@ -263,15 +289,52 @@ object Normalizer:
       case (t: Term) :: Nil => go(t, scope, r)
       case Defn.Val(_, List(Pat.Var(name)), _, rhs) :: rest =>
         val valueIr = go(rhs, scope, r)
-        val bodyIr = goBlock(rest, name.value :: scope, r)
+        val bodyIr = goBlock(rest, Binder.Plain(name.value) :: scope, r)
         IR.App(IR.Lam(1, bodyIr), List(valueIr), List(false))
+
+      // `val (oa, ob) = ior.pad` -- one value, one slot, both names reached
+      // through it (see `Binder.Destructured`).
+      case Defn.Val(_, List(Pat.Tuple(elements)), _, rhs) :: rest
+          if elements.forall(e => e.is[Pat.Var] || e.is[Pat.Wildcard]) =>
+        // A discarded element still occupies its position in the tuple, so it
+        // gets a name nothing can reference rather than being skipped -- that
+        // keeps `._2` meaning the second element in `val (a, _, c) = ...`.
+        val names = elements.zipWithIndex.map {
+          case (Pat.Var(name), _) => name.value
+          case (_, position)      => s"$$discarded$position"
+        }
+        val valueIr = go(rhs, scope, r)
+        val bodyIr = goBlock(rest, Binder.Destructured(names) :: scope, r)
+        IR.App(IR.Lam(1, bodyIr), List(valueIr), List(false))
+
+      // A local `def` is a let bound to a lambda; the name is in scope for the
+      // rest of the block, and for the def's own body, so it can recurse.
+      case (d: Defn.Def) :: rest =>
+        val paramNames =
+          d.paramClauses.flatMap(_.values.map(_.name.value)).toList
+        val selfScope = Binder.Plain(d.name.value) :: scope
+        val defIr =
+          if paramNames.isEmpty then go(d.body, selfScope, r)
+          else
+            IR.Lam(
+              paramNames.length,
+              go(d.body, plain(paramNames) ::: selfScope, r)
+            )
+        val bodyIr = goBlock(rest, selfScope, r)
+        IR.App(IR.Lam(1, bodyIr), List(defIr), List(false))
+
+      // An import has no runtime effect and binds no value, so it occupies no
+      // slot -- dropping it keeps `{ import cats.syntax.all.*; expr }` the same
+      // body as `expr`.
+      case (_: Import) :: rest => goBlock(rest, scope, r)
+
       case (t: Term) :: rest =>
         // A discarded statement still shifts de Bruijn depth by one, so a
         // placeholder is pushed even though nothing ever references it by
         // name.
         val valueIr = go(t, scope, r)
         val placeholder = s"$$discarded${rest.length}"
-        val bodyIr = goBlock(rest, placeholder :: scope, r)
+        val bodyIr = goBlock(rest, Binder.Plain(placeholder) :: scope, r)
         IR.App(IR.Lam(1, bodyIr), List(valueIr), List(false))
       case other :: _ =>
         throw UnsupportedShape(s"block statement ${other.productPrefix}")
@@ -295,7 +358,7 @@ object Normalizer:
       case Enumerator.Generator(pat, rhs) :: Nil =>
         val paramName = patVarName(pat)
         val methodName = if isYield then "map" else "foreach"
-        val lamBody = go(body, paramName :: scope, r)
+        val lamBody = go(body, Binder.Plain(paramName) :: scope, r)
         IR.App(
           IR.Sel(go(rhs, scope, r), methodName),
           List(IR.Lam(1, lamBody)),
@@ -303,7 +366,8 @@ object Normalizer:
         )
       case Enumerator.Generator(pat, rhs) :: rest =>
         val paramName = patVarName(pat)
-        val innerIr = desugarFor(rest, body, isYield, paramName :: scope, r)
+        val innerIr =
+          desugarFor(rest, body, isYield, Binder.Plain(paramName) :: scope, r)
         IR.App(
           IR.Sel(go(rhs, scope, r), "flatMap"),
           List(IR.Lam(1, innerIr)),
@@ -319,7 +383,7 @@ object Normalizer:
 
   private def goCase(c: Case, scope: Scope, r: Resolver): IR =
     val binders = patternBinders(c.pat)
-    val newScope = binders ::: scope
+    val newScope = plain(binders) ::: scope
     val bodyIr = go(c.body, newScope, r)
     val arity = binders.length
     c.cond match
