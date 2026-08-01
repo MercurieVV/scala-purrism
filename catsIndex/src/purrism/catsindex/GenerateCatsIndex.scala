@@ -133,14 +133,30 @@ object GenerateCatsIndex:
       parents: List[String]
   )
 
+  private def typeHeadName(tpe: Type): Option[String] = tpe match
+    case Type.Name(n)                    => Some(n)
+    case Type.Apply.After_4_6_0(head, _) => typeHeadName(head)
+    case Type.With(lhs, _)               => typeHeadName(lhs)
+    case _                               => None
+
+  /** Everything a trait's body may call unqualified: what it extends, plus what
+    * its self-type promises.
+    *
+    * `ApplyArityFunctions` is `trait ApplyArityFunctions[F[_]] { self: Apply[F]
+    * => ... }` -- it extends nothing, so without reading the self-type its
+    * calls to `map` and `product` resolve to nothing and all 20 of its
+    * functions are discarded. The same shape carries `FlatMapArityFunctions`,
+    * `SemigroupalArityFunctions` and `ParallelArityFunctions`.
+    */
   private def parentNames(t: Defn.Trait): List[String] =
-    t.templ.inits
-      .map(_.tpe)
-      .collect {
-        case Type.Name(n)                    => n
-        case Type.Apply.After_4_6_0(head, _) => head.toString
-      }
-      .collect { case n: String => n.takeWhile(c => c != '[') }
+    val extended = t.templ.inits.map(_.tpe).flatMap(typeHeadName)
+    val selfTypes = t.templ.self.decltpe.toList.flatMap(selfTypeNames)
+    extended ++ selfTypes
+
+  private def selfTypeNames(tpe: Type): List[String] = tpe match
+    case Type.With(lhs, rhs) => selfTypeNames(lhs) ++ selfTypeNames(rhs)
+    case Type.And(lhs, rhs)  => selfTypeNames(lhs) ++ selfTypeNames(rhs)
+    case other               => typeHeadName(other).toList
 
   /** Names a body may reference as a type or companion: every top-level trait,
     * object and class in the file.
@@ -165,6 +181,26 @@ object GenerateCatsIndex:
       // file that does not parse contributes nothing rather than failing the
       // whole generation.
       case _: Parsed.Error => Nil
+
+  /** cats-kernel companions, which live in a different artifact and so are not
+    * in the sources jar this generator reads. Symbols match what SemanticDB
+    * gives a project referencing the same names.
+    */
+  private val kernelNames: Normalizer.MemberTable = List(
+    "Order",
+    "PartialOrder",
+    "Eq",
+    "Hash",
+    "Semigroup",
+    "Monoid",
+    "Group",
+    "CommutativeSemigroup",
+    "CommutativeMonoid",
+    "CommutativeGroup",
+    "Band",
+    "Semilattice",
+    "BoundedSemilattice"
+  ).map(n => n -> s"cats/kernel/$n.").toMap
 
   /** Names a Cats body can reference that are neither its own members nor
     * another Cats type: `Predef` and a few `scala` companions.
@@ -262,22 +298,115 @@ object GenerateCatsIndex:
       d: Defn.Def,
       explicitCount: Int
   ): Option[RenderTemplate] =
-    renderOverrides.get((owner, d.name.value)).orElse {
-      val name = d.name.value
-      val argSlots = (0 until explicitCount - 1).map(i => s"$$a$i")
-      if explicitCount < 1 then None
-      else if IdentifierName.matches(name) then
-        Some(
-          RenderTemplate(
-            RenderKind.Postfix,
-            if argSlots.isEmpty then s"$$recv.$name"
-            else s"$$recv.$name(${argSlots.mkString(", ")})"
-          )
+    renderOverrides
+      .get((owner, d.name.value))
+      .orElse(arityRender(owner, d.name.value, explicitCount))
+      .orElse {
+        val name = d.name.value
+        // An N-ary combinator whose family has no tuple syntax has no call form
+        // at all -- the postfix fallback below would invent `fa.ap3(...)`.
+        if isArityCombinator(owner, name) then None
+        else if explicitCount < 1 then None
+        else if IdentifierName.matches(name) then
+          Some(RenderTemplate(RenderKind.Postfix, postfixCall(name, d)))
+        else if explicitCount == 2 then
+          Some(RenderTemplate(RenderKind.Operator, s"$$recv $name $$a0"))
+        else None
+      }
+
+  /** `$recv.name(a)(b)`, one pair of parentheses per parameter clause.
+    *
+    * `Apply#map2` is `map2(fa, fb)(f)`, so its call form is `fa.map2(fb)(f)` --
+    * flattening every explicit parameter into one argument list emits
+    * `fa.map2(fb, f)`, which does not compile. Implicit clauses are dropped:
+    * they resolve at the call site.
+    */
+  private def postfixCall(name: String, d: Defn.Def): String =
+    var slot = -1
+    val clauses = d.paramClauses.toList
+      .map(clause =>
+        clause.values.filterNot(p =>
+          p.mods.exists(m => m.is[Mod.Implicit] || m.is[Mod.Using])
         )
-      else if explicitCount == 2 then
-        Some(RenderTemplate(RenderKind.Operator, s"$$recv $name $$a0"))
-      else None
+      )
+      .filter(_.nonEmpty)
+      .map(clause =>
+        clause.map { _ =>
+          slot += 1
+          if slot == 0 then "$recv" else s"$$a${slot - 1}"
+        }
+      )
+
+    clauses match
+      case Nil           => s"$$recv.$name"
+      case first :: rest =>
+        // The receiver is the first clause's first parameter; anything else in
+        // that clause stays in the first argument list.
+        val firstArgs = first.tail
+        val head =
+          if firstArgs.isEmpty then s"$$recv.$name"
+          else s"$$recv.$name(${firstArgs.mkString(", ")})"
+        head + rest.map(c => s"(${c.mkString(", ")})").mkString
+
+  /** The N-ary combinators are reachable only through tuple syntax.
+    *
+    * `Apply#map2` has an `fa.map2(fb)(f)` op, but there is no `map3` on `F`:
+    * arity 3 and up exist solely as `(fa, fb, fc).mapN(f)`. Rendering them the
+    * usual postfix way emits code that does not compile ("value map3 is not a
+    * member of ..."), so each family gets its real call form, and a family
+    * without one (`ap3`, `imap3`) is left unindexed rather than guessed at.
+    */
+  private val ArityMethod = """^([a-zA-Z]+?)(\d+)$""".r
+
+  private val tupleSyntaxFamilies: Map[String, String] = Map(
+    "map" -> "mapN",
+    "flatMap" -> "flatMapN",
+    "parMap" -> "parMapN",
+    "parFlatMap" -> "parFlatMapN",
+    "contramap" -> "contramapN",
+    "traverse" -> "traverseN"
+  )
+
+  private val tupleNullaryFamilies: Map[String, String] =
+    Map("tuple" -> "tupled", "parTuple" -> "parTupled")
+
+  private def isArityCombinator(owner: String, name: String): Boolean =
+    name match {
+      case ArityMethod(_, arity) => arity.toInt >= 3
+      case _                     => false
     }
+
+  private def arityRender(
+      owner: String,
+      name: String,
+      explicitCount: Int
+  ): Option[RenderTemplate] =
+    name match
+      case ArityMethod(family, arity) if arity.toInt >= 3 =>
+        val effects = arity.toInt
+        // Slot 0 is the receiver; the remaining effects fill the tuple, and
+        // anything after them is the function argument.
+        val tupleSlots =
+          (0 until effects - 1).map(i => s"$$a$i").mkString(", ")
+        val tuple =
+          if tupleSlots.isEmpty then "$recv" else s"($$recv, $tupleSlots)"
+
+        tupleSyntaxFamilies
+          .get(family)
+          .filter(_ => explicitCount == effects + 1)
+          .map(op =>
+            RenderTemplate(
+              RenderKind.Postfix,
+              s"$tuple.$op($$a${effects - 1})"
+            )
+          )
+          .orElse(
+            tupleNullaryFamilies
+              .get(family)
+              .filter(_ => explicitCount == effects)
+              .map(op => RenderTemplate(RenderKind.Postfix, s"$tuple.$op"))
+          )
+      case _ => None
 
   private def isDeprecated(d: Defn.Def): Boolean =
     d.mods.exists {
@@ -298,6 +427,12 @@ object GenerateCatsIndex:
     val params = d.paramClauses.flatten.map(_.name.value).toList
     val valueParams = d.paramClauses.flatten.map(paramSig).toList
     val explicitCount = valueParams.count(!_.isImplicit)
+    // `params` is the body's initial scope, so a parameter's position in it is
+    // its de Bruijn index at the top level of the body.
+    val instanceSlots =
+      valueParams.zipWithIndex.collect {
+        case (p, i) if p.isImplicit => i
+      }.toSet
     for
       render <- deriveRender(owner, d, explicitCount)
       // A body that does not normalize (unresolved free name, unsupported
@@ -307,12 +442,19 @@ object GenerateCatsIndex:
       // unqualified sibling members (`as(fa)(b)`), so the indexed body is
       // stored in the receiver form both sides can agree on.
       ir <-
-        try Some(IR.receiverize(Normalizer.normalize(d.body, params, members)))
+        try
+          Some(
+            IR.dropInstanceReceivers(
+              IR.receiverize(Normalizer.normalize(d.body, params, members)),
+              instanceSlots
+            )
+          )
         catch { case NonFatal(_) => None }
       // A body with no structure matches every stub in every project, and a
       // pure alias only ever renames a call. Both are indexable in principle
       // and useless (or harmful) in practice.
-      if !IR.isTrivial(ir) && !IR.isAlias(ir) && !IR.containsLiteral(ir)
+      if !IR.isTrivial(ir) && !IR.isAlias(ir) && !IR.containsLiteral(ir) &&
+        !IR.isForwarder(ir)
     yield CatsFn(
       symbol = s"cats/$owner#${d.name.value}().",
       owner = s"cats/$owner#",
@@ -341,7 +483,7 @@ object GenerateCatsIndex:
     // Lowest-priority layer: a body's own members and its parents' always win
     // over a same-named type.
     val ambient =
-      stdlibNames ++ catsTypeNames(
+      stdlibNames ++ kernelNames ++ catsTypeNames(
         sources.flatMap((_, source) => topLevelTypeNames(source)).toSet
       )
 
@@ -350,7 +492,9 @@ object GenerateCatsIndex:
     var noNormalize = 0
 
     val fns = decls.flatMap { decl =>
-      val members = ambient ++ memberTable(decl, byName)
+      val members =
+        ambient ++ Map("self" -> s"cats/${decl.name}#") ++
+          memberTable(decl, byName)
       decl.stats
         .collect { case d: Defn.Def if isIndexable(d) => d }
         .flatMap { d =>

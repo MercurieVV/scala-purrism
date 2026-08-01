@@ -85,6 +85,39 @@ object IR:
       case Lam(arity, body) => Lam(arity, receiverize(body))
       case other            => other
 
+  /** Drops a typeclass instance used as an explicit receiver.
+    *
+    * The N-ary combinators are written against their instances rather than
+    * against syntax: `SemigroupalArityFunctions#map3` is
+    * `functor.map(semigroupal.product(f0, ...)) { ... }`, where `functor` and
+    * `semigroupal` are its own implicit parameters. A project writes the same
+    * computation as `f0.product(...).map { ... }`. Dropping the instance and
+    * promoting the first argument to receiver is the same move [[receiverize]]
+    * makes for unqualified sibling calls, for the other way an instance method
+    * can be spelled.
+    *
+    * @param instanceSlots
+    *   de Bruijn indices (at the body's top level) of the implicit parameters
+    */
+  def dropInstanceReceivers(ir: IR, instanceSlots: Set[Int]): IR =
+    def go(node: IR, depth: Int): IR = node match
+      case App(Sel(Ref(Slot.Bound(i)), name), args, byName)
+          if args.nonEmpty && instanceSlots.contains(i - depth) =>
+        val lifted = args.map(go(_, depth))
+        // `functor.map(fa)(f)` is a *curried* application, so promoting `fa`
+        // can empty the inner argument list. `fa.map(f)` as a project writes it
+        // has no such empty application in the middle, and an `App` with no
+        // arguments is not the same IR as the selection itself.
+        if lifted.tail.isEmpty then Sel(lifted.head, name)
+        else App(Sel(lifted.head, name), lifted.tail, byName.drop(1))
+      case App(fn, args, byName) =>
+        App(go(fn, depth), args.map(go(_, depth)), byName)
+      case Sel(recv, sym)   => Sel(go(recv, depth), sym)
+      case Lam(arity, body) => Lam(arity, go(body, depth + arity))
+      case other            => other
+
+    go(ir, 0)
+
   /** A body with no call structure of its own: a literal, a bare reference, or
     * a lambda around one.
     *
@@ -119,6 +152,27 @@ object IR:
     case Lam(_, body) => containsLiteral(body)
     case App(fn, args, _) =>
       containsLiteral(fn) || args.exists(containsLiteral)
+
+  /** A body that just hands its arguments to another object's method.
+    *
+    * `ApplyArityFunctions#map3` is `Semigroupal.map3(f0, f1, f2)(f)(self,
+    * self)` -- the implementation lives in the companion, and this is a
+    * forwarder. Indexing it means the entry can only ever match a literal
+    * `Semigroupal.map3(...)` call, which no project writes, so it contributes
+    * ambiguity and nothing else. Detected by the receiver bottoming out at a
+    * free symbol (a type or companion) rather than at one of the function's own
+    * parameters.
+    */
+  def isForwarder(ir: IR): Boolean =
+    def receiverIsFree(node: IR): Boolean = node match
+      case Sel(recv, _)      => receiverIsFree(recv)
+      case App(fn, _, _)     => receiverIsFree(fn)
+      case Ref(Slot.Free(_)) => true
+      case _                 => false
+
+    ir match
+      case App(_, _, _) => receiverIsFree(ir)
+      case _            => false
 
   /** One call, passing its own parameters straight through in order -- a
     * rename, not a simplification.

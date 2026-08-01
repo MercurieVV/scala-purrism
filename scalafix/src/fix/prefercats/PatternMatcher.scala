@@ -58,16 +58,54 @@ object PatternMatcher:
           case Term.Name(n) if scope.lift(i).contains(n) => Some(bound)
           case _                                         => None
 
+      // `{ case ... }` normalizes to a one-argument lambda whose body matches
+      // on that argument (see `Normalizer`), so a pattern of that shape has to
+      // accept the partial function a project actually writes -- which is how
+      // every N-ary combinator's body is spelled.
+      case IR.Lam(
+            1,
+            IR.App(
+              IR.Ref(Slot.Free("scala/`match`")),
+              IR.Ref(Slot.Bound(0)) :: patCases,
+              _
+            )
+          ) if term.is[Term.PartialFunction] =>
+        term match
+          case Term.PartialFunction(cases) if cases.length == patCases.length =>
+            patCases.zip(cases).foldLeft(Option(bound)) {
+              case (acc, (patCase, c)) =>
+                acc.flatMap(matchCase(patCase, c, depth + 1, scope, _))
+            }
+          case _ => None
+
       case IR.Lam(arity, body) =>
         term match
+          // `names ::: scope` matches how the Normalizer pushes them: de Bruijn
+          // 0 is the *first* parameter, so the list must not be reversed.
           case Term.Function.After_4_6_0(params, fnBody)
               if params.length == arity =>
             go(
               body,
               fnBody,
               depth + arity,
-              params.map(_.name.value).reverse ::: scope,
+              params.map(_.name.value) ::: scope,
               bound
+            )
+          case _ => None
+
+      case IR.App(
+            IR.Ref(Slot.Free("scala/`match`")),
+            scrutPat :: patCases,
+            _
+          ) =>
+        term match
+          case Term.Match.After_4_9_9(scrut, cases, _)
+              if cases.length == patCases.length =>
+            go(scrutPat, scrut, depth, scope, bound).flatMap(afterScrut =>
+              patCases.zip(cases).foldLeft(Option(afterScrut)) {
+                case (acc, (patCase, c)) =>
+                  acc.flatMap(matchCase(patCase, c, depth, scope, _))
+              }
             )
           case _ => None
 
@@ -129,6 +167,37 @@ object PatternMatcher:
         ) match
           case Some(_) => Some(bound)
           case None    => None
+
+  /** One `case`: its pattern binds as many names as the pattern-side lambda has
+    * parameters, and its body is matched under them. Guarded cases are left
+    * alone -- the Normalizer wraps those in a marker this does not unpick.
+    */
+  private def matchCase(
+      patCase: IR,
+      c: Case,
+      depth: Int,
+      scope: List[String],
+      bound: Bindings
+  )(implicit doc: SemanticDocument): Option[Bindings] =
+    (patCase, c.cond) match
+      case (IR.Lam(arity, body), None) =>
+        val binders = patternBinders(c.pat)
+        if binders.length != arity then None
+        else go(body, c.body, depth + arity, binders ::: scope, bound)
+      case _ => None
+
+  /** Mirrors `Normalizer.patternBinders`, which is private to it. */
+  private def patternBinders(pat: Pat): List[String] = pat match
+    case Pat.Var(name)                    => List(name.value)
+    case Pat.Bind(Pat.Var(name), sub)     => name.value :: patternBinders(sub)
+    case Pat.Typed(p, _)                  => patternBinders(p)
+    case Pat.Tuple(args)                  => args.flatMap(patternBinders)
+    case Pat.Extract.After_4_6_0(_, args) => args.flatMap(patternBinders)
+    case Pat.ExtractInfix.After_4_6_0(lhs, _, rhs) =>
+      patternBinders(lhs) ::: rhs.flatMap(patternBinders)
+    case Pat.Alternative(lhs, rhs) =>
+      patternBinders(lhs) ::: patternBinders(rhs)
+    case _ => Nil
 
   /** Binds a hole, rejecting a binding that would escape its scope or
     * contradict an earlier one.

@@ -182,6 +182,29 @@ object Normalizer:
         false :: caseIrs.map(_ => true)
       )
 
+    // A type ascription is erased at runtime and cannot change what a term
+    // evaluates to, so it must not change its normal form either -- otherwise
+    // `f0: F[A0]` and `f0` are different bodies. cats-core's arity boilerplate
+    // ascribes almost every argument.
+    case Term.Ascribe(expr, _) => go(expr, scope, r)
+
+    // `{ case ... }` in argument position is a one-argument function whose body
+    // matches on that argument, which is exactly how Scala compiles it -- so it
+    // normalizes to the same IR as the `x => x match { case ... }` a different
+    // author would write for the same thing.
+    case Term.PartialFunction(cases) =>
+      val scrutName = "$pfScrutinee"
+      val innerScope = scrutName :: scope
+      val caseIrs = cases.map(goCase(_, innerScope, r))
+      IR.Lam(
+        1,
+        IR.App(
+          IR.Ref(Slot.Free("scala/`match`")),
+          IR.Ref(Slot.Bound(0)) :: caseIrs,
+          false :: caseIrs.map(_ => true)
+        )
+      )
+
     case _: Lit => IR.Lit
 
     case other =>

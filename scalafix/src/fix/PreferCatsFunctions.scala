@@ -257,12 +257,32 @@ object PreferCatsFunctions {
       if (public.isEmpty) MatchOutcome.PrivateOnly
       else {
         val evidenceOk =
-          public.filter { case (cf, _) => constraintsSatisfied(cf, candidate) }
+          public.filter { case (cf, _) =>
+            patternEvidenceSatisfied(cf, candidate)
+          }
         if (evidenceOk.isEmpty) MatchOutcome.MissingEvidence
         else rankAndRenderBindings(evidenceOk, wildcardImports)
       }
     }
   }
+
+  /** D3 for a pattern match.
+    *
+    * In concrete code the instances a matched function needs are found by
+    * ordinary implicit search at the rewrite site, and they must exist: the
+    * source expression already performs the very operations the Cats body
+    * performs, so `(fa, fb).mapN(f)` cannot fail to resolve `Apply[IO]` where
+    * `fa.product(fb).map(...)` compiled. Only code abstract over its effect has
+    * a ceiling -- there the signature's constraints are all there is, which is
+    * what D3 is for.
+    */
+  private def patternEvidenceSatisfied(cf: CatsFn, candidate: Candidate)(
+      implicit doc: SemanticDocument
+  ): Boolean =
+    !inAbstractEffectScope(candidate.term) || constraintsSatisfied(
+      cf,
+      candidate
+    )
 
   /** §4 ranking over pattern matches, rendering each from its own bindings. */
   private def rankAndRenderBindings(
@@ -520,6 +540,27 @@ object PreferCatsFunctions {
         implicitParamAt(candidate, pos)
           .exists(param => paramProvidesConstraint(param, constraint))
       }
+  }
+
+  /** Whether the fragment sits anywhere inside a declaration that abstracts
+    * over a type -- `def foo[F[_]: Monad]`, `class Bar[F[_]]`.
+    *
+    * That is the case D3 exists for: in polymorphic code the only instances
+    * available are the ones the signature asks for, so a match needing more
+    * than the scope declares would not compile. Concrete code has no such
+    * ceiling.
+    */
+  private def inAbstractEffectScope(term: Tree): Boolean = {
+    def go(t: Option[Tree]): Boolean = t match {
+      case None => false
+      case Some(d: Defn.Def)
+          if d.paramClauseGroups.exists(_.tparamClause.values.nonEmpty) =>
+        true
+      case Some(c: Defn.Class) if c.tparamClause.values.nonEmpty => true
+      case Some(t: Defn.Trait) if t.tparamClause.values.nonEmpty => true
+      case Some(other) => go(other.parent)
+    }
+    go(term.parent)
   }
 
   /** Implicit/using parameters of every enclosing `def`, outermost included: a
