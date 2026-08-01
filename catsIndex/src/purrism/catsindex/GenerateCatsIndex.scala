@@ -130,7 +130,8 @@ object GenerateCatsIndex:
   private final case class TraitDecl(
       name: String,
       stats: List[Stat],
-      parents: List[String]
+      parents: List[String],
+      typeParams: List[String]
   )
 
   private def typeHeadName(tpe: Type): Option[String] = tpe match
@@ -175,7 +176,12 @@ object GenerateCatsIndex:
     source.parse[Source] match
       case parsed: Parsed.Success[Source] =>
         parsed.get.collect { case t: Defn.Trait =>
-          TraitDecl(t.name.value, t.templ.stats, parentNames(t))
+          TraitDecl(
+            t.name.value,
+            t.templ.stats,
+            parentNames(t),
+            t.tparamClause.values.map(_.name.value)
+          )
         }
       // cats-core is not always parseable by the dialect this runs under; a
       // file that does not parse contributes nothing rather than failing the
@@ -348,6 +354,38 @@ object GenerateCatsIndex:
           else s"$$recv.$name(${firstArgs.mkString(", ")})"
         head + rest.map(c => s"(${c.mkString(", ")})").mkString
 
+  /** Whether a def is reachable as `receiver.name(...)` at all.
+    *
+    * `cats.syntax` wraps a *value in the effect*: `fa.foldMap(f)` exists
+    * because `Foldable#foldMap` takes `fa: F[A]` first. `Functor#lift` takes
+    * `f: A => B` first and has no ops method, so rendering it postfix invents
+    * `f.lift` and emits code that does not compile. The test is therefore
+    * whether the first explicit parameter is in the effect -- its type applied
+    * to a type constructor the owner or the method itself declares.
+    */
+  /** Tuple call forms (`($recv, $a0).mapN($a1)`) put the effects in a tuple
+    * rather than in receiver position, so the receiver test does not apply.
+    */
+  private def isPlainPostfix(template: String): Boolean =
+    template.startsWith("$recv.")
+
+  private def firstParamIsEffect(
+      d: Defn.Def,
+      ownerTypeParams: List[String]
+  ): Boolean =
+    val methodTypeParams =
+      d.paramClauseGroups.flatMap(_.tparamClause.values.map(_.name.value))
+    val constructors = (ownerTypeParams ++ methodTypeParams).toSet
+
+    d.paramClauses.flatten
+      .find(p => !p.mods.exists(m => m.is[Mod.Implicit] || m.is[Mod.Using]))
+      .flatMap(_.decltpe)
+      .exists {
+        case Type.Apply.After_4_6_0(head, _) =>
+          typeHeadName(head).exists(constructors.contains)
+        case _ => false
+      }
+
   /** The N-ary combinators are reachable only through tuple syntax.
     *
     * `Apply#map2` has an `fa.map2(fb)(f)` op, but there is no `map3` on `F`:
@@ -421,6 +459,7 @@ object GenerateCatsIndex:
 
   private def catsFnOf(
       owner: String,
+      ownerTypeParams: List[String],
       d: Defn.Def,
       members: Normalizer.MemberTable
   ): Option[CatsFn] =
@@ -435,6 +474,11 @@ object GenerateCatsIndex:
       }.toSet
     for
       render <- deriveRender(owner, d, explicitCount)
+      // A postfix call form only exists for a def whose first explicit
+      // parameter is the effect `cats.syntax` wraps.
+      if render.kind != RenderKind.Postfix ||
+        !isPlainPostfix(render.template) ||
+        firstParamIsEffect(d, ownerTypeParams)
       // A body that does not normalize (unresolved free name, unsupported
       // shape) has no structural identity to match against, which is the whole
       // basis of this rule -- skip it rather than index a guess.
@@ -502,7 +546,7 @@ object GenerateCatsIndex:
         .collect { case d: Defn.Def if isIndexable(d) => d }
         .flatMap { d =>
           considered += 1
-          val result = catsFnOf(decl.name, d, members)
+          val result = catsFnOf(decl.name, decl.typeParams, d, members)
           if result.isEmpty then
             val explicitCount =
               d.paramClauses.flatten.map(paramSig).count(!_.isImplicit)

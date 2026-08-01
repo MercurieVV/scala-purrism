@@ -172,7 +172,7 @@ object Normalizer:
 
     case Term.Function.After_4_6_0(params, body) =>
       val names = params.map(_.name.value)
-      IR.Lam(params.length, go(body, plain(names) ::: scope, r))
+      mkLam(params.length, go(body, plain(names) ::: scope, r))
 
     case Term.If.After_4_4_0(cond, thenp, elsep, _) =>
       IR.App(
@@ -202,6 +202,17 @@ object Normalizer:
     // ascribes almost every argument.
     case Term.Ascribe(expr, _) => go(expr, scope, r)
 
+    // Same reasoning for explicit type arguments: `Option.empty[B]` and
+    // `Option.empty` evaluate identically, and the callee's own symbol -- which
+    // is what carries identity here -- is unchanged by them.
+    case Term.ApplyType.After_4_6_0(fn, _) => go(fn, scope, r)
+
+    // `_.name` / `f(_, _)` is a lambda whose parameters are the placeholders,
+    // which is how the compiler treats it. Desugaring to the named form means
+    // it normalizes to exactly the IR of the `x => x.name` a different author
+    // would write, rather than failing to normalize at all.
+    case fn: Term.AnonymousFunction => go(desugarPlaceholders(fn), scope, r)
+
     // `{ case ... }` in argument position is a one-argument function whose body
     // matches on that argument, which is exactly how Scala compiles it -- so it
     // normalizes to the same IR as the `x => x match { case ... }` a different
@@ -223,6 +234,99 @@ object Normalizer:
 
     case other =>
       throw UnsupportedShape(s"${other.productPrefix}: $other")
+
+  /** A lambda, eta-reduced: `x => f(x)` is `f`.
+    *
+    * The two spellings denote the same function, and both occur -- a Cats body
+    * passes `identity` where a project writes `identity(_)`, and E3 already
+    * eta-*expands* bare method references, which only pays off if the expanded
+    * and written forms then agree. Reduction is refused when the callee
+    * mentions one of the parameters being dropped, since that would change what
+    * it refers to.
+    */
+  private def mkLam(arity: Int, body: IR): IR =
+    val identityArgs = (0 until arity).toList.map(i => IR.Ref(Slot.Bound(i)))
+
+    body match
+      case IR.App(fn, args, _)
+          if args == identityArgs && !mentionsBinder(fn, arity) =>
+        shiftDown(fn, arity)
+      case _ => IR.Lam(arity, body)
+
+  private def mentionsBinder(ir: IR, depth: Int): Boolean = ir match
+    case IR.Ref(Slot.Bound(i)) => i < depth
+    case IR.Ref(_)             => false
+    case IR.Sel(recv, _)       => mentionsBinder(recv, depth)
+    case IR.App(fn, args, _) =>
+      mentionsBinder(fn, depth) || args.exists(mentionsBinder(_, depth))
+    case IR.Lam(arity, inner) => mentionsBinder(inner, depth + arity)
+    case IR.Lit               => false
+
+  private def shiftDown(ir: IR, by: Int): IR =
+    def go(node: IR, depth: Int): IR = node match
+      case IR.Ref(Slot.Bound(i)) if i >= depth => IR.Ref(Slot.Bound(i - by))
+      case IR.Sel(recv, sym)                   => IR.Sel(go(recv, depth), sym)
+      case IR.App(fn, args, byName) =>
+        IR.App(go(fn, depth), args.map(go(_, depth)), byName)
+      case IR.Lam(arity, inner) => IR.Lam(arity, go(inner, depth + arity))
+      case other                => other
+    go(ir, 0)
+
+  /** `_.name` -> `x => x.name`, `f(_, _)` -> `(x, y) => f(x, y)`.
+    *
+    * Placeholders are numbered left to right in the order the parser sees them,
+    * and a nested anonymous function owns its own -- `xs.map(_.map(_ + 1))` has
+    * one placeholder per lambda -- so the walk stops at one.
+    */
+  private def desugarPlaceholders(fn: Term.AnonymousFunction): Term = {
+    var next = 0
+    def fresh(): String =
+      val name = s"$$placeholder$next"
+      next += 1
+      name
+
+    val names = List.newBuilder[String]
+
+    // Hand-written rather than `Tree.transform`, which keeps descending into
+    // the subtree it is handed back -- a nested anonymous function would have
+    // its placeholder stolen by the lambda being desugared here.
+    def go(t: Term): Term = t match
+      case _: Term.Placeholder =>
+        val name = fresh()
+        names += name
+        Term.Name(name)
+
+      // Its placeholders are its own parameters, not this lambda's.
+      case nested: Term.AnonymousFunction => nested
+
+      case Term.Select(qual, name) => Term.Select(go(qual), name)
+
+      case Term.Apply.After_4_6_0(f, args) =>
+        Term.Apply.After_4_6_0(go(f), Term.ArgClause(args.map(go)))
+
+      case Term.ApplyInfix.After_4_6_0(lhs, op, targs, args) =>
+        Term.ApplyInfix
+          .After_4_6_0(go(lhs), op, targs, Term.ArgClause(args.map(go)))
+
+      case Term.ApplyUnary(op, operand) => Term.ApplyUnary(op, go(operand))
+
+      case Term.ApplyType.After_4_6_0(f, targs) =>
+        Term.ApplyType.After_4_6_0(go(f), targs)
+
+      case Term.Ascribe(expr, tpe) => Term.Ascribe(go(expr), tpe)
+
+      case Term.Tuple(args) => Term.Tuple(args.map(go))
+
+      // Any other shape keeps whatever placeholders it holds; they will fail to
+      // normalize, which is the same outcome as before this desugaring existed.
+      case other => other
+
+    val body = go(fn.body)
+    val params =
+      names.result().map(name => Term.Param(Nil, Term.Name(name), None, None))
+    if params.isEmpty then body
+    else Term.Function.After_4_6_0(Term.ParamClause(params), body)
+  }
 
   /** A bare name used in a non-callee position: if it resolves to a method
     * (arity > 0), it is eta-expanded into the `Lam` a direct application of it

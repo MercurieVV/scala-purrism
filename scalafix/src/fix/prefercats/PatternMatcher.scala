@@ -231,6 +231,12 @@ object PatternMatcher:
         case Some(existing) if existing.syntax != term.syntax => None
         case _ => Some(bound.updated(hole, term))
 
+  /** A term with its type arguments and ascriptions peeled off. */
+  def stripped(term: Term): Term = term match
+    case Term.ApplyType.After_4_6_0(fn, _) => stripped(fn)
+    case Term.Ascribe(expr, _)             => stripped(expr)
+    case other                             => other
+
   /** A term whose evaluation cannot be observed: a name, a chain of selections
     * on one, or a literal. Deliberately syntactic and narrow -- a `def`-backed
     * selection can run arbitrary code, but so can anything, and the alternative
@@ -248,11 +254,18 @@ object PatternMatcher:
     try Some(Normalizer.normalize(term, scope))
     catch { case NonFatal(_) => None }
 
-  /** `(receiver, method, args)` for the ways a method call can be spelled. */
-  private def callShape(term: Term): Option[(Term, String, List[Term])] =
+  /** `(receiver, method, args)` for the ways a method call can be spelled.
+    *
+    * Explicit type arguments and ascriptions are erased by the Normalizer, so
+    * they must be seen through here too -- otherwise `xs.mapFilter[Int](f)` has
+    * no recognisable shape while `xs.mapFilter(f)` does.
+    */
+  def callShape(term: Term): Option[(Term, String, List[Term])] =
     term match
-      case Term.Apply.After_4_6_0(Term.Select(recv, Term.Name(name)), args) =>
-        Some((recv, name, args))
+      case Term.Apply.After_4_6_0(callee, args) =>
+        stripped(callee) match
+          case Term.Select(recv, Term.Name(name)) => Some((recv, name, args))
+          case _                                  => None
       case Term.ApplyInfix.After_4_6_0(lhs, Term.Name(name), _, args) =>
         Some((lhs, name, args))
       // `xs.sequence` -- a no-argument call written without parens, which the

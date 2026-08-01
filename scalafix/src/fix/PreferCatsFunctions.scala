@@ -242,14 +242,15 @@ object PreferCatsFunctions {
     // to the original subtrees, and the patch still replaces the whole block.
     val subject = BlockInliner.inlineLets(candidate.term)
 
-    val head = subject match {
-      case Term.Apply.After_4_6_0(Term.Select(_, Term.Name(name)), _) =>
-        Some(name)
-      case Term.ApplyInfix.After_4_6_0(_, Term.Name(name), _, _) => Some(name)
-      case Term.Select(_, Term.Name(name))                       => Some(name)
-      case Term.ApplyUnary(Term.Name(op), _) => Some("unary_" + op)
-      case _                                 => None
-    }
+    // Derived through the same shape reader the matcher uses, so a call with
+    // explicit type arguments buckets like the one without.
+    val head = PatternMatcher
+      .callShape(PatternMatcher.stripped(subject))
+      .map(_._2)
+      .orElse(PatternMatcher.stripped(subject) match {
+        case Term.Select(_, Term.Name(name)) => Some(name)
+        case _                               => None
+      })
 
     val fullMatches = head.toList
       .flatMap(byHead.getOrElse(_, Nil))
