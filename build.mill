@@ -33,7 +33,13 @@ object scalafix
     with Mima {
   def scalaVersion = Versions.scala3
   def artifactName = "scala-purrism-scalafix"
-  def mimaPreviousVersions = Seq("0.5.0")
+  // Baseline for binary compatibility. Pinned to the last release rather than
+  // to the oldest one still in use: 0.5.0 predates both the
+  // OpaqueTypePropagation removal (0.6.0) and the CatsFacts parameter on the
+  // rule rewrite seams (0.6.1), so keeping it would report 27 breakages that
+  // are already published and cannot be undone. The release workflow rewrites
+  // this line after a successful publish, so it should not need editing by hand.
+  def mimaPreviousVersions = Seq("0.6.1")
   def pomSettings = PomSettings(
     description =
       "Scalafix semantic rules for refactoring Typelevel Scala code toward pure, polymorphic Cats and Cats Effect style.",

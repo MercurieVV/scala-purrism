@@ -32,3 +32,6 @@ jobs:
 
       - name: Compile docs
         run: ./mill docs.compile
+
+      - name: Check binary compatibility
+        run: ./mill scalafix.mimaReportBinaryIssues

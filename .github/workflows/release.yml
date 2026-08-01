@@ -16,6 +16,9 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     environment: sonatype
+    # The baseline bump below commits to master.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v7
 
@@ -27,6 +30,12 @@ jobs:
       - name: Validate
         run: ./mill scalafix.compile scalafix.test docs.compile
 
+      # Runs against the previous release, which is already on Maven Central, so
+      # a tag that breaks binary compatibility fails here rather than after the
+      # artifact is published and can no longer be withdrawn.
+      - name: Check binary compatibility
+        run: ./mill scalafix.mimaReportBinaryIssues
+
       - name: Publish to Sonatype Central
         run: ./mill scalafix.publishSonatypeCentral
         env:
@@ -34,3 +43,25 @@ jobs:
           MILL_PGP_SECRET_BASE64: ${{ secrets.MILL_PGP_SECRET_BASE64 }}
           MILL_SONATYPE_PASSWORD: ${{ secrets.MILL_SONATYPE_PASSWORD }}
           MILL_SONATYPE_USERNAME: ${{ secrets.MILL_SONATYPE_USERNAME }}
+
+      # The version just published becomes the baseline the next release is
+      # checked against. `[skip ci]` because the new artifact takes a while to
+      # reach Maven Central, and CI's own MiMa step cannot resolve it until it
+      # does.
+      - name: Pin the MiMa baseline to the published version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          git fetch origin master
+          git checkout -B master origin/master
+          sed -i -E \
+            "s/def mimaPreviousVersions = Seq\(\"[^\"]*\"\)/def mimaPreviousVersions = Seq(\"${version}\")/" \
+            build.mill
+          if git diff --quiet build.mill; then
+            echo "baseline already at ${version}"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore: pin the MiMa baseline to ${version} [skip ci]"
+          git push origin master
