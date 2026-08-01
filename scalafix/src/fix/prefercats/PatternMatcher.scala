@@ -71,6 +71,22 @@ object PatternMatcher:
             )
           case _ => None
 
+      // A hole in callee position: the indexed body applies one of its own
+      // function parameters, as `FunctorFilter#filter` applies its predicate in
+      // `mapFilter(fa)(a => if (f(a)) Some(a) else None)`. The source spells
+      // the same thing with its own function there, so the hole binds to that
+      // function rather than to the call.
+      case IR.App(IR.Ref(Slot.Bound(i)), patArgs, _) if i >= depth =>
+        term match
+          case Term.Apply.After_4_6_0(fn, args)
+              if args.length == patArgs.length =>
+            bindHole(i - depth, fn, depth, scope, bound).flatMap(afterFn =>
+              patArgs.zip(args).foldLeft(Option(afterFn)) {
+                case (acc, (p, a)) => acc.flatMap(go(p, a, depth, scope, _))
+              }
+            )
+          case _ => None
+
       case IR.App(IR.Sel(patRecv, name), patArgs, _) =>
         callShape(term).flatMap { case (recv, method, args) =>
           if method != name || args.length != patArgs.length then None
@@ -83,6 +99,20 @@ object PatternMatcher:
                 }
             )
         }
+
+      // `if`/`match` normalize to an application of a synthetic free symbol, so
+      // without a case of their own they fall through to whole-subtree equality
+      // and any hole inside them (a predicate, a branch) can never bind --
+      // which is most of `FunctorFilter#filter` and `MonadError#ensure`.
+      case IR.App(IR.Ref(Slot.Free("scala/`if`")), List(c, t, e), _) =>
+        term match
+          case Term.If.After_4_4_0(cond, thenp, elsep, _) =>
+            for
+              afterCond <- go(c, cond, depth, scope, bound)
+              afterThen <- go(t, thenp, depth, scope, afterCond)
+              afterElse <- go(e, elsep, depth, scope, afterThen)
+            yield afterElse
+          case _ => None
 
       case IR.Sel(patRecv, name) =>
         term match

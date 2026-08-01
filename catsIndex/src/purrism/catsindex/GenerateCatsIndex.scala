@@ -142,6 +142,19 @@ object GenerateCatsIndex:
       }
       .collect { case n: String => n.takeWhile(c => c != '[') }
 
+  /** Names a body may reference as a type or companion: every top-level trait,
+    * object and class in the file.
+    */
+  private def topLevelTypeNames(source: String): List[String] =
+    source.parse[Source] match
+      case parsed: Parsed.Success[Source] =>
+        parsed.get.collect {
+          case t: Defn.Trait  => t.name.value
+          case o: Defn.Object => o.name.value
+          case c: Defn.Class  => c.name.value
+        }
+      case _: Parsed.Error => Nil
+
   private def traitsIn(source: String): List[TraitDecl] =
     source.parse[Source] match
       case parsed: Parsed.Success[Source] =>
@@ -152,6 +165,38 @@ object GenerateCatsIndex:
       // file that does not parse contributes nothing rather than failing the
       // whole generation.
       case _: Parsed.Error => Nil
+
+  /** Names a Cats body can reference that are neither its own members nor
+    * another Cats type: `Predef` and a few `scala` companions.
+    *
+    * The values are the symbols SemanticDB gives the same references on the
+    * project side, which is what makes the two normalize alike. Without them a
+    * body as ordinary as `traverse(fa)(identity)` fails to normalize and the
+    * function never reaches the index.
+    */
+  private val stdlibNames: Normalizer.MemberTable = Map(
+    "identity" -> "scala/Predef.identity().",
+    "implicitly" -> "scala/Predef.implicitly().",
+    "Some" -> "scala/Some.",
+    "None" -> "scala/None.",
+    "Left" -> "scala/util/Left.",
+    "Right" -> "scala/util/Right.",
+    "List" -> "scala/package.List.",
+    "Vector" -> "scala/package.Vector.",
+    "Nil" -> "scala/package.Nil."
+  )
+
+  /** Every top-level Cats type and companion, so a body may reference one by
+    * name.
+    *
+    * `Parallel.parProductR(...)` and `Eval.now(...)` are the single largest
+    * class of normalization failures -- the name resolves to nothing, the whole
+    * body is discarded, and 40-odd functions go unindexed per name. On the
+    * project side the same reference resolves to `cats/Parallel.`, so recording
+    * it here is what lets the two sides agree.
+    */
+  private def catsTypeNames(names: Set[String]): Normalizer.MemberTable =
+    names.map(n => n -> s"cats/$n.").toMap
 
   /** `name -> symbol` for everything a trait can call unqualified: its own defs
     * plus, transitively, its parents'. Parents lose to the trait's own
@@ -289,17 +334,23 @@ object GenerateCatsIndex:
           s"${CatsIndex.expectedCatsCoreVersion} -- update both together"
       )
 
-    val decls = extractTopLevelFiles(jarBytes).toList
-      .sortBy(_._1)
-      .flatMap((_, source) => traitsIn(source))
+    val sources = extractTopLevelFiles(jarBytes).toList.sortBy(_._1)
+    val decls = sources.flatMap((_, source) => traitsIn(source))
     val byName = decls.map(d => d.name -> d).toMap
+
+    // Lowest-priority layer: a body's own members and its parents' always win
+    // over a same-named type.
+    val ambient =
+      stdlibNames ++ catsTypeNames(
+        sources.flatMap((_, source) => topLevelTypeNames(source)).toSet
+      )
 
     var considered = 0
     var noRender = 0
     var noNormalize = 0
 
     val fns = decls.flatMap { decl =>
-      val members = memberTable(decl, byName)
+      val members = ambient ++ memberTable(decl, byName)
       decl.stats
         .collect { case d: Defn.Def if isIndexable(d) => d }
         .flatMap { d =>
