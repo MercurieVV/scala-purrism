@@ -1,4 +1,4 @@
-//> using scala 3.3.8
+//> using scala 3.3.4
 //> using dep org.scalameta::mdoc:2.9.0
 
 package docs

@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<style>
+  html, body { margin: 0; padding: 0; overflow: hidden; background: #1e1f22; }
+  canvas { display: block; }
+  #label { position: fixed; top: 8px; left: 8px; color: #cdd6f4; font: 12px monospace; }
+</style>
+<script src="three.min.js"></script>
+</head>
+<body>
+<div id="label">Purrism module graph -- waiting for data...</div>
+<script>
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+  const renderer = new THREE.WebGLRenderer({antialias: true});
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  document.body.appendChild(renderer.domElement);
+
+  scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+  const light = new THREE.DirectionalLight(0xffffff, 0.8);
+  light.position.set(5, 8, 6);
+  scene.add(light);
+
+  camera.position.set(0, 4, 16);
+  camera.lookAt(0, 0, 0);
+
+  const colorByKind = {
+    Module: 0x7aa2f7,
+    File: 0xa9b1d6,
+    ClassDef: 0x9ece6a,
+    TraitDef: 0xe0af68,
+    ObjectDef: 0xbb9af7,
+    TypeAlias: 0x73daca,
+    MethodDef: 0xf7768e,
+    ValueDef: 0xff9e64
+  };
+
+  let group = new THREE.Group();
+  scene.add(group);
+
+  // Ground reference for `layer` (longest dependency-chain depth after cycles are condensed): a
+  // node's height above this floor is its own layer times LAYER_HEIGHT, so layer 0 (a
+  // foundation node) sits right on the floor and everything else visibly stacks above whatever it
+  // depends on. Barely-visible on purpose -- it's a spatial reference, not a focal element.
+  const LAYER_HEIGHT = 4.5;
+  const CLASS_LAYER_HEIGHT = 1.8; // smaller scale -- class layers span a wider range within one module's ring
+  const floor = new THREE.GridHelper(400, 80, 0x3b3d45, 0x2a2b30);
+  (Array.isArray(floor.material) ? floor.material : [floor.material]).forEach(m => {
+    m.transparent = true;
+    m.opacity = 0.18;
+  });
+  scene.add(floor);
+
+  // Selection state: click (not drag) toggles a sphere in/out of `selected`; Shift-click adds to
+  // the set instead of replacing it -- Shift, not Cmd/Ctrl, since those collide with browser/OS
+  // shortcuts and Shift-click-to-multiselect is the common convention (Finder, most 3D tools).
+  const SELECTED_SCALE = 1.8;
+  const DESELECTED_SCALE = 0.55;
+  const NORMAL_SCALE = 1.0;
+  const SCALE_LERP_SPEED = 8; // per second; higher = snappier zoom animation
+  let spheres = [];
+  const selected = new Set();
+
+  // Selecting a Module enlarges it (same as any other selected node) and turns it glass-like
+  // (opacity only) to reveal its files as always-camera-facing, mostly-transparent rectangles
+  // hovering around it, each file's contained classes/types drawn as text directly onto its own
+  // rectangle -- content lives inside the file box rather than as separately placed/oriented
+  // objects, so there's no per-class ring placement to compute anymore, one level down from where
+  // it used to be (module -> class). Files are themselves selectable too, same click/shift-click
+  // rules as modules used to apply to classes -- see the pointerup handler and
+  // applyFileSelectionVisual. `filesByModule`/`fileGroups` are populated per render; a file group
+  // is built lazily on first selection since most modules are never opened in a given session.
+  const GLASS_OPACITY = 0.22;
+  const NORMAL_OPACITY = 1.0;
+  let filesByModule = {};
+  let classesByFileId = {}; // file node id -> [class/trait/object/type-alias nodes] it contains
+  let classToFileId = {}; // class node id -> owning file node id, for projecting classEdges below
+  let classToModuleId = {}; // class node id -> owning module node id (module:<name>), the fallback
+  // representative for an edge endpoint whose file isn't currently open -- see visibleRepresentative.
+  let modulePositionById = {}; // module node id -> fixed THREE.Vector3 (set once per render; module
+  // spheres never move, only scale/opacity animate, so this alone is enough to draw arrows to them).
+  const fileGroups = {}; // moduleId -> THREE.Group of file rectangle sprites
+  // Half the chord distance to the next module on the ring (see purrismRenderGraph) -- the hard
+  // ceiling for how far a module's enlarged sphere + its file ring may reach before intruding on
+  // the neighboring module's own space. Infinity until the first render actually sets it.
+  let moduleCellRadius = Infinity;
+  const fileSpritesById = {}; // file node id -> THREE.Sprite, across all built file groups
+  let rawClassEdges = []; // entity-level dependency edges between classes, from the payload --
+  // projected onto whichever entity currently represents each endpoint (its file if open, else its
+  // module) when drawn, since classes themselves are no longer separately placed.
+  let entityEdgeGroup = new THREE.Group(); // arrows between currently-visible entities, rebuilt on selection change
+
+  const edgeColorByKind = {
+    ModuleDependsOn: 0xf7768e,
+    Extends: 0xe0af68,
+    Calls: 0xf7768e,
+    TypeReference: 0x73daca,
+    Implicit: 0xbb9af7
+  };
+
+  // Shared line+arrow-cone drawer for both module-level and class-level dependency edges.
+  function addDirectedEdge(targetGroup, from, to, color, opacity, linewidth) {
+    const geometry = new THREE.BufferGeometry().setFromPoints([from, to]);
+    const material = new THREE.LineBasicMaterial({color, transparent: true, opacity, linewidth});
+    targetGroup.add(new THREE.Line(geometry, material));
+
+    const direction = new THREE.Vector3().subVectors(to, from);
+    const distance = direction.length();
+    if (distance <= 0.1) return;
+    direction.normalize();
+    const arrowPos = new THREE.Vector3().addVectors(from, direction.clone().multiplyScalar(distance * 0.7));
+    const arrowSize = 0.22; // was 0.4 -- "arrows smaller"
+    const arrowGeom = new THREE.ConeGeometry(arrowSize * 0.45, arrowSize, 8);
+    const arrowMat = new THREE.MeshStandardMaterial({
+      color, transparent: true, opacity, emissive: color, emissiveIntensity: 0.8
+    });
+    const arrow = new THREE.Mesh(arrowGeom, arrowMat);
+    arrow.position.copy(arrowPos);
+    arrow.lookAt(to);
+    arrow.rotateX(Math.PI / 2);
+    targetGroup.add(arrow);
+  }
+
+  // Generic visibility rule: an edge is drawn iff both its endpoints currently resolve to a
+  // visible entity -- no hardcoding to "both files" or "both modules". A class's visible
+  // representative is its own file's sprite when that file's module is open (the file group is
+  // visible), otherwise its owning module sphere (modules are always visible, never hidden --
+  // only their scale/opacity animate). Returns null only if neither resolves (e.g. the class's
+  // module was filtered out of the projection entirely, like a test module).
+  function visibleRepresentative(classId) {
+    const fileId = classToFileId[classId];
+    const fileSprite = fileId && fileSpritesById[fileId];
+    if (fileSprite && fileSprite.parent && fileSprite.parent.visible) {
+      return {
+        id: fileId,
+        isFile: true,
+        getPosition: () => {
+          const v = new THREE.Vector3();
+          fileSprite.getWorldPosition(v);
+          return v;
+        }
+      };
+    }
+    const moduleId = classToModuleId[classId];
+    const modulePos = moduleId && modulePositionById[moduleId];
+    if (modulePos) return {id: moduleId, isFile: false, getPosition: () => modulePos.clone()};
+    return null;
+  }
+
+  // Redraws arrows between whichever entities (files or, for an unopened module, its module
+  // sphere) currently represent each class-level dependency edge's endpoints. Module<->module
+  // pairs are skipped -- that pairing is already covered by the always-visible module-level edges
+  // drawn once in purrismRenderGraph, so re-deriving the exact same line here would just overlap
+  // it. Aggregated by (from, to, kind) the same way ModuleProjection aggregates entity edges onto
+  // modules. Rebuilt from scratch on every selection change rather than tracked incrementally --
+  // the edge count among visible entities is small (only ever a couple of modules are open at once).
+  function rebuildEntityEdges() {
+    scene.remove(entityEdgeGroup);
+    entityEdgeGroup = new THREE.Group();
+    const aggregated = {}; // "from|to|kind" -> {from, to, kind, weight}
+    rawClassEdges.forEach(e => {
+      const from = visibleRepresentative(e.from);
+      const to = visibleRepresentative(e.to);
+      if (!from || !to || from.id === to.id) return;
+      if (!from.isFile && !to.isFile) return; // both modules -- already drawn
+      const key = `${from.id}|${to.id}|${e.kind}`;
+      const entry = aggregated[key] || {from, to, kind: e.kind, weight: 0};
+      entry.weight += (e.weight || 1);
+      aggregated[key] = entry;
+    });
+    Object.values(aggregated).forEach(e => {
+      const color = edgeColorByKind[e.kind] || 0x565f89;
+      const opacity = Math.min(1, 0.75 + e.weight * 0.05); // was 0.55 -- more contrast
+      addDirectedEdge(entityEdgeGroup, e.from.getPosition(), e.to.getPosition(), color, opacity, 4);
+    });
+    scene.add(entityEdgeGroup);
+  }
+
+  function isModule(n) { return n.kind === 'Module'; }
+
+  // Mirrors the size formula used when the sphere geometry is first built (purrismRenderGraph),
+  // since targetScaleFor only has the plain node data (sphere.userData), not the THREE.Mesh itself.
+  function moduleSphereRadiusFor(n) {
+    return 0.4 + Math.min(1.2, (n.weight || 1) * 0.05);
+  }
+
+  // A module's enlarged (selected) size grows with its own file count, same n^0.65 curve
+  // fileGroupFor uses for ring radius -- so a module with hundreds of files (e.g. "scalafix")
+  // visibly enlarges to roughly match the area its file ring will occupy, instead of all modules
+  // enlarging to one fixed size regardless of how much they contain. Capped so the enlarged
+  // sphere's world-space radius never exceeds moduleCellRadius -- otherwise a file-heavy module
+  // would grow straight into its neighbor on the module ring.
+  // Outer radius the file cluster (rectangles) will occupy for this module, capped so it never
+  // reaches into a neighboring module's cell. Single source of truth shared by moduleSelectedScaleFor
+  // (sizes the glass sphere to contain it) and fileGroupFor (places the files within it), so the
+  // two always agree instead of being computed by two separate formulas that can drift apart.
+  function fileClusterRadiusFor(n) {
+    const count = (filesByModule[n.name] || []).length;
+    const raw = 0.7 + Math.pow(Math.max(1, count), 0.65) * 0.45;
+    return isFinite(moduleCellRadius) ? Math.min(raw, moduleCellRadius - 0.3) : raw;
+  }
+
+  // The enlarged (selected, glass) sphere is the *parent container* for its files: it must
+  // always be at least as big as the file cluster it reveals, a little bigger rather than smaller
+  // or equal so the cluster visibly sits inside it rather than poking through the surface.
+  function moduleSelectedScaleFor(n) {
+    const clusterRadius = fileClusterRadiusFor(n);
+    const sphereRadius = moduleSphereRadiusFor(n);
+    let targetSphereRadius = clusterRadius * 1.15;
+    if (isFinite(moduleCellRadius)) targetSphereRadius = Math.min(targetSphereRadius, moduleCellRadius - 0.15);
+    return Math.max(SELECTED_SCALE, targetSphereRadius / sphereRadius);
+  }
+
+  // Selection scale is the same rule for every node kind, module included -- selecting a module
+  // enlarges it like any other node; only its opacity (see targetOpacityFor) turns glass-like to
+  // reveal the classes hovering around it.
+  function targetScaleFor(n) {
+    if (selected.size === 0) return NORMAL_SCALE;
+    if (!selected.has(n.id)) return DESELECTED_SCALE;
+    return isModule(n) ? moduleSelectedScaleFor(n) : SELECTED_SCALE;
+  }
+
+  function targetOpacityFor(n) {
+    return isModule(n) && selected.has(n.id) ? GLASS_OPACITY : NORMAL_OPACITY;
+  }
+
+  // Base (unselected) sprite scale; selecting a file bumps it by FILE_SELECTED_SCALE_MULT so a
+  // picked file is visually obvious even though sprites don't support emissive like spheres.
+  const FILE_SCALE_X = 1.4;
+  const FILE_SCALE_Y = 1.0;
+  const FILE_SELECTED_SCALE_MULT = 1.2;
+  // "Transparent (90%)" -- the file rectangle's own fill is 90% see-through so classes/types drawn
+  // inside read as content sitting inside a mostly-empty glass box, not an opaque card.
+  const FILE_FILL_ALPHA = 0.1;
+
+  // Draws a file's canvas: a mostly-transparent rectangle with its contained classes/types listed
+  // as text directly on it -- "put its content inside" -- rather than as separately placed/
+  // oriented objects. `selected` swaps in the same white selection glow the old class member panel
+  // used (generic, kind-independent, so "selected" always reads the same regardless of what's
+  // selected) -- a plain color tint alone was too subtle against the mostly-transparent fill to
+  // tell a selected file apart from an unselected one.
+  function drawFileCanvas(file, classes, selected) {
+    const lineHeight = 14;
+    const headerHeight = 22;
+    const width = 220;
+    const height = headerHeight + Math.max(20, 10 + Math.min(classes.length, 20) * lineHeight + (classes.length > 20 ? lineHeight : 0));
+    const canvas = document.createElement('canvas');
+    canvas.width = width * 2;
+    canvas.height = height * 2;
+    const ctx = canvas.getContext('2d');
+    ctx.scale(2, 2);
+    ctx.fillStyle = `rgba(30,31,34,${selected ? FILE_FILL_ALPHA * 3 : FILE_FILL_ALPHA})`;
+    ctx.fillRect(0, 0, width, height);
+    if (selected) {
+      ctx.shadowColor = '#ffffff';
+      ctx.shadowBlur = 12;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(2, 2, width - 4, height - 4);
+      ctx.shadowBlur = 0;
+    } else {
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = 'rgba(169,177,214,0.85)';
+      ctx.strokeRect(2, 2, width - 4, height - 4);
+    }
+    ctx.fillStyle = '#cdd6f4';
+    ctx.font = 'bold 13px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText(file.name, width / 2, 6);
+    ctx.strokeStyle = 'rgba(59,61,69,0.9)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(6, headerHeight);
+    ctx.lineTo(width - 6, headerHeight);
+    ctx.stroke();
+    ctx.font = '11px monospace';
+    ctx.textAlign = 'left';
+    if (classes.length === 0) {
+      ctx.fillStyle = '#8a8f9c';
+      ctx.fillText('(no classes/types)', 8, headerHeight + 6);
+    } else {
+      const shown = classes.slice(0, 20);
+      shown.forEach((cls, i) => {
+        const color = colorByKind[cls.kind] || 0xffffff;
+        ctx.fillStyle = `#${color.toString(16).padStart(6, '0')}`;
+        const text = cls.name.length > 30 ? cls.name.slice(0, 28) + '…' : cls.name;
+        ctx.fillText(text, 8, headerHeight + 6 + i * lineHeight);
+      });
+      if (classes.length > shown.length) {
+        ctx.fillStyle = '#8a8f9c';
+        ctx.fillText(`… +${classes.length - shown.length} more`, 8, headerHeight + 6 + shown.length * lineHeight);
+      }
+    }
+    return {canvas, width, height};
+  }
+
+  // Sprite, not a Mesh, so it (like the classes it used to hold individually) always faces the
+  // camera regardless of orbit rotation, per the "files always oriented to user" requirement; the
+  // classes/types it lists need no placement or orientation of their own anymore. Files are
+  // themselves selectable (see the pointerup handler), so the classes it lists are cached on the
+  // sprite's userData for applyFileSelectionVisual to redraw the canvas against on toggle.
+  function makeFileRectangle(file, classes) {
+    const {canvas, width, height} = drawFileCanvas(file, classes, false);
+    const texture = new THREE.CanvasTexture(canvas);
+    const material = new THREE.SpriteMaterial({map: texture, transparent: true, depthTest: false});
+    const sprite = new THREE.Sprite(material);
+    const worldW = FILE_SCALE_X * Math.max(1, width / 220);
+    const worldH = worldW * (height / width);
+    sprite.scale.set(worldW, worldH, 1);
+    sprite.userData = file;
+    sprite.userData._classes = classes;
+    sprite.userData._baseScaleX = worldW;
+    sprite.userData._baseScaleY = worldH;
+    return sprite;
+  }
+
+  // Redraws a file sprite's canvas (selected glow border vs. plain border) and rescales it --
+  // called from applySelectionVisuals for every file sprite (visible or not; cheap relative to a
+  // click, and keeps state correct once its module opens).
+  function applyFileSelectionVisual(sprite) {
+    const isSelected = selected.has(sprite.userData.id);
+    const {canvas} = drawFileCanvas(sprite.userData, sprite.userData._classes || [], isSelected);
+    sprite.material.map.dispose();
+    sprite.material.map = new THREE.CanvasTexture(canvas);
+    sprite.material.needsUpdate = true;
+    const mult = isSelected ? FILE_SELECTED_SCALE_MULT : 1;
+    sprite.scale.set(sprite.userData._baseScaleX * mult, sprite.userData._baseScaleY * mult, 1);
+  }
+
+  function fileGroupFor(moduleSphere) {
+    const moduleId = moduleSphere.userData.id;
+    if (fileGroups[moduleId]) return fileGroups[moduleId];
+    const nodes = filesByModule[moduleSphere.userData.name] || [];
+    const grp = new THREE.Group();
+    const n = Math.max(1, nodes.length);
+    // maxRingRadius is fileClusterRadiusFor's value exactly -- the same number
+    // moduleSelectedScaleFor sized the glass sphere around (a little bigger than this) -- so the
+    // sphere always contains its own cluster, never smaller and never wildly bigger than it.
+    const maxRingRadius = fileClusterRadiusFor(moduleSphere.userData);
+    const minRingRadius = Math.min(maxRingRadius * 0.2 + 0.15, maxRingRadius);
+    // Most-central file (highest centrality) sits near the group's center (minRingRadius);
+    // least-central files push out toward maxRingRadius. Spaced by *rank*, not raw centrality
+    // value: interpolating on the raw value bunches everything near maxRingRadius with one lonely
+    // hub near the center whenever the distribution is skewed (near-universal in these graphs --
+    // one or two hub files, a long tail of near-zero-centrality leaves), leaving a big empty gap
+    // and a crowded rim. Rank-based spacing gives every file an even share of the ring (no gaps,
+    // no crowding) while still respecting centrality order -- more central still lands closer in.
+    const byCentrality = [...nodes].sort((a, b) => (b.centrality || 0) - (a.centrality || 0));
+    // Sunflower/Vogel spiral instead of "linear rank -> radius, even angle -> index": the old
+    // scheme spaced items evenly along *each* axis independently, but circumference shrinks near
+    // the center, so inner (highest-centrality) items still crowded and overlapped regardless of
+    // how the outer ones were spread out. sqrt(areaFrac) for radius makes point *density* uniform
+    // across the whole disc (the standard even circle-packing trick), and the golden angle
+    // (~137.5deg) per step avoids any two points ever lining up on the same radial line.
+    const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+    byCentrality.forEach((file, i) => {
+      const angle = i * GOLDEN_ANGLE;
+      const areaFrac = (i + 0.5) / n;
+      const ringRadius = minRingRadius + (maxRingRadius - minRingRadius) * Math.sqrt(areaFrac);
+      const classes = classesByFileId[file.id] || [];
+      const sprite = makeFileRectangle(file, classes);
+      sprite.position.set(
+        Math.cos(angle) * ringRadius,
+        (file.layer || 0) * CLASS_LAYER_HEIGHT,
+        Math.sin(angle) * ringRadius
+      );
+      grp.add(sprite);
+      fileSpritesById[file.id] = sprite;
+    });
+    grp.position.copy(moduleSphere.position);
+    grp.visible = false;
+    group.add(grp);
+    fileGroups[moduleId] = grp;
+    return grp;
+  }
+
+  function applySelectionVisuals() {
+    spheres.forEach(sphere => {
+      const n = sphere.userData;
+      const isSelected = selected.has(n.id);
+      sphere.material.emissive.setHex(isSelected ? 0xffffff : 0x000000);
+      sphere.material.emissiveIntensity = isSelected ? 0.5 : 0;
+      if (isModule(n)) {
+        const grp = fileGroupFor(sphere);
+        grp.visible = isSelected;
+      }
+    });
+    Object.values(fileSpritesById).forEach(applyFileSelectionVisual);
+    rebuildEntityEdges();
+  }
+
+  // Base64 wrapper: the plugin sends the JSON base64-encoded (immune to JS template-literal /
+  // string-escaping edge cases -- see PurrismGraphDialog.sendJson), so decode then hand off to
+  // purrismRenderGraph. Also the single place errors get surfaced -- without this, a bad payload
+  // fails silently and the dialog just sits on "waiting for data" forever.
+  window.purrismRenderGraphBase64 = function (base64) {
+    console.log(`[purrism-graph] received ${base64.length} base64 chars`);
+    try {
+      const json = decodeURIComponent(escape(atob(base64)));
+      window.purrismRenderGraph(json);
+    } catch (err) {
+      console.error('[purrism-graph] failed to decode/render', err);
+      document.getElementById('label').textContent = `Purrism module graph -- ERROR: ${err}`;
+    }
+  };
+
+  // Payload is {modules: {nodes, edges}, files: [{id,kind,name,module,...}], fileContainsEdges,
+  // classes, classEdges}: `modules` is the always-visible module-level projection laid out on a
+  // circle; `files` are the raw File nodes, grouped by owning module name and only materialized
+  // (as rectangle sprites) when that module is selected -- see fileGroupFor/applySelectionVisuals.
+  // `classes` are the raw class/trait/object/type-alias nodes, drawn as text content inside their
+  // owning file's rectangle rather than materialized as their own objects.
+  window.purrismRenderGraph = function (json) {
+    scene.remove(group);
+    group = new THREE.Group();
+    scene.add(group);
+    spheres = [];
+    selected.clear();
+    for (const k of Object.keys(fileGroups)) delete fileGroups[k];
+    for (const k of Object.keys(fileSpritesById)) delete fileSpritesById[k];
+    scene.remove(entityEdgeGroup);
+    entityEdgeGroup = new THREE.Group();
+    scene.add(entityEdgeGroup);
+
+    const data = JSON.parse(json);
+    const nodes = (data.modules && data.modules.nodes) || [];
+    const edges = (data.modules && data.modules.edges) || [];
+    rawClassEdges = data.classEdges || [];
+    filesByModule = {};
+    (data.files || []).forEach(f => {
+      (filesByModule[f.module] = filesByModule[f.module] || []).push(f);
+    });
+    classesByFileId = {};
+    classToFileId = {};
+    classToModuleId = {};
+    const classNodeById = {};
+    (data.classes || []).forEach(c => {
+      classNodeById[c.id] = c;
+      classToModuleId[c.id] = `module:${c.module}`;
+    });
+    (data.fileContainsEdges || []).forEach(e => {
+      const cls = classNodeById[e.to];
+      if (!cls) return;
+      (classesByFileId[e.from] = classesByFileId[e.from] || []).push(cls);
+      classToFileId[e.to] = e.from;
+    });
+    console.log(`[purrism-graph] rendering ${nodes.length} modules, ${edges.length} edges, ${(data.files || []).length} files, ${(data.classes || []).length} classes`);
+    document.getElementById('label').textContent =
+      `Purrism module graph -- ${nodes.length} modules, ${edges.length} edges`;
+
+    const radius = Math.max(4, nodes.length * 1.4);
+    // Half the straight-line distance to the nearest neighbor on the ring -- fileGroupFor and
+    // moduleSelectedScaleFor clamp to this so an enlarged module + its file ring never reaches
+    // into the next module's space.
+    moduleCellRadius = nodes.length > 1 ? radius * Math.sin(Math.PI / nodes.length) : Infinity;
+    const positions = {};
+    modulePositionById = positions; // same object -- populated below, read by visibleRepresentative
+    nodes.forEach((n, i) => {
+      const angle = (i / Math.max(1, nodes.length)) * Math.PI * 2;
+      const x = Math.cos(angle) * radius;
+      const z = Math.sin(angle) * radius;
+      const y = (n.layer || 0) * LAYER_HEIGHT;
+      positions[n.id] = new THREE.Vector3(x, y, z);
+
+      const size = 0.4 + Math.min(1.2, (n.weight || 1) * 0.05);
+      const geometry = new THREE.SphereGeometry(size, 24, 24);
+      const material = new THREE.MeshStandardMaterial({
+        color: colorByKind[n.kind] || 0xffffff,
+        transparent: true // needed so selected modules can animate down to GLASS_OPACITY
+      });
+      const sphere = new THREE.Mesh(geometry, material);
+      sphere.position.copy(positions[n.id]);
+      sphere.userData = n;
+      sphere.scale.setScalar(NORMAL_SCALE);
+      group.add(sphere);
+      spheres.push(sphere);
+
+      const label = makeLabel(n.name);
+      label.position.copy(positions[n.id]).add(new THREE.Vector3(0, size + 0.4, 0));
+      group.add(label);
+    });
+
+    edges.forEach(e => {
+      const from = positions[e.from];
+      const to = positions[e.to];
+      if (!from || !to) return;
+      const opacity = Math.min(1, 0.65 + (e.weight || 1) * 0.05); // was 0.45 -- more contrast
+      const color = edgeColorByKind[e.kind] || 0x565f89;
+      addDirectedEdge(group, from, to, color, opacity, 5);
+    });
+  };
+
+  function makeLabel(text) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    ctx.font = '28px monospace';
+    ctx.fillStyle = '#cdd6f4';
+    ctx.textAlign = 'center';
+    ctx.fillText(text, 128, 40);
+    const texture = new THREE.CanvasTexture(canvas);
+    const material = new THREE.SpriteMaterial({map: texture, depthTest: false});
+    const sprite = new THREE.Sprite(material);
+    sprite.scale.set(4, 1, 1);
+    return sprite;
+  }
+
+  // Manual orbit controls (rotate + zoom) instead of THREE's OrbitControls.js -- that ships as a
+  // separate module not included in the bundled three.min.js, and this page has no network access
+  // to fetch it. Camera orbits a fixed target at the origin using spherical coordinates.
+  const target = new THREE.Vector3(0, 0, 0);
+  let radius = 16;
+  let theta = 0;   // azimuth, radians
+  let phi = Math.PI / 2.4; // polar angle from +Y, radians (clamped away from the poles below)
+
+  function updateCameraFromSpherical() {
+    camera.position.set(
+      target.x + radius * Math.sin(phi) * Math.sin(theta),
+      target.y + radius * Math.cos(phi),
+      target.z + radius * Math.sin(phi) * Math.cos(theta)
+    );
+    camera.lookAt(target);
+  }
+  updateCameraFromSpherical();
+
+  const dom = renderer.domElement;
+  dom.style.touchAction = 'none';
+  let dragging = false;
+  let lastX = 0;
+  let lastY = 0;
+  let downX = 0;
+  let downY = 0;
+  const CLICK_MOVE_THRESHOLD = 4; // px; below this a pointerdown+up is a click, not a drag-rotate
+
+  const raycaster = new THREE.Raycaster();
+  // This three.js build's Sprite.raycast requires raycaster.camera to be set explicitly (unlike
+  // Mesh raycasting, which only needs setFromCamera) -- without it, picking silently ignores every
+  // file rectangle sprite while module spheres (plain Meshes) keep working fine.
+  raycaster.camera = camera;
+  const pointerNdc = new THREE.Vector2();
+
+  // Only file sprites whose module is currently open (grp.visible) are pickable -- hidden groups
+  // still hold sprites (built lazily once, kept around) but Sprite.raycast would otherwise report
+  // hits against off-screen-but-existing geometry regardless of the group's visible flag.
+  function visibleFileSprites() {
+    return Object.values(fileSpritesById).filter(s => s.parent && s.parent.visible);
+  }
+
+  // Files are checked first, module spheres second -- not merged into one nearest-wins list.
+  // A selected module's enlarged sphere is only *visually* glass (GLASS_OPACITY); raycasting
+  // doesn't know about opacity, so its solid surface still counts as a hit. File sprites sit
+  // inside/around that same sphere, so whichever surface happened to be geometrically nearer
+  // along the ray -- sphere or file -- would silently win, making file clicks land on the module
+  // instead. Files always winning when hit at all matches what's actually visible there.
+  function pickSphereAt(clientX, clientY) {
+    const rect = dom.getBoundingClientRect();
+    pointerNdc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+    pointerNdc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+    raycaster.setFromCamera(pointerNdc, camera);
+    const fileHits = raycaster.intersectObjects(visibleFileSprites());
+    if (fileHits.length > 0) return fileHits[0].object;
+    const sphereHits = raycaster.intersectObjects(spheres);
+    return sphereHits.length > 0 ? sphereHits[0].object : null;
+  }
+
+  dom.addEventListener('pointerdown', e => {
+    dragging = true;
+    lastX = e.clientX;
+    lastY = e.clientY;
+    downX = e.clientX;
+    downY = e.clientY;
+    dom.setPointerCapture(e.pointerId);
+  });
+  dom.addEventListener('pointerup', e => {
+    dragging = false;
+    dom.releasePointerCapture(e.pointerId);
+    const moved = Math.hypot(e.clientX - downX, e.clientY - downY);
+    if (moved > CLICK_MOVE_THRESHOLD) return; // was a drag-rotate, not a click
+    const hit = pickSphereAt(e.clientX, e.clientY);
+    if (!hit) {
+      selected.clear();
+    } else if (!isModule(hit.userData)) {
+      // Files always just toggle themselves in/out, shift or not -- a plain click never clears
+      // the rest of the selection here, since that would also close every open module (selected
+      // drives both module-glass state and file highlight off the same set).
+      const id = hit.userData.id;
+      if (selected.has(id)) selected.delete(id); else selected.add(id);
+    } else if (e.shiftKey) {
+      const id = hit.userData.id;
+      if (selected.has(id)) selected.delete(id); else selected.add(id);
+    } else {
+      const id = hit.userData.id;
+      const wasOnlySelected = selected.size === 1 && selected.has(id);
+      selected.clear();
+      if (!wasOnlySelected) selected.add(id); // click again on the sole selection deselects it
+    }
+    applySelectionVisuals();
+  });
+  dom.addEventListener('pointercancel', () => { dragging = false; });
+  dom.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    const dx = e.clientX - lastX;
+    const dy = e.clientY - lastY;
+    lastX = e.clientX;
+    lastY = e.clientY;
+    theta -= dx * 0.006;
+    phi = Math.min(Math.PI - 0.05, Math.max(0.05, phi - dy * 0.006));
+    updateCameraFromSpherical();
+  });
+
+  // Was previously split into a pinch-only (ctrlKey) vs mouse-wheel (deltaMode!=0) gesture check,
+  // which silently killed zoom entirely: JCEF's off-screen-rendered Chromium doesn't appear to
+  // synthesize ctrlKey for trackpad pinch the way a normal Chrome window does, so isPinch was
+  // always false there, and plain two-finger scroll was deliberately excluded -- leaving no path
+  // that ever zoomed inside the IDE's embedded browser. Zoom on every wheel event again; ctrlKey
+  // (real pinch, when it does arrive) just gets a gentler sensitivity since its deltas are smaller
+  // per gesture step.
+  // Trackpad pinch never reaches this page at all inside the IDE's embedded JCEF browser -- the
+  // native JBR/AWT<->CEF window bridge swallows the magnify gesture before Chromium's own gesture
+  // recognizer sees it, confirmed by a wheel-event logging pass that saw nothing while pinching.
+  // Not something JS on this page can work around, so zoom relies on plain wheel/two-finger-scroll
+  // (which does reach the page fine) as the only input.
+  // JCEF appears to keep synthesizing wheel events for a while after a trackpad swipe physically
+  // ends (undecaying, unlike normal Chrome trackpad momentum), so zoom kept going long after the
+  // finger lifted. Per-event decay (an earlier attempt) also weakened *intentional* continuous
+  // scrolling, since real scroll events arrive well under the 150ms gap too -- so instead, cap the
+  // total zoom a single uninterrupted burst of events (gap < 150ms = still the same burst) may
+  // apply. A deliberate swipe still zooms at full strength up to that cap; once reached, further
+  // events in the same burst (real or trailing/synthetic) are ignored until a genuine pause.
+  let burstZoomAccum = 0; // cumulative |ln(factor)| applied so far this burst
+  const BURST_ZOOM_CAP = 3.5; // ~ln(200/2)=4.6 is the full radius range; one burst can cover most of it
+  let lastWheelTime = 0;
+  dom.addEventListener('wheel', e => {
+    e.preventDefault();
+    const now = performance.now();
+    if (now - lastWheelTime > 150) burstZoomAccum = 0;
+    lastWheelTime = now;
+    const sensitivity = e.ctrlKey ? 0.01 : 0.001;
+    const factor = Math.exp(e.deltaY * sensitivity);
+    burstZoomAccum += Math.abs(Math.log(factor));
+    if (burstZoomAccum > BURST_ZOOM_CAP) return; // burst has already zoomed enough
+    radius = Math.min(200, Math.max(2, radius * factor));
+    updateCameraFromSpherical();
+  }, {passive: false});
+
+  let lastFrameTime = performance.now();
+
+  function animate() {
+    requestAnimationFrame(animate);
+    const now = performance.now();
+    const dt = Math.min(0.1, (now - lastFrameTime) / 1000);
+    lastFrameTime = now;
+
+    const t = 1 - Math.exp(-SCALE_LERP_SPEED * dt); // frame-rate-independent lerp factor
+    spheres.forEach(sphere => {
+      const n = sphere.userData;
+      const targetScale = targetScaleFor(n);
+      sphere.scale.setScalar(sphere.scale.x + (targetScale - sphere.scale.x) * t);
+
+      const targetOpacity = targetOpacityFor(n);
+      sphere.material.opacity += (targetOpacity - sphere.material.opacity) * t;
+
+      const grp = fileGroups[n.id];
+      if (grp && grp.visible) grp.position.copy(sphere.position);
+    });
+
+    renderer.render(scene, camera);
+  }
+  animate();
+
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+</script>
+</body>
+</html>
