@@ -71,6 +71,39 @@ object CandidateExtractor:
         "unsafe-cast"
     }.headOption
 
+  /** Every expression in `tree` that is worth matching against the index, not
+    * just the declaration-shaped roots [[extract]] reports.
+    *
+    * A body only reimplements a Cats function often enough to be worth a rule
+    * when whole methods are the unit; in practice the reimplementation is a
+    * *fragment* of a larger method -- one `fold` inside a `for`, one
+    * `foldLeft(empty)(combine)` inside a longer chain. Those are reported here
+    * as candidates in their own right, with overlap resolved by the caller
+    * (largest wins), so a fragment match is available wherever no enclosing
+    * match exists.
+    *
+    * Names and literals are excluded: they normalize to a bare `Ref`/`Lit` that
+    * matches nothing, and including them would put every identifier in the file
+    * through the matcher.
+    */
+  def extractExpressions(tree: Tree): List[Candidate] =
+    tree.collect {
+      case t: Term if isMatchable(t) =>
+        val reason = unusableReason(t)
+        Candidate(t, "expr", reason.isEmpty, reason)
+    }
+
+  private def isMatchable(t: Term): Boolean = t match
+    case _: Term.Name        => false
+    case _: Lit              => false
+    case _: Term.Placeholder => false
+    case _: Term.Repeated    => false
+    // A bare `x.y` selection carries no call structure of its own; it only ever
+    // matches an index entry that is itself a bare selection, which no public
+    // Cats function is.
+    case _: Term.Select => false
+    case _              => true
+
   /** All candidates in `tree`, largest-wins: once a node matches, its children
     * are still walked (to find sibling candidates elsewhere in the subtree that
     * are not nested inside *this* match, e.g. a helper method declared

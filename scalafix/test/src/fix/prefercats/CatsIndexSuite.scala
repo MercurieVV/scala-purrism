@@ -11,9 +11,15 @@ final class CatsIndexSuite extends munit.FunSuite {
     )
   }
 
+  /** `cats/Functor#void().` is deliberately absent: its body is `as(fa)(())`,
+    * and `IR.Lit` erases a literal's value, so indexing it makes
+    * `logger.trace(...).as(false)` match and rewrite to `.void` -- turning
+    * `F[Boolean]` into `F[Unit]`. `IR.containsLiteral` keeps every such body
+    * out of the index; `SimplifyCatsExpressions.voidSyntax` still performs that
+    * rewrite, inspecting the literal directly instead of through the IR.
+    */
   test("every milestone-1 symbol from #96 is present") {
     val expectedSymbols = List(
-      "cats/Functor#void().",
       "cats/Functor#as().",
       "cats/Apply#productR().",
       "cats/Apply#productL().",

@@ -8,13 +8,17 @@ import java.net.http.{HttpClient, HttpRequest, HttpResponse}
 import java.nio.file.{Files, Path, Paths, StandardCopyOption}
 import java.util.zip.ZipInputStream
 import scala.meta._
+import scala.util.control.NonFatal
 
 /** Regenerates `scalafix/resources/purrism/cats-index-<version>.ndjson.gz` from
-  * the pinned cats-core sources jar. Milestone-1 subset only (#96 §5):
-  * `Functor#void`, `Functor#as`, `Apply#productR`, `Apply#productL`,
-  * `Foldable#foldMap`, `Traverse#sequence` -- chosen as the smallest set that
-  * forces every stage of the pipeline (parse -> resolve -> normalize -> render
-  * metadata) to exist.
+  * the pinned cats-core sources jar.
+  *
+  * Every concrete `def` on every typeclass trait in the top-level `cats`
+  * package is indexed, not a hand-picked subset: `PreferCatsFunctions` can only
+  * ever rewrite a body into a function this index knows, so the index *is* the
+  * rule's vocabulary. A def is indexed when its body normalizes (§2) and a call
+  * form can be rendered for it; anything else is skipped, since an entry with
+  * no render template can only ever produce a D2 decline.
   *
   * Invoked via `mill catsIndex.generate`, not run directly: args are
   * `<catsCoreVersion> <outputPath> [sourcesJarPath]`, where `sourcesJarPath` is
@@ -22,78 +26,47 @@ import scala.meta._
   */
 object GenerateCatsIndex:
 
-  private final case class Spec(
-      owner: String,
-      method: String,
-      ownerKind: OwnerKind,
-      renderKind: RenderKind,
-      template: String,
-      requiredImports: List[String]
+  /** Call forms that are not `$recv.name(args)`.
+    *
+    * A typeclass method's idiomatic call form is usually its own name via
+    * `cats.syntax`, which [[deriveRender]] handles. These are the ones where it
+    * is not -- `productR`/`productL` are exposed as `*>`/`<*`, `sequence` takes
+    * no argument at the call site -- and the generator has no way to derive
+    * that from the source alone, so it is recorded explicitly.
+    */
+  private val renderOverrides: Map[(String, String), RenderTemplate] = Map(
+    ("Apply", "productR") -> RenderTemplate(
+      RenderKind.Operator,
+      "$recv *> $a0"
+    ),
+    ("Apply", "productL") -> RenderTemplate(
+      RenderKind.Operator,
+      "$recv <* $a0"
+    ),
+    ("FlatMap", "productREval") ->
+      RenderTemplate(RenderKind.Postfix, "$recv.productREval($a0)"),
+    ("FlatMap", "productLEval") ->
+      RenderTemplate(RenderKind.Postfix, "$recv.productLEval($a0)")
   )
 
-  // The smallest subset proving the general pipeline end to end (#96 §5).
-  // Render templates use each function's idiomatic call form, which is not
-  // always its own def name (`productR`/`productL` are exposed as the
-  // operator aliases `*>`/`<*` in cats.syntax.apply) -- this is per-function
-  // metadata the generator cannot derive without deeper (out-of-scope)
-  // resolution, so it is recorded explicitly rather than guessed.
-  private val milestone1: List[Spec] = List(
-    Spec(
-      "Functor",
-      "void",
-      OwnerKind.Typeclass,
-      RenderKind.Postfix,
-      "$recv.void",
-      List("cats.syntax.functor.*")
-    ),
-    Spec(
-      "Functor",
-      "as",
-      OwnerKind.Typeclass,
-      RenderKind.Postfix,
-      "$recv.as($a0)",
-      List("cats.syntax.functor.*")
-    ),
-    Spec(
-      "Apply",
-      "productR",
-      OwnerKind.Typeclass,
-      RenderKind.Operator,
-      "$recv *> $a0",
-      List("cats.syntax.apply.*")
-    ),
-    Spec(
-      "Apply",
-      "productL",
-      OwnerKind.Typeclass,
-      RenderKind.Operator,
-      "$recv <* $a0",
-      List("cats.syntax.apply.*")
-    ),
-    Spec(
-      "Foldable",
-      "foldMap",
-      OwnerKind.Typeclass,
-      RenderKind.Postfix,
-      "$recv.foldMap($a0)",
-      List("cats.syntax.foldable.*")
-    ),
-    Spec(
-      "Traverse",
-      "sequence",
-      OwnerKind.Typeclass,
-      RenderKind.Postfix,
-      "$recv.sequence",
-      List("cats.syntax.traverse.*")
-    )
-  )
+  /** Methods that must never be rewritten to, whatever their body normalizes
+    * to.
+    *
+    * `map`/`flatMap`/`pure` and friends are the primitives every other body is
+    * expressed in, so a candidate matching one of them is already written the
+    * idiomatic way -- rewriting `fa.map(f)` to `fa.map(f)` is a no-op patch,
+    * and rewriting to the typeclass-summoner form is a regression.
+    */
+  private val excludedMethods: Set[String] =
+    Set("map", "flatMap", "pure", "ap", "product", "flatten", "coflatMap")
 
-  private val neededFiles = Set(
-    "cats/Functor.scala",
-    "cats/Apply.scala",
-    "cats/Foldable.scala",
-    "cats/Traverse.scala"
-  )
+  /** `cats/Foo.scala`, not `cats/data/Foo.scala`: the top-level package is
+    * where the typeclasses live, and a data type's own methods are not
+    * reachable through the `cats.syntax` call forms this index renders.
+    */
+  private val TopLevelCatsFile = """^cats/([A-Za-z0-9]+)\.scala$""".r
+
+  private val IdentifierName = """^[a-zA-Z_][a-zA-Z0-9_]*$""".r
 
   def main(args: Array[String]): Unit =
     args.toList match
@@ -127,15 +100,15 @@ object GenerateCatsIndex:
       )
     response.body()
 
-  private def extractFiles(
-      jarBytes: Array[Byte],
-      names: Set[String]
+  /** Every top-level `cats/<Name>.scala` entry, keyed by its jar path. */
+  private def extractTopLevelFiles(
+      jarBytes: Array[Byte]
   ): Map[String, String] =
     val zis = new ZipInputStream(new ByteArrayInputStream(jarBytes))
     val found = Map.newBuilder[String, String]
     var entry = zis.getNextEntry
     while entry != null do
-      if names.contains(entry.getName) then
+      if TopLevelCatsFile.matches(entry.getName) then
         val baos = new ByteArrayOutputStream()
         val buf = new Array[Byte](8192)
         var n = zis.read(buf)
@@ -147,36 +120,60 @@ object GenerateCatsIndex:
       entry = zis.getNextEntry
     zis.close()
     val result = found.result()
-    val missing = names -- result.keySet
-    if missing.nonEmpty then
+    if result.isEmpty then
       throw new IllegalStateException(
-        s"sources jar is missing expected files: $missing"
+        "sources jar contains no top-level cats/*.scala files"
       )
     result
 
-  private def traitStats(source: String, traitName: String): List[Stat] =
-    val tree = source.parse[Source].get
-    tree.collect { case t: Defn.Trait if t.name.value == traitName => t } match
-      case t :: _ => t.templ.stats
-      case Nil =>
-        throw new IllegalStateException(
-          s"trait $traitName not found in sources"
-        )
+  /** One typeclass trait: its own template body plus the names it extends. */
+  private final case class TraitDecl(
+      name: String,
+      stats: List[Stat],
+      parents: List[String]
+  )
 
-  private def defParams(stats: List[Stat], name: String): List[String] =
-    stats
-      .collectFirst {
-        case d: Defn.Def if d.name.value == name =>
-          d.paramClauses.flatten.map(_.name.value).toList
+  private def parentNames(t: Defn.Trait): List[String] =
+    t.templ.inits
+      .map(_.tpe)
+      .collect {
+        case Type.Name(n)                    => n
+        case Type.Apply.After_4_6_0(head, _) => head.toString
       }
-      .getOrElse(throw new IllegalStateException(s"def $name not found"))
+      .collect { case n: String => n.takeWhile(c => c != '[') }
 
-  private def defOf(stats: List[Stat], name: String): Defn.Def =
-    stats
-      .collectFirst { case d: Defn.Def if d.name.value == name => d }
-      .getOrElse(
-        throw new IllegalStateException(s"def $name not found (or is abstract)")
-      )
+  private def traitsIn(source: String): List[TraitDecl] =
+    source.parse[Source] match
+      case parsed: Parsed.Success[Source] =>
+        parsed.get.collect { case t: Defn.Trait =>
+          TraitDecl(t.name.value, t.templ.stats, parentNames(t))
+        }
+      // cats-core is not always parseable by the dialect this runs under; a
+      // file that does not parse contributes nothing rather than failing the
+      // whole generation.
+      case _: Parsed.Error => Nil
+
+  /** `name -> symbol` for everything a trait can call unqualified: its own defs
+    * plus, transitively, its parents'. Parents lose to the trait's own
+    * declarations, matching override resolution.
+    */
+  private def memberTable(
+      decl: TraitDecl,
+      byName: Map[String, TraitDecl]
+  ): Normalizer.MemberTable =
+    def go(
+        current: TraitDecl,
+        seen: Set[String]
+    ): Normalizer.MemberTable =
+      if seen.contains(current.name) then Map.empty
+      else
+        val inherited = current.parents
+          .flatMap(byName.get)
+          .foldLeft(Map.empty[String, String])((acc, parent) =>
+            acc ++ go(parent, seen + current.name)
+          )
+        inherited ++ Normalizer.ownDefMembers(current.name, current.stats)
+    go(decl, Set.empty)
 
   private def typeParamSig(tp: Type.Param): TypeParamSig =
     TypeParamSig(
@@ -191,7 +188,7 @@ object GenerateCatsIndex:
       tpe = p.decltpe.map(_.toString).getOrElse(""),
       byName =
         p.decltpe.exists { case _: Type.ByName => true; case _ => false },
-      isImplicit = p.mods.exists(_.is[Mod.Implicit]),
+      isImplicit = p.mods.exists(m => m.is[Mod.Implicit] || m.is[Mod.Using]),
       hasDefault = p.default.isDefined
     )
 
@@ -201,34 +198,86 @@ object GenerateCatsIndex:
   private def constraintsOf(d: Defn.Def): List[String] =
     d.paramClauses.flatten
       .collect {
-        case p if p.mods.exists(_.is[Mod.Implicit]) =>
+        case p if p.mods.exists(m => m.is[Mod.Implicit] || m.is[Mod.Using]) =>
           p.decltpe match
-            case Some(Type.Apply(Type.Name(tc), _)) => s"cats/$tc#"
-            case Some(other)                        => s"${other.toString}#"
-            case None                               => ""
+            case Some(Type.Apply.After_4_6_0(Type.Name(tc), _)) => s"cats/$tc#"
+            case Some(other) => s"${other.toString}#"
+            case None        => ""
       }
       .filter(_.nonEmpty)
       .toList
 
-  private def buildCatsFn(
-      spec: Spec,
-      stats: List[Stat],
+  /** The call form for a def, given how many explicit parameters it has.
+    *
+    * Slot 0 is the receiver, so a def with no explicit parameters has no call
+    * form through `cats.syntax` and is not indexable.
+    */
+  private def deriveRender(
+      owner: String,
+      d: Defn.Def,
+      explicitCount: Int
+  ): Option[RenderTemplate] =
+    renderOverrides.get((owner, d.name.value)).orElse {
+      val name = d.name.value
+      val argSlots = (0 until explicitCount - 1).map(i => s"$$a$i")
+      if explicitCount < 1 then None
+      else if IdentifierName.matches(name) then
+        Some(
+          RenderTemplate(
+            RenderKind.Postfix,
+            if argSlots.isEmpty then s"$$recv.$name"
+            else s"$$recv.$name(${argSlots.mkString(", ")})"
+          )
+        )
+      else if explicitCount == 2 then
+        Some(RenderTemplate(RenderKind.Operator, s"$$recv $name $$a0"))
+      else None
+    }
+
+  private def isDeprecated(d: Defn.Def): Boolean =
+    d.mods.exists {
+      case Mod.Annot(init) => init.tpe.toString.startsWith("deprecated")
+      case _               => false
+    }
+
+  private def isIndexable(d: Defn.Def): Boolean =
+    !d.mods.exists(m => m.is[Mod.Private] || m.is[Mod.Protected]) &&
+      !excludedMethods.contains(d.name.value) &&
+      !isDeprecated(d)
+
+  private def catsFnOf(
+      owner: String,
+      d: Defn.Def,
       members: Normalizer.MemberTable
-  ): CatsFn =
-    val d = defOf(stats, spec.method)
-    val ir =
-      Normalizer.normalize(d.body, defParams(stats, spec.method), members)
+  ): Option[CatsFn] =
+    val params = d.paramClauses.flatten.map(_.name.value).toList
     val valueParams = d.paramClauses.flatten.map(paramSig).toList
-    CatsFn(
-      symbol = s"cats/${spec.owner}#${spec.method}().",
-      owner = s"cats/${spec.owner}#",
-      ownerKind = spec.ownerKind,
+    val explicitCount = valueParams.count(!_.isImplicit)
+    for
+      render <- deriveRender(owner, d, explicitCount)
+      // A body that does not normalize (unresolved free name, unsupported
+      // shape) has no structural identity to match against, which is the whole
+      // basis of this rule -- skip it rather than index a guess.
+      // Project code calls these through `cats.syntax` (`fa.as(b)`), not as
+      // unqualified sibling members (`as(fa)(b)`), so the indexed body is
+      // stored in the receiver form both sides can agree on.
+      ir <-
+        try Some(IR.receiverize(Normalizer.normalize(d.body, params, members)))
+        catch { case NonFatal(_) => None }
+      // A body with no structure matches every stub in every project, and a
+      // pure alias only ever renames a call. Both are indexable in principle
+      // and useless (or harmful) in practice.
+      if !IR.isTrivial(ir) && !IR.isAlias(ir) && !IR.containsLiteral(ir)
+    yield CatsFn(
+      symbol = s"cats/$owner#${d.name.value}().",
+      owner = s"cats/$owner#",
+      ownerKind = OwnerKind.Typeclass,
       typeParams = d.tparams.map(typeParamSig),
       valueParams = valueParams,
       returnType = d.decltpe.map(_.toString).getOrElse(""),
       constraints = constraintsOf(d),
-      requiredImports = spec.requiredImports,
-      render = Some(RenderTemplate(spec.renderKind, spec.template)),
+      requiredImports = List("cats.syntax.all.*"),
+      render = Some(render),
       body = ir,
       hash = IR.hash(ir)
     )
@@ -239,42 +288,46 @@ object GenerateCatsIndex:
         s"requested generation for cats-core $catsCoreVersion but CatsIndex.expectedCatsCoreVersion is " +
           s"${CatsIndex.expectedCatsCoreVersion} -- update both together"
       )
-    val files = extractFiles(jarBytes, neededFiles)
-    val functorStats = traitStats(files("cats/Functor.scala"), "Functor")
-    val applyStats = traitStats(files("cats/Apply.scala"), "Apply")
-    val foldableStats = traitStats(files("cats/Foldable.scala"), "Foldable")
-    val traverseStats = traitStats(files("cats/Traverse.scala"), "Traverse")
 
-    // Free-name resolution tables, scoped per owner's own extends chain
-    // (Apply extends Functor; Traverse extends Functor with Foldable) so a
-    // same-named override on an unrelated trait (e.g. Traverse's own `map`)
-    // can never shadow the name a different owner's body actually resolves
-    // against.
-    val functorMembers = Normalizer.ownDefMembers("Functor", functorStats)
-    val applyMembers =
-      functorMembers ++ Normalizer.ownDefMembers("Apply", applyStats)
-    val foldableMembers = Normalizer.ownDefMembers("Foldable", foldableStats)
-    val traverseMembers =
-      functorMembers ++ foldableMembers ++ Normalizer.ownDefMembers(
-        "Traverse",
-        traverseStats
-      )
+    val decls = extractTopLevelFiles(jarBytes).toList
+      .sortBy(_._1)
+      .flatMap((_, source) => traitsIn(source))
+    val byName = decls.map(d => d.name -> d).toMap
 
-    val statsByOwner = Map(
-      "Functor" -> functorStats,
-      "Apply" -> applyStats,
-      "Foldable" -> foldableStats,
-      "Traverse" -> traverseStats
+    var considered = 0
+    var noRender = 0
+    var noNormalize = 0
+
+    val fns = decls.flatMap { decl =>
+      val members = memberTable(decl, byName)
+      decl.stats
+        .collect { case d: Defn.Def if isIndexable(d) => d }
+        .flatMap { d =>
+          considered += 1
+          val result = catsFnOf(decl.name, d, members)
+          if result.isEmpty then
+            val explicitCount =
+              d.paramClauses.flatten.map(paramSig).count(!_.isImplicit)
+            if deriveRender(decl.name, d, explicitCount).isEmpty then
+              noRender += 1
+            else noNormalize += 1
+          result
+        }
+    }
+
+    // Same symbol from two traits in the extends chain (an override and the
+    // def it overrides) would index the same call form twice and turn every
+    // match into a D1 ambiguity decline.
+    val deduped = fns
+      .groupBy(fn => (fn.symbol, IR.canonical(fn.body)))
+      .values
+      .map(_.head)
+      .toList
+      .sortBy(fn => (fn.symbol, fn.hash))
+
+    println(
+      s"[catsIndex] indexed ${deduped.size} cats functions from ${decls.size} traits " +
+        s"($considered concrete defs considered, $noRender without a call form, " +
+        s"$noNormalize whose body did not normalize)"
     )
-    val membersByOwner =
-      Map(
-        "Functor" -> functorMembers,
-        "Apply" -> applyMembers,
-        "Foldable" -> foldableMembers,
-        "Traverse" -> traverseMembers
-      )
-
-    val fns = milestone1.map(spec =>
-      buildCatsFn(spec, statsByOwner(spec.owner), membersByOwner(spec.owner))
-    )
-    CatsIndex.render(catsCoreVersion, fns)
+    CatsIndex.render(catsCoreVersion, deduped)

@@ -68,16 +68,61 @@ final class PreferCatsFunctions extends SemanticRule("PreferCatsFunctions") {
 
   private lazy val byHash: Map[Long, Seq[CatsFn]] = index.groupBy(_.hash)
 
+  /** Patterns keyed by the method name at the root of the body, so a candidate
+    * only ever unifies against entries that could match its own outermost call.
+    */
+  private lazy val byHead: Map[String, Seq[CatsFn]] =
+    index.groupBy(cf => PreferCatsFunctions.headMethod(cf.body)).collect {
+      case (Some(name), fns) => name -> fns
+    }
+
   override def fix(implicit doc: SemanticDocument): Patch = {
     val wildcardImports = PreferCatsFunctions.existingWildcardImports(doc.tree)
+    val candidates = PreferCatsFunctions.allCandidates(doc.tree)
 
-    CandidateExtractor
-      .extract(doc.tree)
-      .filter(_.usable)
-      .map(candidate =>
-        PreferCatsFunctions.candidatePatch(candidate, byHash, wildcardImports)
-      )
-      .asPatch
+    val decided = candidates.map(candidate =>
+      candidate -> PreferCatsFunctions
+        .decideByPattern(candidate, byHead, wildcardImports)
+    )
+
+    val rewrites = decided.collect {
+      case (candidate, rewrite: PreferCatsFunctions.MatchOutcome.Rewrite)
+          if rewrite.rendered != candidate.term.syntax =>
+        candidate -> rewrite
+    }
+
+    // `PreferCatsSyntax`/`SimplifyCatsExpressions` run in the same pass (both
+    // directly and under `TypelevelPurrism`) and own some of the same shapes --
+    // `fa.flatMap(_ => fb)` is this rule's `FlatMap#productR` and their
+    // `mapThen`. Two rules replacing one range do not compete, they
+    // concatenate: the file ends up with `fa *> fbfa.productR(fb)`. Theirs is
+    // the more idiomatic rendering (`*>`), so it yields.
+    val claimedByExpressionRules =
+      PreferCatsFunctions.expressionRuleRanges(doc.tree)
+
+    val winners = PreferCatsFunctions
+      .outermost(rewrites)
+      .filterNot { case (candidate, _) =>
+        claimedByExpressionRules.contains(
+          (candidate.term.pos.start, candidate.term.pos.end)
+        )
+      }
+    val winning = winners.map(_._1.term).toSet
+
+    // A decline inside a subtree that is being rewritten anyway describes a
+    // fragment that no longer exists after the patch, and a decline on a bare
+    // fragment is noise -- only declared roots report one.
+    val declines = decided.collect {
+      case (candidate, outcome)
+          if candidate.kind != "expr" &&
+            !winning
+              .exists(w => PreferCatsFunctions.encloses(w, candidate.term)) =>
+        PreferCatsFunctions.declinePatch(candidate, outcome)
+    }
+
+    (winners.map { case (candidate, rewrite) =>
+      PreferCatsFunctions.rewritePatch(candidate, rewrite, wildcardImports)
+    } ++ declines).asPatch
   }
 }
 
@@ -133,6 +178,12 @@ object PreferCatsFunctions {
 
     irOpt match {
       case None => MatchOutcome.NoMatch
+      // A candidate with no call structure of its own -- `()`, a bare
+      // reference -- normalizes to the same IR as every other stub in every
+      // project, so a structural match against it means nothing. (The index
+      // additionally drops pure aliases; a *candidate* of that shape is fine,
+      // since no aliasing entry survives on the other side to match it.)
+      case Some(ir) if IR.isTrivial(ir) => MatchOutcome.NoMatch
       case Some(ir) =>
         val fullMatches = byHash
           .getOrElse(IR.hash(ir), Nil)
@@ -151,6 +202,202 @@ object PreferCatsFunctions {
         }
     }
   }
+
+  /** Source ranges `PreferCatsSyntax`/`SimplifyCatsExpressions` would rewrite
+    * in this document, so this rule can stay off them.
+    */
+  def expressionRuleRanges(
+      tree: Tree
+  )(implicit doc: SemanticDocument): Set[(Int, Int)] = {
+    val facts = fix.catsexpr.CatsFacts.semantic
+    (CatsExpressionRules.preferCatsSyntaxRewrites(tree, facts) ++
+      CatsExpressionRules.simplifyExpressionRewrites(tree, facts))
+      .map(rewrite => (rewrite.tree.pos.start, rewrite.tree.pos.end))
+      .toSet
+  }
+
+  /** The method name a pattern's outermost call selects, used to bucket the
+    * index so a candidate is only unified against plausible entries.
+    */
+  def headMethod(ir: IR): Option[String] = ir match {
+    case IR.App(IR.Sel(_, name), _, _) => Some(name)
+    case IR.Sel(_, name)               => Some(name)
+    case _                             => None
+  }
+
+  /** Matches a candidate against the index by *unification*: an entry's own
+    * parameters are holes that bind to whatever the candidate has in that
+    * position, so a fragment with arbitrary receivers and arguments matches,
+    * not only a body whose arguments are literally the enclosing declaration's
+    * parameters. Ranking and declines (§3-4) are unchanged.
+    */
+  def decideByPattern(
+      candidate: Candidate,
+      byHead: Map[String, Seq[CatsFn]],
+      wildcardImports: Set[String]
+  )(implicit doc: SemanticDocument): MatchOutcome = {
+    val head = candidate.term match {
+      case Term.Apply.After_4_6_0(Term.Select(_, Term.Name(name)), _) =>
+        Some(name)
+      case Term.ApplyInfix.After_4_6_0(_, Term.Name(name), _, _) => Some(name)
+      case Term.Select(_, Term.Name(name))                       => Some(name)
+      case Term.ApplyUnary(Term.Name(op), _) => Some("unary_" + op)
+      case _                                 => None
+    }
+
+    val fullMatches = head.toList
+      .flatMap(byHead.getOrElse(_, Nil))
+      .flatMap(cf =>
+        PatternMatcher.matches(cf.body, candidate.term).map(cf -> _)
+      )
+
+    if (fullMatches.isEmpty) MatchOutcome.NoMatch
+    else {
+      val public = fullMatches.filter(_._1.render.isDefined)
+      if (public.isEmpty) MatchOutcome.PrivateOnly
+      else {
+        val evidenceOk =
+          public.filter { case (cf, _) => constraintsSatisfied(cf, candidate) }
+        if (evidenceOk.isEmpty) MatchOutcome.MissingEvidence
+        else rankAndRenderBindings(evidenceOk, wildcardImports)
+      }
+    }
+  }
+
+  /** §4 ranking over pattern matches, rendering each from its own bindings. */
+  private def rankAndRenderBindings(
+      matches: List[(CatsFn, PatternMatcher.Bindings)],
+      wildcardImports: Set[String]
+  ): MatchOutcome = {
+    val rendered = matches.flatMap { case (cf, bindings) =>
+      renderFromBindings(cf, bindings).map(cf -> _)
+    }
+
+    if (rendered.isEmpty) MatchOutcome.Unrenderable
+    else {
+      val inScope = rendered.filter { case (cf, _) =>
+        importsSatisfied(cf.requiredImports, wildcardImports)
+      }
+      val tierPool = if (inScope.nonEmpty) inScope else rendered
+      val minLength = tierPool.map(_._2.length).min
+      val shortest = tierPool.filter(_._2.length == minLength)
+
+      // Two entries that render identically are the same rewrite reached twice
+      // (an override and the def it overrides), not a real ambiguity.
+      if (shortest.map(_._2).distinct.size == 1) {
+        val (cf, text) = shortest.head
+        MatchOutcome.Rewrite(cf, text)
+      } else MatchOutcome.Ambiguous
+    }
+  }
+
+  /** Fills the render template from the matched source expressions. A hole the
+    * pattern never bound has no text to substitute, so the entry is
+    * unrenderable for this candidate.
+    */
+  private def renderFromBindings(
+      cf: CatsFn,
+      bindings: PatternMatcher.Bindings
+  ): Option[String] =
+    cf.render.flatMap { rt =>
+      val explicitCount = cf.valueParams.count(!_.isImplicit)
+      val slots = (0 until explicitCount).toList.map(bindings.get)
+      if (slots.exists(_.isEmpty)) None
+      else {
+        // `.syntax` re-prints the tree, which reformats string interpolations
+        // across lines and drops the original spacing. The bound expression is
+        // being moved, not rewritten, so it should arrive at its new position
+        // exactly as the author wrote it.
+        val texts = slots.flatten.map(sourceTextOf)
+        val withRecv =
+          rt.template.replace(
+            "$recv",
+            parenthesized(slots.flatten.head, texts.head)
+          )
+        Some(texts.tail.zipWithIndex.foldLeft(withRecv) {
+          case (acc, (text, i)) => acc.replace(s"$$a$i", text)
+        })
+      }
+    }
+
+  private def sourceTextOf(term: Term): String = {
+    val text = term.pos.text
+    if (text.nonEmpty) text else term.syntax
+  }
+
+  /** Only shapes that would re-associate need wrapping: `a *> b` becomes
+    * `(a *> b).void`, while a multi-line `Foo\n  .bar(...)` chain is already a
+    * single postfix target and reads worse in parentheses.
+    */
+  private def parenthesized(term: Term, text: String): String =
+    term match {
+      case _: Term.ApplyInfix | _: Term.Function | _: Term.If | _: Term.Match |
+          _: Term.Block | _: Term.Ascribe =>
+        s"($text)"
+      case _ => text
+    }
+
+  /** Declaration roots (whose own parameter list gives the match its slot
+    * texts) plus every other matchable expression, each term reported once.
+    */
+  def allCandidates(tree: Tree): List[Candidate] = {
+    val roots = CandidateExtractor.extract(tree).filter(_.usable)
+    // scala.meta trees compare by reference, so the same expression reached
+    // through two extractors is not `==` to itself -- dedupe on source range,
+    // or the same term gets two patches and scalafix concatenates them.
+    val rootRanges = roots.map(rangeOf).toSet
+    roots ++ CandidateExtractor
+      .extractExpressions(tree)
+      .filter(c => c.usable && !rootRanges.contains(rangeOf(c)))
+  }
+
+  private def rangeOf(candidate: Candidate): (Int, Int) =
+    (candidate.term.pos.start, candidate.term.pos.end)
+
+  def encloses(outer: Tree, inner: Tree): Boolean =
+    !(outer eq inner) &&
+      outer.pos.start <= inner.pos.start &&
+      inner.pos.end <= outer.pos.end
+
+  /** Drops any rewrite whose term sits inside another rewrite's term. Two
+    * `Patch.replaceTree` calls on overlapping ranges produce a result that
+    * depends on which one is applied; the enclosing match is the larger
+    * simplification, so it wins (same policy as `CatsExpressionRules`).
+    */
+  def outermost[A](
+      rewrites: List[(Candidate, A)]
+  ): List[(Candidate, A)] =
+    rewrites.filterNot { case (candidate, _) =>
+      rewrites.exists { case (other, _) =>
+        encloses(other.term, candidate.term)
+      }
+    }
+
+  def rewritePatch(
+      candidate: Candidate,
+      rewrite: MatchOutcome.Rewrite,
+      wildcardImports: Set[String] = Set.empty
+  )(implicit doc: SemanticDocument): Patch =
+    Patch.replaceTree(candidate.term, rewrite.rendered) +
+      rewrite.cf.requiredImports
+        // Scalafix dedupes a global import against the symbol it resolves, so
+        // an `import cats.syntax.all.*` already in the file does not stop it
+        // adding a second wildcard importer -- check directly (same reasoning
+        // as `CatsExpressionRules.importsCatsSyntax`).
+        .filterNot(req => importsSatisfied(List(req), wildcardImports))
+        .map(req => Patch.addGlobalImport(toImporter(req)))
+        .asPatch
+
+  def declinePatch(candidate: Candidate, outcome: MatchOutcome): Patch =
+    outcome match {
+      case MatchOutcome.PrivateOnly =>
+        Patch.lint(PrivateCatsMatchDiagnostic(candidate.term.pos))
+      case MatchOutcome.MissingEvidence =>
+        Patch.lint(MissingTypeclassEvidenceDiagnostic(candidate.term.pos))
+      case MatchOutcome.Ambiguous =>
+        Patch.lint(AmbiguousCatsMatchDiagnostic(candidate.term.pos))
+      case _ => Patch.empty
+    }
 
   /** One patch (possibly empty, possibly a single lint warning) per usable
     * candidate. Never both a patch and a warning for the same candidate.
@@ -171,7 +418,7 @@ object PreferCatsFunctions {
       case MatchOutcome.Rewrite(cf, rendered) =>
         Patch.replaceTree(candidate.term, rendered) +
           cf.requiredImports
-            .map(req => Patch.addGlobalImport(toImportSymbol(req)))
+            .map(req => Patch.addGlobalImport(toImporter(req)))
             .asPatch
     }
 
@@ -226,7 +473,14 @@ object PreferCatsFunctions {
           case Term.Function.After_4_6_0(params, _) =>
             params.map(_.name.value)
         }
-      case _ => None
+      // A fragment has no declaration of its own, so what plays the role of its
+      // parameters is what it leaves free: `xs.foldLeft(Monoid[B].empty)(...)`
+      // standing inside a larger method is that method's `foldMap` in `xs` and
+      // the function, whatever else the method does. First-occurrence order is
+      // exactly the order `Normalizer` assigns de Bruijn indices, so the same
+      // list doubles as scope and as slot text.
+      case "expr" => Some(FreeNames.of(candidate.term))
+      case _      => None
     }
 
   private def implicitParamAt(
@@ -252,11 +506,34 @@ object PreferCatsFunctions {
     val implicitPositions =
       cf.valueParams.zipWithIndex.collect { case (p, i) if p.isImplicit => i }
 
-    implicitPositions.length == cf.constraints.length &&
-    (implicitPositions.zip(cf.constraints)).forall { case (pos, constraint) =>
-      implicitParamAt(candidate, pos)
-        .exists(param => paramProvidesConstraint(param, constraint))
-    }
+    if (candidate.kind == "expr")
+      // A fragment has no parameter list to line implicits up against
+      // positionally, so the evidence must come from the method it sits in --
+      // by constraint, not by position.
+      cf.constraints.forall(constraint =>
+        enclosingImplicitParams(candidate.term)
+          .exists(param => paramProvidesConstraint(param, constraint))
+      )
+    else
+      implicitPositions.length == cf.constraints.length &&
+      (implicitPositions.zip(cf.constraints)).forall { case (pos, constraint) =>
+        implicitParamAt(candidate, pos)
+          .exists(param => paramProvidesConstraint(param, constraint))
+      }
+  }
+
+  /** Implicit/using parameters of every enclosing `def`, outermost included: a
+    * fragment can use evidence from any method it is nested in.
+    */
+  private def enclosingImplicitParams(term: Tree): List[Term.Param] = {
+    def go(t: Option[Tree], acc: List[Term.Param]): List[Term.Param] =
+      t match {
+        case None => acc
+        case Some(d: Defn.Def) =>
+          go(d.parent, acc ++ d.paramClauses.flatMap(_.values))
+        case Some(other) => go(other.parent, acc)
+      }
+    go(term.parent, Nil)
   }
 
   private def paramProvidesConstraint(
@@ -326,8 +603,17 @@ object PreferCatsFunctions {
       existing.contains("cats.implicits.*")
     }
 
-  private def toImportSymbol(required: String): Symbol = {
-    val pkg = required.stripSuffix(".*").stripSuffix("*")
-    Symbol(pkg.replace('.', '/') + ".")
+  /** `Patch.addGlobalImport(Symbol("cats/syntax/all."))` renders as `import
+    * cats.syntax.all` -- the object, not its members -- which brings no syntax
+    * into scope and leaves the rewritten file uncompilable. The importer form
+    * emits the wildcard the rewrites actually need (same fix as
+    * `CatsExpressionRules.catsSyntaxAll`).
+    */
+  private def toImporter(required: String): Importer = {
+    val parts = required.stripSuffix(".*").stripSuffix("*").split('.').toList
+    val ref = parts.tail.foldLeft[Term.Ref](Term.Name(parts.head))(
+      (acc, part) => Term.Select(acc, Term.Name(part))
+    )
+    Importer(ref, List(Importee.Wildcard()))
   }
 }
