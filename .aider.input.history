@@ -1,0 +1,228 @@
+
+# 2026-08-01 14:14:45.606696
++Agent boundary:
++- Do not run tree2m.
++- Do not run git worktree commands.
++- Do not run git commit.
++- Do not run git push.
++- Do not create, update, merge, or close pull requests.
++- The executor script owns worktree setup, commit, push, pull request creation/merge, and cleanup after you return.
++- You may run local inspection, edit, format, compile, and test commands needed to complete and verify the implementation.
++- If you need a commit or pull request message, include it in your final answer instead of running the command.
++
++Final answer contract:
++- Summarize the implementation.
++- Include a proposed commit title.
++- Include a proposed pull request body when useful.
++- Include a one-line "Conclusion:" summary for tasks that depend on this one (what changed, what's now available to build on). Keep it to what a dependent task needs - it is truncated before it reaches them.
++
++Workflow:
++1. This task has already been evaluated as narrow enough to implement. Do not re-decide that. Implement it in the current repository.
++2. Do not split the task, do not create GitHub subtasks, and do not comment on other issues. The executor owns decomposition and ran it before dispatching you.
++3. If the task genuinely cannot be implemented as specified - too broad, ambiguous, or blocked - make NO file changes and say why in your final answer. The executor routes that back for re-evaluation. An attempt to split it yourself is discarded work.
++4. Verify your change with the project's own compile/test commands before answering.
++
++Dependency Task Conclusion Comment:
++- #129: Obsolete: the executor's stranded-integration-branch sweep landed `origin/task-34` on `master` before this task could run.
++
++- PR #134 (`task-34` -> `master`) merged at 2026-07-31T23:41:47Z after its checks passed; `origin/master..origin/task-34` is now 0 commits.
++- Master CI is green at `585895d` ("Merge pull request #134 from MercurieVV/task-34").
++- Acceptance criterion 1 verified on `master`: `PreferCatsFunctions.scala`, `prefercats/{IR,Normalizer,CandidateExtractor,CatsIndex}.scala` and `cats-index-2.13.0.ndjson.gz` are all present, and `META-INF/services/scalafix.v1.Rule` lists `fix.PreferCatsFunctions` alongside the rules already registered on master.
++
++The one attempt at this task (aider, then codex) was rejected by the test-edit guard for modifying existing test files during an `implement` phase, which is correct — the merge was already done and the remaining edits were not.
++- #130: Script conclusion:
++Task #130 completed successfully.
++
++Runner:
++agent: aider, model: deepseek/deepseek-reasoner, version: aider 0.86.2
++
++
++
++Task ID: #131
++Title: PreferCatsFunctions: rerun the blocked corpus audit end-to-end (test)
++Worktree: /Users/viktorskalinins/IdeaProjects/my/scalafix-purrism/.worktrees/prefercatsfunctions-rerun-the-blocked-corpus-audit-end-to-en-131
++Agent: aider
++Model: deepseek/deepseek-reasoner
++Effort: 
++Version: aider 0.86.2
++
++Task Description:
++## Context
++
++#106 / PR #127 attempted the corpus audit and recorded it as unexecutable: the rule was absent from the checkout and the local build was blocked by a Coursier cache lock at `~/Library/Caches/Coursier/v1/.structure.lock`. That report itself says: "Once the rule is available, rerun this audit". #129 makes the rule available; this task is that rerun.
++
++This is the only step that exercises the whole chain on code nobody wrote as a fixture: candidate extraction over real project sources, normalizer, Cats index lookup, ranking, rendering.
++
++## Goal
++
++Run `PreferCatsFunctions` in check mode over the four local Typelevel repos and produce an audited hit/decline report.
++
++## Scope
++
++1. Run the rule against `/Users/viktorskalinins/IdeaProjects/my/gh-tasks-llm-executor`, `/Users/viktorskalinins/IdeaProjects/my/arrowstep`, `/Users/viktorskalinins/IdeaProjects/my/cctv-analyzer-scala`, `/Users/viktorskalinins/IdeaProjects/my/ScalaSemanticMCP`.
++2. Replace the placeholder `## Corpus run` section of `docs/PREFER_CATS_FUNCTIONS.md` with the real results, per repo.
++3. Audit every proposed rewrite individually.
++4. Aggregate declines by reason.
++5. Leave the corpus repos unmodified.
++
++## Acceptance criteria
++
++1. The `## Corpus run` table in `docs/PREFER_CATS_FUNCTIONS.md` has one row per repo whose "Proposed rewrites" cell is an integer (0 allowed) or the literal word `skipped` followed by the quoted build error text — the string `n/a - rule unavailable` must no longer appear anywhere in the file.
++2. Every proposed rewrite has its own audit line carrying the source location and exactly one verdict from {correct, false-positive, unclear}; each `false-positive` line links a filed follow-up issue referencing #34.
++3. Declines are aggregated as counts per reason, each reason being one of the decline rules D1/D2/D3/D4 from `docs/PREFER_CATS_FUNCTIONS.md` section 3.
++4. `git status --porcelain` in each of the four corpus repos shows no new or modified tracked file attributable to this run (pre-existing working-tree changes are left untouched and noted).
++5. No change is made to `scalafix/src/fix/PreferCatsFunctions.scala` or `scalafix/src/fix/prefercats/` in this task; behavior problems found are filed as follow-up issues instead.
++
++## Notes / Risks
++
++- If the Coursier cache lock error recurs, fix or work around it (clear the stale lock / point `COURSIER_CACHE` elsewhere) rather than recording the run as blocked a second time.
++- A repo that genuinely cannot build is `skipped` with the quoted error — that satisfies criterion 1, an unattempted repo does not.
++
++Task metadata:
++Evaluation: ready
++Execution: implement
++Phase: test
++Parent: #5
++Dependencies: #129, #130
++Required abilities/importance:
++- test: 0.7
++- evaluation: 0.6
++- failure-analysis: 0.4
++- docs: 0.4
++
+
+# 2026-08-01 14:14:45.606832
++Agent boundary:
++- Do not run tree2m.
++- Do not run git worktree commands.
++- Do not run git commit.
++- Do not run git push.
++- Do not create, update, merge, or close pull requests.
++- The executor script owns worktree setup, commit, push, pull request creation/merge, and cleanup after you return.
++- You may run local inspection, edit, format, compile, and test commands needed to complete and verify the implementation.
++- If you need a commit or pull request message, include it in your final answer instead of running the command.
++
++Final answer contract:
++- Summarize the implementation.
++- Include a proposed commit title.
++- Include a proposed pull request body when useful.
++- Include a one-line "Conclusion:" summary for tasks that depend on this one (what changed, what's now available to build on). Keep it to what a dependent task needs - it is truncated before it reaches them.
++
++Workflow:
++1. This task has already been evaluated as narrow enough to implement. Do not re-decide that. Implement it in the current repository.
++2. Do not split the task, do not create GitHub subtasks, and do not comment on other issues. The executor owns decomposition and ran it before dispatching you.
++3. If the task genuinely cannot be implemented as specified - too broad, ambiguous, or blocked - make NO file changes and say why in your final answer. The executor routes that back for re-evaluation. An attempt to split it yourself is discarded work.
++4. Verify your change with the project's own compile/test commands before answering.
++
++Dependency Task Conclusion Comment:
++- #129: Obsolete: the executor's stranded-integration-branch sweep landed `origin/task-34` on `master` before this task could run.
++
++- PR #134 (`task-34` -> `master`) merged at 2026-07-31T23:41:47Z after its checks passed; `origin/master..origin/task-34` is now 0 commits.
++- Master CI is green at `585895d` ("Merge pull request #134 from MercurieVV/task-34").
++- Acceptance criterion 1 verified on `master`: `PreferCatsFunctions.scala`, `prefercats/{IR,Normalizer,CandidateExtractor,CatsIndex}.scala` and `cats-index-2.13.0.ndjson.gz` are all present, and `META-INF/services/scalafix.v1.Rule` lists `fix.PreferCatsFunctions` alongside the rules already registered on master.
++
++The one attempt at this task (aider, then codex) was rejected by the test-edit guard for modifying existing test files during an `implement` phase, which is correct — the merge was already done and the remaining edits were not.
++- #130: Script conclusion:
++Task #130 completed successfully.
++
++Runner:
++agent: aider, model: deepseek/deepseek-reasoner, version: aider 0.86.2
++
++
++
++Task ID: #131
++Title: PreferCatsFunctions: rerun the blocked corpus audit end-to-end (test)
++Worktree: /Users/viktorskalinins/IdeaProjects/my/scalafix-purrism/.worktrees/prefercatsfunctions-rerun-the-blocked-corpus-audit-end-to-en-131
++Agent: aider
++Model: deepseek/deepseek-reasoner
++Effort: 
++Version: aider 0.86.2
++
++Task Description:
++## Context
++
++#106 / PR #127 attempted the corpus audit and recorded it as unexecutable: the rule was absent from the checkout and the local build was blocked by a Coursier cache lock at `~/Library/Caches/Coursier/v1/.structure.lock`. That report itself says: "Once the rule is available, rerun this audit". #129 makes the rule available; this task is that rerun.
++
++This is the only step that exercises the whole chain on code nobody wrote as a fixture: candidate extraction over real project sources, normalizer, Cats index lookup, ranking, rendering.
++
++## Goal
++
++Run `PreferCatsFunctions` in check mode over the four local Typelevel repos and produce an audited hit/decline report.
++
++## Scope
++
++1. Run the rule against `/Users/viktorskalinins/IdeaProjects/my/gh-tasks-llm-executor`, `/Users/viktorskalinins/IdeaProjects/my/arrowstep`, `/Users/viktorskalinins/IdeaProjects/my/cctv-analyzer-scala`, `/Users/viktorskalinins/IdeaProjects/my/ScalaSemanticMCP`.
++2. Replace the placeholder `## Corpus run` section of `docs/PREFER_CATS_FUNCTIONS.md` with the real results, per repo.
++3. Audit every proposed rewrite individually.
++4. Aggregate declines by reason.
++5. Leave the corpus repos unmodified.
++
++## Acceptance criteria
++
++1. The `## Corpus run` table in `docs/PREFER_CATS_FUNCTIONS.md` has one row per repo whose "Proposed rewrites" cell is an integer (0 allowed) or the literal word `skipped` followed by the quoted build error text — the string `n/a - rule unavailable` must no longer appear anywhere in the file.
++2. Every proposed rewrite has its own audit line carrying the source location and exactly one verdict from {correct, false-positive, unclear}; each `false-positive` line links a filed follow-up issue referencing #34.
++3. Declines are aggregated as counts per reason, each reason being one of the decline rules D1/D2/D3/D4 from `docs/PREFER_CATS_FUNCTIONS.md` section 3.
++4. `git status --porcelain` in each of the four corpus repos shows no new or modified tracked file attributable to this run (pre-existing working-tree changes are left untouched and noted).
++5. No change is made to `scalafix/src/fix/PreferCatsFunctions.scala` or `scalafix/src/fix/prefercats/` in this task; behavior problems found are filed as follow-up issues instead.
++
++## Notes / Risks
++
++- If the Coursier cache lock error recurs, fix or work around it (clear the stale lock / point `COURSIER_CACHE` elsewhere) rather than recording the run as blocked a second time.
++- A repo that genuinely cannot build is `skipped` with the quoted error — that satisfies criterion 1, an unattempted repo does not.
++
++Task metadata:
++Evaluation: ready
++Execution: implement
++Phase: test
++Parent: #5
++Dependencies: #129, #130
++Required abilities/importance:
++- test: 0.7
++- evaluation: 0.6
++- failure-analysis: 0.4
++- docs: 0.4
++
+
+# 2026-08-01 14:15:49.253336
++This worktree is on head branch `task-131` and has a `git merge` in progress against
++base branch `task-5` that produced conflict markers (`<<<<<<<` / `=======` /
++`>>>>>>>`). Resolve every conflict so the merge can complete cleanly, preserving the
++intended behavior of both branches without changing the task's intended behavior.
++
++Unmerged files reported by Git:
++- .gitignore
++
++For each conflicted file, inspect both sides before editing:
++- `git diff --ours -- <file>` shows the head branch `task-131` side.
++- `git diff --theirs -- <file>` shows the base branch `task-5` side being merged in.
++- `git log --oneline --decorate --graph HEAD...origin/task-5` shows the divergent
++  branch history when you need more context.
++
++Run `git status --short`, resolve every unmerged path, and `git add` each resolved file
++so `git diff --name-only --diff-filter=U` prints nothing. Do not run `git commit`,
++`git merge --abort`, or `git push` yourself.
++
++Task: #131 PreferCatsFunctions: rerun the blocked corpus audit end-to-end (test)
++
+
+# 2026-08-01 14:15:49.254650
++This worktree is on head branch `task-131` and has a `git merge` in progress against
++base branch `task-5` that produced conflict markers (`<<<<<<<` / `=======` /
++`>>>>>>>`). Resolve every conflict so the merge can complete cleanly, preserving the
++intended behavior of both branches without changing the task's intended behavior.
++
++Unmerged files reported by Git:
++- .gitignore
++
++For each conflicted file, inspect both sides before editing:
++- `git diff --ours -- <file>` shows the head branch `task-131` side.
++- `git diff --theirs -- <file>` shows the base branch `task-5` side being merged in.
++- `git log --oneline --decorate --graph HEAD...origin/task-5` shows the divergent
++  branch history when you need more context.
++
++Run `git status --short`, resolve every unmerged path, and `git add` each resolved file
++so `git diff --name-only --diff-filter=U` prints nothing. Do not run `git commit`,
++`git merge --abort`, or `git push` yourself.
++
++Task: #131 PreferCatsFunctions: rerun the blocked corpus audit end-to-end (test)
++

@@ -160,6 +160,17 @@ This section is copied verbatim into the GitHub issue body under
 
 ## Corpus run
 
+## Deferred fixtures
+
+- `CatsEquivalentMapIdentity`: deferred because the checked-in Cats index has no public `map` identity entry.
+- `CatsEquivalentVoid`: deferred because the landed normalizer does not yet erase the Cats index's unqualified self-call versus syntax spelling (unsupported normalizer axis E5).
+- `CatsEquivalentAs`: deferred because the landed normalizer does not yet erase the Cats index's unqualified self-call versus syntax spelling (unsupported normalizer axis E5).
+- `CatsEquivalentFoldMap`: deferred because the landed normalizer does not yet erase the Cats index's unqualified self-call versus syntax spelling (unsupported normalizer axis E5).
+- `CatsEquivalentProduct`: deferred because the checked-in index exposes only `productL`/`productR`, while the requested independent pair shape requires the unsupported product normalizer axis.
+- `CatsEquivalentTraverse`: deferred because the checked-in index has `Traverse.sequence` but no `traverse` entry, and the manual accumulation shape is not a supported normalizer axis (E2 does not erase collection accumulation).
+- `CatsEquivalentForComprehension`: deferred because the landed normalizer does not support the requested for-comprehension combinator axis (E2 only equates a for-comprehension with its direct flatMap/map desugaring).
+- `CatsEquivalentLocalHelperMethod`: deferred by decline rule D2: a user-local helper is not a public Cats candidate, and the index has no public candidate with the required normalized body.
+
 The corpus run was attempted on 2026-07-27, but could not execute: this checkout
 does not contain a `PreferCatsFunctions` rule (no implementation or Scalafix
 service registration), so there is no runnable rule to apply and no proposed
