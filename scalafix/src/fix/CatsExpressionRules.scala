@@ -1,14 +1,15 @@
 package fix
 
-import scala.annotation.nowarn
 import scala.meta._
 
 import scalafix.v1._
 
+import fix.catsexpr.CatsFacts
+
 final class PreferCatsSyntax extends SemanticRule("PreferCatsSyntax") {
   override def fix(implicit doc: SemanticDocument): Patch =
     CatsExpressionRules
-      .preferCatsSyntaxRewrites(doc.tree)
+      .preferCatsSyntaxRewrites(doc.tree, CatsFacts.semantic)
       .map { rewrite =>
         Patch.replaceTree(rewrite.tree, rewrite.replacement) +
           CatsExpressionRules.catsSyntaxImport
@@ -20,7 +21,7 @@ final class SimplifyCatsExpressions
     extends SemanticRule("SimplifyCatsExpressions") {
   override def fix(implicit doc: SemanticDocument): Patch =
     CatsExpressionRules
-      .simplifyExpressionRewrites(doc.tree)
+      .simplifyExpressionRewrites(doc.tree, CatsFacts.semantic)
       .map { rewrite =>
         Patch.replaceTree(rewrite.tree, rewrite.replacement) +
           CatsExpressionRules.catsSyntaxImport
@@ -29,16 +30,25 @@ final class SimplifyCatsExpressions
 }
 
 object PreferCatsSyntax {
-  def rewrites(tree: Tree): List[String] =
-    CatsExpressionRules.preferCatsSyntaxRewrites(tree).map(_.replacement)
+  def rewrites(tree: Tree, facts: CatsFacts): List[String] =
+    CatsExpressionRules.preferCatsSyntaxRewrites(tree, facts).map(_.replacement)
 }
 
 object SimplifyCatsExpressions {
-  def rewrites(tree: Tree): List[String] =
-    CatsExpressionRules.simplifyExpressionRewrites(tree).map(_.replacement)
+  def rewrites(tree: Tree, facts: CatsFacts): List[String] =
+    CatsExpressionRules
+      .simplifyExpressionRewrites(tree, facts)
+      .map(_.replacement)
 }
 
-@nowarn
+/** Rewrites toward Cats syntax and Cats combinators.
+  *
+  * Every matcher here decides through [[fix.catsexpr.CatsFacts]], never through
+  * an identifier's spelling. `map` on a `List` is not `map` on an
+  * `F[_]: Functor` even though both are spelled the same, and `Right` is only
+  * `scala.util.Right` until someone shadows it. A rewrite that cannot resolve
+  * the symbols it depends on does not fire.
+  */
 private[fix] object CatsExpressionRules {
   final case class Rewrite(tree: Tree, replacement: String)
 
@@ -75,41 +85,52 @@ private[fix] object CatsExpressionRules {
   private val CatsSyntaxWildcardRefs: Set[String] =
     Set("cats.syntax.all", "cats.implicits")
 
-  def preferCatsSyntaxRewrites(tree: Tree): List[Rewrite] =
+  def preferCatsSyntaxRewrites(tree: Tree, facts: CatsFacts): List[Rewrite] =
     tree.collect { case term: Term =>
-      preferCatsSyntaxRewrite(term)
+      preferCatsSyntaxRewrite(term, facts)
     }.flatten
 
-  def simplifyExpressionRewrites(tree: Tree): List[Rewrite] =
+  def simplifyExpressionRewrites(tree: Tree, facts: CatsFacts): List[Rewrite] =
     tree.collect { case term: Term =>
-      simplifyExpressionRewrite(term)
+      simplifyExpressionRewrite(term, facts)
     }.flatten
 
-  def preferCatsSyntaxRewrite(term: Term): Option[Rewrite] =
-    pureSyntax(term)
-      .orElse(raiseErrorSyntax(term))
-      .orElse(mapSyntax(term))
-      .orElse(flatMapSyntax(term))
+  def preferCatsSyntaxRewrite(
+      term: Term,
+      facts: CatsFacts
+  ): Option[Rewrite] =
+    pureSyntax(term, facts)
+      .orElse(raiseErrorSyntax(term, facts))
+      .orElse(mapSyntax(term, facts))
+      .orElse(flatMapSyntax(term, facts))
 
-  def simplifyExpressionRewrite(term: Term): Option[Rewrite] =
-    voidSyntax(term)
-      .orElse(asSyntax(term))
-      .orElse(flatMapPureSyntax(term))
-      .orElse(sequenceSyntax(term))
-      .orElse(mapNSyntax(term))
-      .orElse(optionSyntax(term))
-      .orElse(eitherCondSyntax(term))
+  def simplifyExpressionRewrite(
+      term: Term,
+      facts: CatsFacts
+  ): Option[Rewrite] =
+    voidSyntax(term, facts)
+      .orElse(asSyntax(term, facts))
+      .orElse(flatMapPureSyntax(term, facts))
+      .orElse(sequenceSyntax(term, facts))
+      .orElse(mapNSyntax(term, facts))
+      .orElse(optionSyntax(term, facts))
+      .orElse(eitherCondSyntax(term, facts))
 
-  private def pureSyntax(term: Term): Option[Rewrite] =
+  private def pureSyntax(term: Term, facts: CatsFacts): Option[Rewrite] =
     term match {
       case apply: Term.Apply =>
         apply.fun match {
-          case Term.Select(
-                TypeclassApply(typeclassName, List(effectType)),
-                name
-              ) if name.value == "pure" && PureTypeclasses(typeclassName) =>
-            singleArg(apply.argClause.values).map(value =>
-              Rewrite(term, s"${value.syntax}.pure[${effectType.syntax}]")
+          case Term.Select(receiver, name) if name.value == "pure" =>
+            for {
+              effectType <- typeclassEffect(
+                receiver,
+                CatsFacts.Typeclasses.pure,
+                facts
+              )
+              value <- singleArg(apply.argClause.values)
+            } yield Rewrite(
+              term,
+              s"${value.syntax}.pure[${effectType.syntax}]"
             )
           case _ =>
             None
@@ -118,19 +139,19 @@ private[fix] object CatsExpressionRules {
         None
     }
 
-  private def raiseErrorSyntax(term: Term): Option[Rewrite] =
+  private def raiseErrorSyntax(term: Term, facts: CatsFacts): Option[Rewrite] =
     term match {
       case apply: Term.Apply =>
         apply.fun match {
           case applyType: Term.ApplyType =>
             applyType.fun match {
-              case Term.Select(
-                    TypeclassApply(typeclassName, List(effectType)),
-                    name
-                  )
-                  if name.value == "raiseError" &&
-                    RaiseErrorTypeclasses(typeclassName) =>
+              case Term.Select(receiver, name) if name.value == "raiseError" =>
                 for {
+                  effectType <- typeclassEffect(
+                    receiver,
+                    CatsFacts.Typeclasses.raiseError,
+                    facts
+                  )
                   resultType <- singleTypeArg(applyType.targClause.values)
                   error <- singleArg(apply.argClause.values)
                 } yield Rewrite(
@@ -147,20 +168,32 @@ private[fix] object CatsExpressionRules {
         None
     }
 
-  private def mapSyntax(term: Term): Option[Rewrite] =
+  private def mapSyntax(term: Term, facts: CatsFacts): Option[Rewrite] =
+    typeclassCombinator(term, "map", CatsFacts.Typeclasses.map, facts)
+
+  private def flatMapSyntax(term: Term, facts: CatsFacts): Option[Rewrite] =
+    typeclassCombinator(term, "flatMap", CatsFacts.Typeclasses.flatMap, facts)
+
+  /** `Typeclass[F].method(fa)(f)` -> `fa.method(f)`. */
+  private def typeclassCombinator(
+      term: Term,
+      method: String,
+      allowed: Set[String],
+      facts: CatsFacts
+  ): Option[Rewrite] =
     term match {
       case apply: Term.Apply =>
         apply.fun match {
           case receiverApply: Term.Apply =>
             receiverApply.fun match {
-              case Term.Select(TypeclassApply(typeclassName, List(_)), name)
-                  if name.value == "map" && MapTypeclasses(typeclassName) =>
+              case Term.Select(receiver, name) if name.value == method =>
                 for {
+                  _ <- typeclassEffect(receiver, allowed, facts)
                   effect <- singleArg(receiverApply.argClause.values)
                   function <- singleArg(apply.argClause.values)
                 } yield Rewrite(
                   term,
-                  s"${effect.syntax}.map(${function.syntax})"
+                  s"${effect.syntax}.$method(${function.syntax})"
                 )
               case _ =>
                 None
@@ -172,41 +205,17 @@ private[fix] object CatsExpressionRules {
         None
     }
 
-  private def flatMapSyntax(term: Term): Option[Rewrite] =
+  private def voidSyntax(term: Term, facts: CatsFacts): Option[Rewrite] =
     term match {
       case apply: Term.Apply =>
         apply.fun match {
-          case receiverApply: Term.Apply =>
-            receiverApply.fun match {
-              case Term.Select(TypeclassApply(typeclassName, List(_)), name)
-                  if name.value == "flatMap" &&
-                    FlatMapTypeclasses(typeclassName) =>
-                for {
-                  effect <- singleArg(receiverApply.argClause.values)
-                  function <- singleArg(apply.argClause.values)
-                } yield Rewrite(
-                  term,
-                  s"${effect.syntax}.flatMap(${function.syntax})"
-                )
-              case _ =>
-                None
-            }
-          case _ =>
-            None
-        }
-      case _ =>
-        None
-    }
-
-  private def voidSyntax(term: Term): Option[Rewrite] =
-    term match {
-      case apply: Term.Apply =>
-        apply.fun match {
-          case Term.Select(effect, Term.Name("as"))
-              if singleArg(apply.argClause.values).contains(Lit.Unit()) =>
+          case select @ Term.Select(effect, Term.Name("as"))
+              if facts.isCatsOperation(select) &&
+                singleArg(apply.argClause.values).contains(Lit.Unit()) =>
             Some(Rewrite(term, s"${effect.syntax}.void"))
-          case Term.Select(effect, Term.Name("map"))
-              if singleArg(apply.argClause.values).exists(UnitLambda.unapply) =>
+          case select @ Term.Select(effect, Term.Name("map"))
+              if facts.isCatsOperation(select) &&
+                singleArg(apply.argClause.values).exists(UnitLambda.unapply) =>
             Some(Rewrite(term, s"${effect.syntax}.void"))
           case _ =>
             None
@@ -215,11 +224,12 @@ private[fix] object CatsExpressionRules {
         None
     }
 
-  private def asSyntax(term: Term): Option[Rewrite] =
+  private def asSyntax(term: Term, facts: CatsFacts): Option[Rewrite] =
     term match {
       case apply: Term.Apply =>
         apply.fun match {
-          case Term.Select(effect, Term.Name("map")) =>
+          case select @ Term.Select(effect, Term.Name("map"))
+              if facts.isCatsOperation(select) =>
             singleArg(apply.argClause.values)
               .flatMap(ConstantLambda.unapply)
               .map { value =>
@@ -232,11 +242,15 @@ private[fix] object CatsExpressionRules {
         None
     }
 
-  private def flatMapPureSyntax(term: Term): Option[Rewrite] =
+  private def flatMapPureSyntax(
+      term: Term,
+      facts: CatsFacts
+  ): Option[Rewrite] =
     term match {
       case apply: Term.Apply =>
         apply.fun match {
-          case Term.Select(effect, Term.Name("flatMap")) =>
+          case select @ Term.Select(effect, Term.Name("flatMap"))
+              if facts.isCatsOperation(select) =>
             singleArg(apply.argClause.values)
               .collect { case lambda: Term.Function =>
                 lambda
@@ -244,7 +258,7 @@ private[fix] object CatsExpressionRules {
               .flatMap { lambda =>
                 for {
                   param <- singleParam(lambda)
-                  (body, _) <- PureBody.unapply(lambda.body)
+                  (body, _) <- pureBody(lambda.body, facts)
                   if namedParam(param).exists(name => references(body, name))
                 } yield Rewrite(
                   term,
@@ -258,11 +272,12 @@ private[fix] object CatsExpressionRules {
         None
     }
 
-  private def sequenceSyntax(term: Term): Option[Rewrite] =
+  private def sequenceSyntax(term: Term, facts: CatsFacts): Option[Rewrite] =
     term match {
       case apply: Term.Apply =>
         apply.fun match {
-          case Term.Select(effect, Term.Name("flatMap")) =>
+          case select @ Term.Select(effect, Term.Name("flatMap"))
+              if facts.isCatsOperation(select) =>
             singleArg(apply.argClause.values)
               .flatMap(ConstantLambda.unapply)
               .map { next =>
@@ -275,11 +290,12 @@ private[fix] object CatsExpressionRules {
         None
     }
 
-  private def mapNSyntax(term: Term): Option[Rewrite] =
+  private def mapNSyntax(term: Term, facts: CatsFacts): Option[Rewrite] =
     term match {
       case apply: Term.Apply =>
         apply.fun match {
-          case Term.Select(firstEffect, Term.Name("flatMap")) =>
+          case outer @ Term.Select(firstEffect, Term.Name("flatMap"))
+              if facts.isCatsOperation(outer) =>
             for {
               firstFunction <- singleArg(apply.argClause.values).collect {
                 case function: Term.Function => function
@@ -290,7 +306,9 @@ private[fix] object CatsExpressionRules {
                 case apply: Term.Apply => apply
               }
               secondEffect <- Some(secondApply.fun).collect {
-                case Term.Select(effect, Term.Name("map")) => effect
+                case inner @ Term.Select(effect, Term.Name("map"))
+                    if facts.isCatsOperation(inner) =>
+                  effect
               }
               if !references(secondEffect, firstName)
               secondFunction <- singleArg(secondApply.argClause.values)
@@ -310,72 +328,81 @@ private[fix] object CatsExpressionRules {
         None
     }
 
-  private def optionSyntax(term: Term): Option[Rewrite] =
+  private def optionSyntax(term: Term, facts: CatsFacts): Option[Rewrite] =
     term match {
-      case Term.If(
+      case Term.If.After_4_4_0(
             NullComparison(value, "=="),
             none,
-            someApply: Term.Apply
-          ) if isNone(none) =>
-        someValue(someApply)
+            someApply: Term.Apply,
+            _
+          ) if isNone(none, facts) =>
+        someValue(someApply, facts)
           .filter(some => sameSyntax(value, some))
           .map(_ => Rewrite(term, s"Option(${value.syntax})"))
-      case Term.If(
+      case Term.If.After_4_4_0(
             NullComparison(value, "!="),
             someApply: Term.Apply,
-            none
-          ) if isNone(none) =>
-        someValue(someApply)
+            none,
+            _
+          ) if isNone(none, facts) =>
+        someValue(someApply, facts)
           .filter(some => sameSyntax(value, some))
           .map(_ => Rewrite(term, s"Option(${value.syntax})"))
       case _ =>
         None
     }
 
-  private def eitherCondSyntax(term: Term): Option[Rewrite] =
+  private def eitherCondSyntax(term: Term, facts: CatsFacts): Option[Rewrite] =
     term match {
-      case Term.If(
-            condition,
-            RightValue(right),
-            LeftValue(left)
-          ) =>
-        Some(
-          Rewrite(
-            term,
-            s"Either.cond(${condition.syntax}, ${right.syntax}, ${left.syntax})"
-          )
-        )
-      case Term.If(
-            condition,
-            LeftValue(left),
-            RightValue(right)
-          ) =>
-        Some(
-          Rewrite(
-            term,
-            s"Either.cond(!(${condition.syntax}), ${right.syntax}, ${left.syntax})"
-          )
-        )
+      case Term.If.After_4_4_0(condition, thenBranch, elseBranch, _) =>
+        (
+          constructorArg(thenBranch, CatsFacts.Constructors.right, facts),
+          constructorArg(elseBranch, CatsFacts.Constructors.left, facts)
+        ) match {
+          case (Some(right), Some(left)) =>
+            Some(
+              Rewrite(
+                term,
+                s"Either.cond(${condition.syntax}, ${right.syntax}, ${left.syntax})"
+              )
+            )
+          case _ =>
+            (
+              constructorArg(thenBranch, CatsFacts.Constructors.left, facts),
+              constructorArg(elseBranch, CatsFacts.Constructors.right, facts)
+            ) match {
+              case (Some(left), Some(right)) =>
+                Some(
+                  Rewrite(
+                    term,
+                    s"Either.cond(!(${condition.syntax}), ${right.syntax}, ${left.syntax})"
+                  )
+                )
+              case _ =>
+                None
+            }
+        }
       case _ =>
         None
     }
 
-  private object TypeclassApply {
-    def unapply(term: Term): Option[(String, List[Type])] =
-      term match {
-        case applyType: Term.ApplyType =>
-          applyType.fun match {
-            case Term.Name(typeclass) =>
-              Some(typeclass -> applyType.targClause.values)
-            case Term.Select(_, Term.Name(typeclass)) =>
-              Some(typeclass -> applyType.targClause.values)
-            case _ =>
-              None
-          }
-        case _ =>
-          None
-      }
-  }
+  /** The effect type of a `Typeclass[F]` receiver, when `Typeclass` resolves to
+    * one of `allowed`.
+    */
+  private def typeclassEffect(
+      receiver: Term,
+      allowed: Set[String],
+      facts: CatsFacts
+  ): Option[Type] =
+    receiver match {
+      case applyType: Term.ApplyType =>
+        facts
+          .typeclassObject(applyType.fun)
+          .filter(allowed)
+          .flatMap(_ => singleTypeArg(applyType.targClause.values))
+      case _ =>
+        None
+    }
 
   private object UnitLambda {
     def unapply(term: Term): Boolean =
@@ -401,64 +428,39 @@ private[fix] object CatsExpressionRules {
       }
   }
 
-  private object PureBody {
-    def unapply(term: Term): Option[(Term, Type)] =
-      term match {
-        case applyType: Term.ApplyType =>
-          applyType.fun match {
-            case Term.Select(body, Term.Name("pure")) =>
-              singleTypeArg(applyType.targClause.values).map(effectType =>
-                body -> effectType
+  /** `x.pure[F]` or `Typeclass[F].pure(x)`, with the lifted value and effect.
+    */
+  private def pureBody(
+      term: Term,
+      facts: CatsFacts
+  ): Option[(Term, Type)] =
+    term match {
+      case applyType: Term.ApplyType =>
+        applyType.fun match {
+          case Term.Select(body, Term.Name("pure")) =>
+            singleTypeArg(applyType.targClause.values).map(effectType =>
+              body -> effectType
+            )
+          case _ =>
+            None
+        }
+      case apply: Term.Apply =>
+        apply.fun match {
+          case Term.Select(receiver, name) if name.value == "pure" =>
+            for {
+              effectType <- typeclassEffect(
+                receiver,
+                CatsFacts.Typeclasses.pure,
+                facts
               )
-            case _ =>
-              None
-          }
-        case apply: Term.Apply =>
-          apply.fun match {
-            case Term.Select(
-                  TypeclassApply(typeclassName, List(effectType)),
-                  name
-                ) if name.value == "pure" && PureTypeclasses(typeclassName) =>
-              singleArg(apply.argClause.values).map(body => body -> effectType)
-            case _ =>
-              None
-          }
-        case _ =>
-          None
-      }
-  }
-
-  private object RightValue {
-    def unapply(term: Term): Option[Term] =
-      term match {
-        case apply: Term.Apply if isNamedApply(apply, "Right") =>
-          singleArg(apply.argClause.values)
-        case _ =>
-          None
-      }
-  }
-
-  private object LeftValue {
-    def unapply(term: Term): Option[Term] =
-      term match {
-        case apply: Term.Apply if isNamedApply(apply, "Left") =>
-          singleArg(apply.argClause.values)
-        case _ =>
-          None
-      }
-  }
-
-  private val PureTypeclasses: Set[String] =
-    Set("Applicative", "Monad", "MonadThrow", "Sync", "Async", "IO")
-
-  private val RaiseErrorTypeclasses: Set[String] =
-    Set("ApplicativeError", "MonadError", "MonadThrow", "Sync", "Async", "IO")
-
-  private val MapTypeclasses: Set[String] =
-    Set("Functor", "Applicative", "Monad", "FlatMap", "MonadThrow")
-
-  private val FlatMapTypeclasses: Set[String] =
-    Set("FlatMap", "Monad", "MonadThrow", "Sync", "Async", "IO")
+              body <- singleArg(apply.argClause.values)
+            } yield body -> effectType
+          case _ =>
+            None
+        }
+      case _ =>
+        None
+    }
 
   private def namedParam(param: Term.Param): Option[String] =
     param.name match {
@@ -466,6 +468,15 @@ private[fix] object CatsExpressionRules {
       case _                               => None
     }
 
+  /** Whether `name` occurs anywhere in `term`, ignoring shadowing.
+    *
+    * Every call site uses this to *suppress* a rewrite: a lambda counts as
+    * constant only when its parameter is unreferenced, and `mapN` only applies
+    * when the second effect does not depend on the first bound value. In that
+    * direction over-approximating is safe -- a shadowed occurrence merely stops
+    * a rewrite that would have been valid. Under-approximating would not be, so
+    * do not narrow this without re-checking each caller.
+    */
   private def references(term: Term, name: String): Boolean =
     term.collect { case Term.Name(`name`) => () }.nonEmpty
 
@@ -522,22 +533,24 @@ private[fix] object CatsExpressionRules {
       }
   }
 
-  private def someValue(apply: Term.Apply): Option[Term] =
-    if (isNamedApply(apply, "Some")) singleArg(apply.argClause.values)
-    else None
+  private def someValue(apply: Term.Apply, facts: CatsFacts): Option[Term] =
+    constructorArg(apply, CatsFacts.Constructors.some, facts)
 
-  private def isNamedApply(apply: Term.Apply, name: String): Boolean =
-    apply.fun match {
-      case Term.Name(`name`)                 => true
-      case Term.Select(_, Term.Name(`name`)) => true
-      case _                                 => false
-    }
-
-  private def isNone(term: Term): Boolean =
+  /** The single argument of `Constructor(arg)`, when `Constructor` resolves to
+    * one of `symbols`.
+    */
+  private def constructorArg(
+      term: Term,
+      symbols: Set[String],
+      facts: CatsFacts
+  ): Option[Term] =
     term match {
-      case Term.Name("None")                    => true
-      case Term.Select(_, Term.Name("None"))    => true
-      case Term.ApplyType(Term.Name("None"), _) => true
-      case _                                    => false
+      case apply: Term.Apply if facts.resolvesTo(apply.fun, symbols) =>
+        singleArg(apply.argClause.values)
+      case _ =>
+        None
     }
+
+  private def isNone(term: Term, facts: CatsFacts): Boolean =
+    facts.resolvesTo(term, CatsFacts.Constructors.none)
 }
