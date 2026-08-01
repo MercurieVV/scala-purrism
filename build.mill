@@ -39,7 +39,7 @@ object scalafix
   // rule rewrite seams (0.6.1), so keeping it would report 27 breakages that
   // are already published and cannot be undone. The release workflow rewrites
   // this line after a successful publish, so it should not need editing by hand.
-  def mimaPreviousVersions = Seq("0.6.1")
+  def mimaPreviousVersions = Seq("0.6.2")
   def pomSettings = PomSettings(
     description =
       "Scalafix semantic rules for refactoring Typelevel Scala code toward pure, polymorphic Cats and Cats Effect style.",
