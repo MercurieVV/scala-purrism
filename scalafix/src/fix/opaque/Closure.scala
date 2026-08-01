@@ -170,12 +170,16 @@ object Closure {
     // to rewrite, and a Foreign signature is not ours to change. Both are
     // boundaries by construction, so they must stay outside the closure even
     // though their type matches.
-    val eligible: Node => Boolean = node =>
-      facts.typeAt(node).contains(primitiveType) &&
-        facts.origin(node.symbol) == Origin.Project
+    val eligible: Node => Boolean = node => {
+      val orig = facts.origin(node.symbol)
+      if (orig == Origin.Expression) true
+      else facts.typeAt(node).contains(primitiveType) && orig == Origin.Project
+    }
 
-    val outgoing: Map[Node, List[Edge]] = allEdges.groupBy(_.from)
-    val incoming: Map[Node, List[Edge]] = allEdges.groupBy(_.to)
+    val outgoingBySymbol: Map[String, List[Edge]] =
+      allEdges.groupBy(_.from.symbol)
+    val incomingBySymbol: Map[String, List[Edge]] =
+      allEdges.groupBy(_.to.symbol)
 
     val liveSeeds = seeds.filter(eligible)
 
@@ -187,11 +191,30 @@ object Closure {
       val queue = scala.collection.mutable.Queue.from(visited)
       while (queue.nonEmpty) {
         val current = queue.dequeue()
-        val forward = outgoing.getOrElse(current, Nil).map(_.to)
-        val backward =
-          if (widen.contains(current.symbol))
-            incoming.getOrElse(current, Nil).map(_.from)
-          else Nil
+        val forward =
+          outgoingBySymbol.getOrElse(current.symbol, Nil).flatMap { edge =>
+            if (current.path.indices.startsWith(edge.from.path.indices)) {
+              val suffix =
+                current.path.indices.drop(edge.from.path.indices.length)
+              Some(
+                Node(edge.to.symbol, TypePath(edge.to.path.indices ++ suffix))
+              )
+            } else None
+          }
+        val backward = if (widen.contains(current.symbol)) {
+          incomingBySymbol.getOrElse(current.symbol, Nil).flatMap { edge =>
+            if (current.path.indices.startsWith(edge.to.path.indices)) {
+              val suffix =
+                current.path.indices.drop(edge.to.path.indices.length)
+              Some(
+                Node(
+                  edge.from.symbol,
+                  TypePath(edge.from.path.indices ++ suffix)
+                )
+              )
+            } else None
+          }
+        } else Nil
         (forward ++ backward).distinct.sorted.foreach { next =>
           if (
             !visited.contains(next) && !demoted.contains(next) && eligible(next)
@@ -208,19 +231,32 @@ object Closure {
     // it: converting it would retype that source too. Inbound expressions and
     // foreign values are not intruders -- those are genesis sites, where the
     // value is created and gets wrapped. Seeds are axioms and never demote.
-    def mergePointsIn(closure: Set[Node]): List[MergePoint] =
+    def mergePointsIn(closure: Set[Node]): List[MergePoint] = {
+      val closureBySymbol = closure.groupBy(_.symbol)
       allEdges
-        .filter { edge =>
-          closure.contains(edge.to) &&
-          !closure.contains(edge.from) &&
-          !liveSeeds.contains(edge.to) &&
-          !widen.contains(edge.from.symbol) &&
-          facts.origin(edge.from.symbol) == Origin.Project &&
-          facts.typeAt(edge.from).contains(primitiveType)
+        .flatMap { edge =>
+          closureBySymbol
+            .getOrElse(edge.to.symbol, Nil)
+            .filter(node => node.path.indices.startsWith(edge.to.path.indices))
+            .flatMap { node =>
+              val suffix = node.path.indices.drop(edge.to.path.indices.length)
+              val fromNode = Node(
+                edge.from.symbol,
+                TypePath(edge.from.path.indices ++ suffix)
+              )
+              val isMerge =
+                !closure.contains(fromNode) &&
+                  !liveSeeds.contains(node) &&
+                  !widen.contains(fromNode.symbol) &&
+                  facts.origin(fromNode.symbol) == Origin.Project &&
+                  facts.typeAt(fromNode).contains(primitiveType)
+              if (isMerge) Some(MergePoint(node, fromNode, edge.at, edge.kind))
+              else None
+            }
         }
-        .map(edge => MergePoint(edge.to, edge.from, edge.at, edge.kind))
         .distinctBy(merge => (merge.node, merge.intruder))
         .sortBy(merge => (merge.node, merge.intruder))
+    }
 
     val (closure, mergePoints) = {
       def loop(
@@ -245,28 +281,58 @@ object Closure {
       loop(Set.empty, Nil, 0)
     }
 
-    val boundaries = allEdges.filter(edge =>
-      closure.contains(edge.from) != closure.contains(edge.to)
-    )
+    val boundaries = {
+      val closureBySymbol = closure.groupBy(_.symbol)
+      allEdges.flatMap { edge =>
+        val fromPaths = closureBySymbol
+          .getOrElse(edge.from.symbol, Nil)
+          .filter(n => n.path.indices.startsWith(edge.from.path.indices))
+          .map(_.path.indices.drop(edge.from.path.indices.length))
+        val toPaths = closureBySymbol
+          .getOrElse(edge.to.symbol, Nil)
+          .filter(n => n.path.indices.startsWith(edge.to.path.indices))
+          .map(_.path.indices.drop(edge.to.path.indices.length))
 
-    // Inbound from an expression: the value is born here, so wrap it.
+        (fromPaths.toSeq ++ toPaths.toSeq).distinct.flatMap { suffix =>
+          val fromNode =
+            Node(edge.from.symbol, TypePath(edge.from.path.indices ++ suffix))
+          val toNode =
+            Node(edge.to.symbol, TypePath(edge.to.path.indices ++ suffix))
+          if (closure.contains(fromNode) != closure.contains(toNode)) {
+            Some(Boundary(toNode, fromNode, edge.at, edge.kind))
+          } else None
+        }
+      }
+    }
+
+    // Inbound: the value enters the opaque world here, so wrap it.
     val genesis = boundaries
-      .filter(edge =>
-        closure.contains(edge.to) &&
-          facts.origin(edge.from.symbol) == Origin.Expression
-      )
-      .map(edge => Boundary(edge.to, edge.from, edge.at, edge.kind))
+      .filter(edge => closure.contains(edge.node))
+      .map(edge => Boundary(edge.node, edge.counterpart, edge.at, edge.kind))
       .distinctBy(b => (b.node, b.counterpart, b.at))
       .sortBy(b => (b.at, b.node))
+
+    def isPassthroughSymbol(symbol: String): Boolean = {
+      val clean = symbol.stripPrefix("foreign:")
+      val methodStart = clean.indexOf('#')
+      if (methodStart >= 0) {
+        val methodEnd = clean.indexOf("().", methodStart)
+        if (methodEnd >= 0) {
+          val methodName = clean.substring(methodStart + 1, methodEnd)
+          GraphBuilder.PassthroughMethods.contains(methodName)
+        } else false
+      } else false
+    }
 
     // Outbound into something whose signature we cannot change, or into a node
     // we evicted: unwrap before it crosses.
     val leaves = boundaries
       .filter(edge =>
-        closure.contains(edge.from) &&
-          facts.origin(edge.to.symbol) != Origin.Expression
+        closure.contains(edge.counterpart) &&
+          facts.origin(edge.node.symbol) != Origin.Expression &&
+          !isPassthroughSymbol(edge.node.symbol)
       )
-      .map(edge => Boundary(edge.from, edge.to, edge.at, edge.kind))
+      .map(edge => Boundary(edge.counterpart, edge.node, edge.at, edge.kind))
       .distinctBy(b => (b.node, b.counterpart, b.at))
       .sortBy(b => (b.at, b.node))
 

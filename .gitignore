@@ -50,4 +50,10 @@ build/
 *.semanticdb
 .idea/
 .bsp/
-.aider*
+descendants.log
+executor.log
+stdout.log
+prompt.txt
+/.gh-tasks-llm-executor/
+/.worktrees/
+/run-ide.sh
