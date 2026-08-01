@@ -3,19 +3,10 @@ package fix.hkt
 import scala.meta._
 import scala.meta.inputs.Position
 
-import scalafix.v1.ApplyTree
-import scalafix.v1.FunctionTree
-import scalafix.v1.IdTree
-import scalafix.v1.MacroExpansionTree
 import scalafix.v1.MethodSignature
-import scalafix.v1.OriginalSubTree
-import scalafix.v1.OriginalTree
-import scalafix.v1.SelectTree
 import scalafix.v1.SemanticDocument
-import scalafix.v1.SemanticTree
 import scalafix.v1.SemanticType
 import scalafix.v1.Symbol
-import scalafix.v1.TypeApplyTree
 import scalafix.v1.TypeRef
 import scalafix.v1.ValueSignature
 import scalafix.v1.XtensionTreeScalafix
@@ -111,10 +102,7 @@ object UsageAnalyzer {
       kind: KindShape
   )
 
-  private final case class SyntheticEvidence(
-      position: Position,
-      symbols: List[Symbol]
-  )
+  private type SyntheticEvidence = fix.SemanticSupport.SyntheticEvidence
 
   private sealed trait Lookup
   private final case class Found(values: List[Resolved]) extends Lookup
@@ -126,38 +114,8 @@ object UsageAnalyzer {
     Symbol("scala/package.Seq#") -> Symbol("scala/collection/immutable/Seq#")
   )
 
-  private val patternConstructors: Map[Symbol, (Symbol, String)] = Map(
-    Symbol("scala/None.") -> (Symbol("scala/Option#"), "None"),
-    Symbol("scala/Some.") -> (Symbol("scala/Option#"), "Some"),
-    Symbol("scala/package.None.") -> (Symbol("scala/Option#"), "None"),
-    Symbol("scala/package.Some.") -> (Symbol("scala/Option#"), "Some"),
-    Symbol("scala/package.Nil.") -> (
-      Symbol("scala/collection/immutable/List#"),
-      "Nil"
-    ),
-    Symbol("scala/package.`::`.") -> (
-      Symbol("scala/collection/immutable/List#"),
-      "::"
-    ),
-    Symbol("scala/collection/immutable/Nil.") -> (
-      Symbol("scala/collection/immutable/List#"),
-      "Nil"
-    ),
-    Symbol("scala/collection/immutable/::.") -> (
-      Symbol("scala/collection/immutable/List#"),
-      "::"
-    ),
-    Symbol("scala/collection/immutable/`::`.") -> (
-      Symbol("scala/collection/immutable/List#"),
-      "::"
-    ),
-    Symbol("scala/collection/immutable/$colon$colon.") -> (
-      Symbol("scala/collection/immutable/List#"),
-      "::"
-    ),
-    Symbol("scala/util/Left.") -> (Symbol("scala/util/Either#"), "Left"),
-    Symbol("scala/util/Right.") -> (Symbol("scala/util/Either#"), "Right")
-  )
+  private val patternConstructors: Map[Symbol, (Symbol, String)] =
+    fix.SemanticSupport.stdlibConstructors
 
   private val unsafeMethodSymbols: Set[Symbol] = Set(
     Symbol("scala/Any#asInstanceOf()."),
@@ -675,62 +633,13 @@ object UsageAnalyzer {
   private def syntheticEvidence(implicit
       doc: SemanticDocument
   ): List[SyntheticEvidence] =
-    doc.synthetics
-      .flatMap { synthetic =>
-        val (positions, symbols) = flattenSynthetic(synthetic)
-        positions.map(position =>
-          SyntheticEvidence(position, symbols.distinct.sortBy(_.value))
-        )
-      }
-      .toList
-      .sortBy(evidence =>
-        (
-          evidence.position.start,
-          evidence.position.end,
-          evidence.symbols.map(_.value).mkString("\u0000")
-        )
-      )
-
-  private def flattenSynthetic(
-      tree: SemanticTree
-  ): (List[Position], List[Symbol]) =
-    tree match {
-      case IdTree(info) => (Nil, List(info.symbol))
-      case ApplyTree(function, arguments) =>
-        combine(function :: arguments)
-      case SelectTree(qualifier, id) =>
-        combine(List(qualifier, id))
-      case TypeApplyTree(function, _) =>
-        flattenSynthetic(function)
-      case FunctionTree(parameters, body) =>
-        combine(parameters :+ body)
-      case MacroExpansionTree(beforeExpansion, _) =>
-        flattenSynthetic(beforeExpansion)
-      case OriginalTree(tree) =>
-        (List(tree.pos), Nil)
-      case OriginalSubTree(tree) =>
-        (List(tree.pos), Nil)
-      case _ => (Nil, Nil)
-    }
-
-  private def combine(
-      trees: List[SemanticTree]
-  ): (List[Position], List[Symbol]) =
-    trees.foldLeft((List.empty[Position], List.empty[Symbol])) {
-      case ((positions, symbols), tree) =>
-        val (treePositions, treeSymbols) = flattenSynthetic(tree)
-        (positions ++ treePositions, symbols ++ treeSymbols)
-    }
+    fix.SemanticSupport.syntheticEvidence
 
   private def allCallSymbols(
       call: Call,
       synthetics: List[SyntheticEvidence]
   ): List[Symbol] =
-    (call.method :: synthetics
-      .filter(evidence => positionsOverlap(call.span, evidence.position))
-      .flatMap(_.symbols))
-      .filter(!_.isNone)
-      .distinct
+    fix.SemanticSupport.symbolsAt(call.span, call.method, synthetics)
 
   private def positionsOverlap(left: Position, right: Position): Boolean =
     left != Position.None &&

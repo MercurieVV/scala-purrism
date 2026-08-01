@@ -5,6 +5,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import scala.jdk.CollectionConverters._
 import scala.meta._
+import fix.catsexpr.CatsFacts
 
 final class GoldenFixtureSuite extends munit.FunSuite {
   test("golden fixtures keep one base file for each expected file") {
@@ -63,7 +64,7 @@ final class GoldenFixtureSuite extends munit.FunSuite {
     )
 
     assertEquals(
-      PreferCatsSyntax.rewrites(source),
+      PreferCatsSyntax.rewrites(source, CatsFacts.bySpelling()),
       List(
         "value.pure[F]",
         "error.raiseError[F, String]",
@@ -94,7 +95,7 @@ final class GoldenFixtureSuite extends munit.FunSuite {
     )
 
     assertEquals(
-      SimplifyCatsExpressions.rewrites(source),
+      SimplifyCatsExpressions.rewrites(source, CatsFacts.bySpelling()),
       List(
         "seed.void",
         """seed.as("done")""",
@@ -116,7 +117,7 @@ final class GoldenFixtureSuite extends munit.FunSuite {
     )
 
     assertEquals(
-      SimplifyCatsExpressions.rewrites(source),
+      SimplifyCatsExpressions.rewrites(source, CatsFacts.bySpelling()),
       Nil
     )
   }
@@ -133,7 +134,7 @@ final class GoldenFixtureSuite extends munit.FunSuite {
     )
 
     assertEquals(
-      SimplifyCatsExpressions.rewrites(source),
+      SimplifyCatsExpressions.rewrites(source, CatsFacts.bySpelling()),
       List(
         "Option(value)",
         """Either.cond(valid, value, "invalid")"""
