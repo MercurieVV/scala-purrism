@@ -31,9 +31,71 @@ private[fix] object OptionIdiomRules {
   ): List[IdiomRewrite] =
     tree.collect { case term: Term =>
       nullGuard(term)
+        .orElse(orEmpty(term))
         .orElse(foldOverMapGetOrElse(term))
         .orElse(if (mouse) cata(term) else None)
     }.flatten
+
+  /** `opt.getOrElse(Nil)` -> `opt.orEmpty`.
+    *
+    * Exact by definition -- Cats defines `orEmpty` as `getOrElse(A.empty)` --
+    * provided the fallback really is that `Monoid`'s empty. So the fallback is
+    * an allow-list rather than anything that looks empty: `Foo.empty` is a
+    * companion's own idea of empty and need not agree with a `Monoid`, and
+    * `getOrElse(1)` is the empty of the multiplicative monoid, which is not the
+    * one Cats picks for `Int`.
+    */
+  private def orEmpty(
+      term: Term
+  )(implicit doc: SemanticDocument): Option[IdiomRewrite] =
+    term match {
+      case apply: Term.Apply =>
+        apply.fun match {
+          case Term.Select(receiver, getOrElse)
+              if isOptionMember(getOrElse, "getOrElse") =>
+            singleArg(apply.argClause.values)
+              .filter(isMonoidEmpty)
+              .map(_ =>
+                IdiomRewrite(
+                  term,
+                  s"${receiver.pos.text}.orEmpty",
+                  needsCatsSyntax = true
+                )
+              )
+          case _ => None
+        }
+      case _ =>
+        None
+    }
+
+  /** Fallbacks that are the `Monoid` empty for their type, and nothing else. */
+  private def isMonoidEmpty(fallback: Term): Boolean =
+    fallback match {
+      case Term.Name("Nil") => true
+      case Lit.String("")   => true
+      case Lit.Int(0)       => true
+      case Lit.Long(0L)     => true
+      case Term.Select(Term.Name(owner), Term.Name("empty")) =>
+        EmptyOwners.contains(owner)
+      case Term.ApplyType.After_4_6_0(
+            Term.Select(Term.Name(owner), Term.Name("empty")),
+            _
+          ) =>
+        EmptyOwners.contains(owner)
+      case _ => false
+    }
+
+  private val EmptyOwners: Set[String] =
+    Set(
+      "List",
+      "Vector",
+      "Seq",
+      "Set",
+      "Map",
+      "LazyList",
+      "IndexedSeq",
+      "Chain"
+    )
 
   /** `opt.map(f).getOrElse(d)` -> `opt.fold(d)(f)`.
     *
