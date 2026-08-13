@@ -306,15 +306,24 @@ needs a fact the expression does not carry is a rewrite that stops compiling.
 
 | rule | rewrites | reports |
 | --- | --- | --- |
-| `PreferEffectIdioms` | `catch { case _: Throwable => … }` → `catch { case NonFatal(…) => … }`; `opt.fold(F.unit)(f)` → `opt.traverse_(f)` | `try`/`finally` around an acquired resource (it is a `Resource`, but only once the body is in `F`); `AtomicReference` (it is a `Ref`, but only once every use is in `F`) |
-| `PreferOptionIdioms` | `val v = m.get(k); if (v eq null) d else f(v)` → `Option(m.get(k)).fold(d)(v => f(v))` | `getOrElse(k, throw …)` — a partial lookup in a total signature |
-| `PreferIndexedMap` | `xs.indices.map(i => f(xs(i)))` → `xs.map(x => f(x))`, or `xs.zipWithIndex.map { case (x, i) => … }` when the index is still read; `xs.foldLeft(F.pure(z))((acc, x) => acc.flatMap(…))` → `xs.foldM(z)(…)` | — |
+| `PreferEffectIdioms` | `catch { case _: Throwable => … }` → `catch { case NonFatal(…) => … }`; `opt.fold(F.unit)(f)` → `opt.traverse_(f)`; `try body finally r.close()` → `Using.resource(r)(_ => body)` | a `finally` that closes *and* does something else; `AtomicReference` (it is a `Ref`, but only once every use is in `F`); `asInstanceOf` |
+| `PreferOptionIdioms` | `val v = m.get(k); if (v eq null) d else f(v)` → `Option(m.get(k)).fold(d)(v => f(v))`; `opt.map(f).getOrElse(d)` → `opt.fold(d)(f)` | `getOrElse(k, throw …)` — a partial lookup in a total signature |
+| `PreferIndexedMap` | `xs.indices.map(i => f(xs(i)))` → `xs.map(x => f(x))`, or `xs.zipWithIndex.map { case (x, i) => … }` when the index is still read; `xs.foldLeft(F.pure(z))((acc, x) => acc.flatMap(…))` → `xs.foldM(z)(…)`; `xs.map(f).sum` → `xs.foldMap(f)` | — |
 | `PreferStateThreading` | `xs.foldLeft((s0, empty)) { case ((s, out), x) => (s1, out :+ b) }` → `xs.traverse(x => State((s: S) => (s1, b))).run(s0).value` | a `(S, A) => (S, B)` method (that is `State[S, B]`, and `Ref#modifyState` takes one); a self-recursive effect (that is `iterateUntilM`) |
 
 `PreferIndexedMap` declines when the body subscripts by anything but the loop
 variable — `xs(i - 1)` reads a neighbour, which `zipWithIndex` does not hand
 over. `PreferStateThreading` declines when the collected half is read rather
 than only appended to, and when the seed does not say what the state type is.
+It also distinguishes a poll loop from a *retry*: a recursion that leaves an
+error handler or counts a budget down is not a fold over a condition, and
+`iterateUntilM` has nowhere to put the giving up.
+
+`Using.resource` rather than cats-effect `Resource`, because the rewrite has to
+preserve the type: `Resource.fromAutoCloseable(…).use(…)` yields an `F[A]`
+where the `try` yielded an `A`, so it applies only once the body is already in
+`F`. `.map(f).sum` → `.foldMap(f)` checks the receiver's *own* type — `Vector`
+and `Set` resolve `map` to the same symbol, and Cats has no `Foldable[Set]`.
 
 Every one of them takes `rewrite = false` to leave only the reports.
 
