@@ -2,8 +2,7 @@
 package golden
 
 import cats.Functor
-import cats.syntax.functor.*
-
+import cats.syntax.functor._
 final class ContainerFoldable {
   private def names[S[_]: Functor](users: S[String]): S[String] =
     users.map(user => user.toUpperCase)

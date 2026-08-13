@@ -210,7 +210,11 @@ final class PreferContainerTypeclasses(
   private def mentionsContainer(reason: DeclineReason): Boolean =
     reason match {
       case _: DeclineReason.OrderOrIndexSpecific => true
-      case _                                     => false
+      // An operation with no Cats counterpart is the other way a container
+      // fails to be abstractable, and it is the one a reader most needs told:
+      // `mkString` has no capability, so there is nothing to widen to.
+      case reason: DeclineReason.NoCapability => !reason.method.isNone
+      case _                                  => false
     }
 
   private def simpleName(symbol: Symbol): String =

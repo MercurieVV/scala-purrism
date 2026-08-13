@@ -353,6 +353,15 @@ object HktRewriter {
       requested.filterNot(path => visible.exists(importCovers(_, path)))
 
     if (missing.isEmpty) Patch.empty
+    else if (missing.forall(importerOf(_).isDefined))
+      // Deduped by scalafix against the symbol each importer resolves to. The
+      // hand-built block below anchors every definition's imports on the same
+      // node, so a file where two definitions are widened gets the same import
+      // emitted twice.
+      missing
+        .flatMap(importerOf)
+        .map(Patch.addGlobalImport)
+        .foldLeft(Patch.empty)(_ + _)
     else {
       val block = missing.map(path => s"import $path").mkString("\n")
       topLevelImports(visible).lastOption match {
@@ -370,6 +379,25 @@ object HktRewriter {
               }
           }
       }
+    }
+  }
+
+  /** A dotted import path as an `Importer`: `cats.Functor`, and the wildcard
+    * form `cats.syntax.functor.*`.
+    */
+  private def importerOf(path: String): Option[Importer] = {
+    val segments = path.split('.').toList
+    val (prefix, last) = segments.splitAt(segments.length - 1)
+    (prefix, last) match {
+      case (head :: rest, List(leaf)) =>
+        val ref = rest.foldLeft[Term.Ref](Term.Name(head))((acc, name) =>
+          Term.Select(acc, Term.Name(name))
+        )
+        if (leaf == "*" || leaf == "_")
+          Some(Importer(ref, List(Importee.Wildcard())))
+        else
+          Some(Importer(ref, List(Importee.Name(Name(leaf)))))
+      case _ => None
     }
   }
 

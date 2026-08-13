@@ -73,7 +73,7 @@ final class HktRewriterSuite extends FunSuite {
         |
         |import cats.Applicative
         |import cats.Functor
-        |import cats.syntax.functor.*
+        |import cats.syntax.functor._
         |
         |object HktRewriterStyleCases {
         |  private def style[F[_]: Applicative](value: F[Int]): F[Int] = value
@@ -100,7 +100,7 @@ final class HktRewriterSuite extends FunSuite {
         |
         |import cats.Applicative
         |import cats.Functor
-        |import cats.syntax.functor.*
+        |import cats.syntax.functor._
         |
         |object HktRewriterUsingStyleCases {
         |  private def style[F[_]](value: F[Int])(using Applicative[F]): F[Int] = value
@@ -126,7 +126,7 @@ final class HktRewriterSuite extends FunSuite {
         |package golden
         |
         |import cats.Traverse
-        |import cats.syntax.functor.*
+        |import cats.syntax.functor._
         |
         |final class HktRewriterExistingReuse[G[_]: Traverse] {
         |  private def transform(values: G[Int]): G[Int] =

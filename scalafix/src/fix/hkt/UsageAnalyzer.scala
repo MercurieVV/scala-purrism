@@ -433,12 +433,45 @@ object UsageAnalyzer {
       .distinctBy(op => (op.method, op.position.start, op.position.end))
       .sortBy(op => (op.position.start, op.method.value))
 
+  /** Every call made on the target, including further along a chain.
+    *
+    * A receiver is recognised by its type, which needs `symbol.info` -- and
+    * that is unavailable for the standard library, since no SemanticDB for it
+    * is on the classpath. So `rows` types as `List[Int]` and is recognised,
+    * while the `rows.map(f)` that `filter` is called on types as nothing and is
+    * not. A chained body then reports only its first operation, and solving
+    * over that gives a constraint set too weak to compile: `map(f).filter(p)`
+    * comes back as `Functor` alone.
+    *
+    * What is available is the structure. A call whose receiver *contains* an
+    * already-recognised call is one link further along the same chain, so the
+    * recognised set grows to a fixpoint from the calls on the target itself. An
+    * operation that leaves the container -- `exists`, `mkString` -- still ends
+    * the chain, because a call on *its* result has no capability and is
+    * dropped, which `ContainerFlow` then reports rather than widening.
+    */
   private def targetCalls(target: Target, calls: List[Call])(implicit
       doc: SemanticDocument
-  ): List[Call] =
-    calls.filter(call =>
+  ): List[Call] = {
+    val direct = calls.filter(call =>
       receiverConstructor(call.receiver).contains(target.constructor)
     )
+
+    @scala.annotation.tailrec
+    def grow(accepted: List[Call]): List[Call] = {
+      val spans = accepted.map(_.span)
+      val next = calls.filter(call =>
+        !accepted.exists(_.span == call.span) &&
+          spans.exists(span =>
+            call.receiver.pos.start <= span.start &&
+              span.end <= call.receiver.pos.end
+          )
+      )
+      if (next.isEmpty) accepted else grow(accepted ++ next)
+    }
+
+    grow(direct)
+  }
 
   private def resolveCall(
       symbols: List[Symbol],
