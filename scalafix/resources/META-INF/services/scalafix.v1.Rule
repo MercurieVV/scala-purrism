@@ -13,3 +13,4 @@ fix.PreferIndexedMap
 fix.PreferContainerTypeclasses
 fix.PreferStateThreading
 fix.SuspendSideEffects
+fix.PreferElementTypeclasses

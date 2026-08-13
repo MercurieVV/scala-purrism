@@ -22,7 +22,9 @@ scala/collection/*#filter().	capability	cats/FunctorFilter#filter().	cats/Functo
 scala/collection/*#filterNot().	capability	cats/FunctorFilter#filterNot().	cats/FunctorFilter#filterNot().	any collection filterNot is FunctorFilter
 scala/collection/*#forall().	capability	cats/UnorderedFoldable#forall().	cats/UnorderedFoldable#forall().	any collection forall is Foldable
 scala/collection/*#isEmpty().	capability	cats/UnorderedFoldable#isEmpty().	cats/UnorderedFoldable#isEmpty().	any collection isEmpty is Foldable
+scala/collection/*#mkString().	element	cats/Foldable#foldLeft().	cats/Foldable#foldLeft().	mkString_	cats/Show#	mkString renders with toString; mkString_ renders with Show
 scala/collection/*#nonEmpty().	capability	cats/UnorderedFoldable#nonEmpty().	cats/UnorderedFoldable#nonEmpty().	any collection nonEmpty is Foldable
+scala/collection/*#sum().	element	cats/Foldable#combineAll().	cats/Foldable#combineAll().	combineAll	cats/kernel/Monoid#	sum adds with Numeric; combineAll combines with Monoid
 scala/collection/*#toList().	capability	cats/Foldable#toList().	cats/Foldable#toList().	any collection toList is Foldable
 scala/collection/IndexedSeqOps#foldRight().	capability	cats/Foldable#foldRight().	cats/Foldable#foldRight().	Vector foldRight
 scala/collection/IndexedSeqOps#headOption().	decline		OrderOrIndexSpecific	Vector headOption

@@ -180,6 +180,7 @@ otherwise fail the whole run with "SemanticDB not found".
 | [`PreferStateThreading`](#the-idiom-rules) | pair-threading `foldLeft` → `traverse` in `State` | optional — `rewrite`, `stateT` |
 | [`SuspendSideEffects`](#suspendsideeffects) | reports effects a signature does not mention; rewrites `F.pure(<effect>)` to `F.delay(<effect>)` | optional — `rewrite`, `report`, `effects` |
 | [`PreferContainerTypeclasses`](#prefercontainertypeclasses) | concrete collection parameters → `S[_]` with the weakest Cats constraint | optional — `widenPublic`, `maxConstraints`, `containers` |
+| [`PreferElementTypeclasses`](#preferelementtypeclasses) | operations whose Cats form is spelled differently and derives from a typeclass on the *element* | optional — `widenPublic`, `containers` |
 | [`PropagateOpaqueType`](#propagateopaquetype) | propagate an `opaque type` through the program | required — seeds |
 | `PreferCatsFunctions` | match project bodies against the Cats source index, rewrite to the winning public function | none |
 | `PreferHKTTypeclasses` | abstract concrete `F`-returning functions to Cats typeclass constraints | optional — `widenPublic` |
@@ -400,6 +401,49 @@ honours like every other.
 **Configuration:** `rewrite` (default `true`), `report` (default `true`),
 `effects` — the result-type heads treated as effects, for projects with their
 own effect alias.
+
+### PreferElementTypeclasses
+
+`PreferContainerTypeclasses` only ever widens a signature; the body it leaves
+alone. Some stdlib operations have no same-named Cats counterpart, and the Cats
+form takes its meaning from a typeclass on the *element* rather than on the
+container:
+
+```scala
+private def rendered(rows: List[String]): String =
+  rows.mkString("[", ",", "]")
+
+private def rendered[S[_]: Foldable](rows: S[String]): String =
+  rows.mkString_("[", ",", "]")
+```
+
+This is a **separate rule because it can change what the program prints.**
+`mkString` renders each element with `toString`; `mkString_` renders it with
+`Show`, and the two agree only where someone made them agree. `sum` against
+`combineAll` is the same story for `Numeric` against `Monoid`.
+
+Where the element is the definition's own type parameter, the rule adds the
+constraint:
+
+```scala
+private def joined[A, S[_]: Foldable](rows: S[A])(using Show[A]): String =
+  rows.mkString_(", ")
+```
+
+Where the element is concrete, it fires only for types Cats ships the instance
+for. A domain type declines: nothing says `Show[Reading]` exists, and assuming
+it does produces a file that will not compile.
+
+**Configuration:** `widenPublic` (default `false`), `maxConstraints`,
+`containers` — the same set as `PreferContainerTypeclasses`.
+
+The rules live in `scalafix/resources/cats-index/stdlib.tsv` as `kind=element`
+rows, which carry two columns the other kinds do not — the Cats spelling to
+rename the call to, and the typeclass the meaning comes from:
+
+```
+scala/collection/*#mkString().	element	cats/Foldable#foldLeft().	cats/Foldable#foldLeft().	mkString_	cats/Show#	…
+```
 
 ### PropagateOpaqueType
 

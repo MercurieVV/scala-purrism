@@ -82,6 +82,22 @@ final class CatsIndexDriftSuite extends FunSuite {
             row(2).isEmpty,
             s"stdlib decline row has non-empty owner: ${row.mkString("\t")}"
           )
+        case "element" =>
+          // An element row still names a container capability, and adds the
+          // Cats spelling to rename to plus the typeclass its meaning comes
+          // from. Both extra columns are required and neither may be empty.
+          assert(
+            capabilityTargets(row(2) -> row(3)),
+            s"stdlib element row has unresolved target: ${row.mkString("\t")}"
+          )
+          assert(
+            row.sizeIs == 7,
+            s"stdlib element row needs 7 columns: ${row.mkString("\t")}"
+          )
+          assert(
+            row(4).nonEmpty && row(5).nonEmpty,
+            s"stdlib element row has an empty rename or constraint: ${row.mkString("\t")}"
+          )
         case other =>
           fail(s"stdlib row has invalid kind '$other': ${row.mkString("\t")}")
       }
@@ -137,9 +153,15 @@ final class CatsIndexDriftSuite extends FunSuite {
       val table = parse(fileName, text)
       assertEquals(table.header, expectedHeader, s"wrong header in $fileName")
       table.rows.zipWithIndex.foreach { case (row, index) =>
+        // `stdlib.tsv` element rows carry two extra columns -- the Cats
+        // spelling to rename the call to, and the typeclass the operation's
+        // meaning comes from -- neither of which any other kind of row has.
+        val expectedColumns =
+          if (row.lift(1).contains("element")) expectedHeader.size + 2
+          else expectedHeader.size
         assertEquals(
           row.size,
-          expectedHeader.size,
+          expectedColumns,
           s"wrong column count in $fileName data row ${index + 1}"
         )
         row.foreach(cell =>
