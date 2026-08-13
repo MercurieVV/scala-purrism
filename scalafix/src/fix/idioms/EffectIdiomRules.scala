@@ -95,7 +95,7 @@ private[fix] object EffectIdiomRules {
         Some(
           IdiomRewrite(
             term,
-            s"${receiver.syntax}.traverse_(${function.syntax})",
+            s"${receiver.pos.text}.traverse_(${function.pos.text})",
             needsCatsSyntax = true
           )
         )

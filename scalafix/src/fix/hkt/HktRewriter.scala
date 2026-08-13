@@ -153,10 +153,14 @@ object HktRewriter {
       typeParamName: String,
       constraints: List[String]
   ): Patch = {
-    val parameters = constraints.zipWithIndex.map { case (constraint, index) =>
-      val name =
-        if (index == 0) typeParamName else s"$typeParamName${index + 1}"
-      s"$name: $constraint"
+    // `renderConstraints` returns the bare name for a single-parameter
+    // typeclass, because the context-bound form applies it: `[G[_]: Functor]`.
+    // A using clause has to apply it itself -- `(using G: Functor)` names a
+    // type that does not exist. Anonymous, because nothing refers to the
+    // evidence by name.
+    val parameters = constraints.map { constraint =>
+      if (constraint.contains("[")) constraint
+      else s"$constraint[$typeParamName]"
     }
     val clauses = defn.paramClauseGroups.flatMap(_.paramClauses)
     val existingUsing = clauses.reverse.find(isUsingClause)

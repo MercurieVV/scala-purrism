@@ -105,7 +105,7 @@ final class HktRewriterSuite extends FunSuite {
         |object HktRewriterUsingStyleCases {
         |  private def style[F[_]](value: F[Int])(using Applicative[F]): F[Int] = value
         |
-        |  private def transform[G[_]](values: G[Int])(using G: Functor): G[Int] =
+        |  private def transform[G[_]](values: G[Int])(using Functor[G]): G[Int] =
         |    values.map(identity)
         |}
         |""".stripMargin
@@ -188,7 +188,7 @@ final class HktRewriterSuite extends FunSuite {
         |import cats.MonadError
         |
         |object HktRewriterPinnedError {
-        |  private def parse[F[_]](value: F[Int])(using F: MonadError[F, Throwable]): F[Int] = value
+        |  private def parse[F[_]](value: F[Int])(using MonadError[F, Throwable]): F[Int] = value
         |}
         |""".stripMargin
     )
