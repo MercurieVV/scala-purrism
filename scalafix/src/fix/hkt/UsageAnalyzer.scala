@@ -638,8 +638,26 @@ object UsageAnalyzer {
   private def allCallSymbols(
       call: Call,
       synthetics: List[SyntheticEvidence]
-  ): List[Symbol] =
-    fix.SemanticSupport.symbolsAt(call.span, call.method, synthetics)
+  )(implicit doc: SemanticDocument): List[Symbol] =
+    fix.SemanticSupport
+      .symbolsAt(call.span, call.method, synthetics)
+      .flatMap(symbol => symbol :: overriddenBy(symbol))
+      .distinct
+
+  /** A symbol and the declarations it overrides, nearest first.
+    *
+    * The compiler resolves `xs.filter` on a `List` to
+    * `scala/collection/immutable/List#filter().`, not to the `IterableOps`
+    * declaration it inherits. Without the override chain the capability table
+    * has to name every concrete collection separately -- one row for `List`,
+    * one for `Vector`, one for `Seq` -- which is a row per class per method and
+    * silently misses whichever pair nobody thought of. With it, one row on the
+    * trait answers for every collection that inherits it.
+    */
+  private def overriddenBy(
+      symbol: Symbol
+  )(implicit doc: SemanticDocument): List[Symbol] =
+    symbol.info.toList.flatMap(_.overriddenSymbols)
 
   private def positionsOverlap(left: Position, right: Position): Boolean =
     left != Position.None &&

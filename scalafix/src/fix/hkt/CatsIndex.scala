@@ -46,7 +46,47 @@ final class CatsIndex private (
   def resolveSyntax(method: Symbol): Option[Capability] = syntax.get(method)
 
   def resolveStdlib(method: Symbol): List[StdlibEntry] =
-    stdlib.getOrElse(method, Nil)
+    stdlib.get(method).orElse(byMethodName(method)).getOrElse(Nil)
+
+  /** The wildcard fallback: a row whose owner ends in a star -- the namespace
+    * `scala.collection` followed by `*`, then `#filter().` -- answers for every
+    * class under that namespace.
+    *
+    * The compiler resolves `xs.filter` to the *concrete* collection --
+    * `scala/collection/immutable/List#filter().` -- and there is no SemanticDB
+    * for the standard library on the classpath, so the declaration it overrides
+    * cannot be looked up. Without a wildcard the table therefore needs one row
+    * per collection class per method, which is a combinatorial list that
+    * silently misses whichever pair nobody wrote down. A namespace and a method
+    * name is the fact actually being stated.
+    */
+  private def byMethodName(method: Symbol): Option[List[StdlibEntry]] =
+    splitMethod(method.value).flatMap { case (namespace, name) =>
+      wildcards.collectFirst {
+        case (prefix, suffix, entries)
+            if name == suffix && namespace.startsWith(prefix) =>
+          entries
+      }
+    }
+
+  /** Rows whose owner ends in `*`, as (namespace prefix, method name, entries).
+    */
+  private lazy val wildcards: List[(String, String, List[StdlibEntry])] =
+    stdlib.toList.flatMap { case (symbol, entries) =>
+      splitMethod(symbol.value).collect {
+        case (namespace, name) if namespace.endsWith("*") =>
+          (namespace.dropRight(1), name, entries)
+      }
+    }
+
+  /** Splits `<owner>#<name>(...)` into its owner and its method name. */
+  private def splitMethod(value: String): Option[(String, String)] = {
+    val hash = value.indexOf('#')
+    val paren = value.indexOf('(', hash + 1)
+    Option.when(hash > 0 && paren > hash)(
+      value.substring(0, hash) -> value.substring(hash + 1, paren)
+    )
+  }
 
   /** The syntax wildcard import for a syntax method or its resolved primitive
     * owner.

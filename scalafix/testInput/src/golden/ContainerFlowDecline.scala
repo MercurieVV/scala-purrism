@@ -11,15 +11,15 @@ import scala.concurrent.duration.FiniteDuration
 final class ContainerFlowDecline {
 
   /** `filter` is `FunctorFilter`, not `Functor`; solving on `map` alone drops it. */
-  private def positive(rows: List[Int]): List[Int] =
+  private def positive(rows: List[Int]): List[Int] = // assert: PreferContainerTypeclasses
     rows.map(row => row + 1).filter(row => row > 0)
 
   /** `mkString` is not any Cats capability. */
-  private def rendered(rows: List[String]): String =
+  private def rendered(rows: List[String]): String = // assert: PreferContainerTypeclasses
     rows.map(row => row.trim).mkString("[", ",", "]")
 
   /** The mapped value is handed to something that asked for a `Seq`. */
-  private def wrapped(rows: Seq[String], width: FiniteDuration): Padded =
+  private def wrapped(rows: Seq[String], width: FiniteDuration): Padded = // assert: PreferContainerTypeclasses
     Padded(rows.map(row => row.take(3)), width)
 }
 
