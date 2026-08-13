@@ -138,6 +138,13 @@ final class PreferContainerTypeclasses(
       // not a weaker signature but an uncompilable one.
       case Right(solution) if solution.constraints.isEmpty =>
         Patch.empty
+      // `UsageAnalyzer` reports the ops it could map to a capability. It does
+      // not report that it dropped one, so a body mixing `map` with `filter`
+      // solves to `Functor` and loses the `filter`, and a body ending in
+      // `mkString` solves to `Functor` over a value that no longer has one.
+      // Both compile as `Vector` and neither compiles as `S`.
+      case Right(solution) if !ContainerFlow.staysAbstract(usage) =>
+        Patch.empty
       case Right(solution) if config.rewrite =>
         HktRewriter
           .freshTypeParamName(usage.defn, TypeParamNames)
