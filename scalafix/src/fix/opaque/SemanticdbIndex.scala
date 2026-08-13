@@ -20,7 +20,10 @@ import scala.meta.internal.{semanticdb => s}
   * `validatedClasspath = Classpath(targetrootClasspath) ++ baseClasspath`), so
   * no extra configuration key is needed.
   */
-final class SemanticdbIndex(val documents: List[s.TextDocument]) {
+final class SemanticdbIndex(
+    val documents: List[s.TextDocument],
+    val classRoots: List[Path] = Nil
+) {
 
   /** Every symbol defined anywhere in the analysed sources. */
   val symbolInfo: Map[String, s.SymbolInformation] =
@@ -44,6 +47,46 @@ final class SemanticdbIndex(val documents: List[s.TextDocument]) {
     documents.map(doc => doc.uri -> doc).toMap
 
   def isProject(symbol: String): Boolean = symbolInfo.contains(symbol)
+
+  /** A symbol this run cannot see, but which another module of the same build
+    * defines.
+    *
+    * A rule invocation is scoped to one module: only that module's
+    * `.semanticdb` is on the classpath, so a call into a sibling module
+    * resolves to a symbol `symbolInfo` has never heard of. Treating it as a
+    * library call is not merely imprecise, it is backwards -- a value handed to
+    * an unseen *project* method is not leaving the closure, because that
+    * method's own run widens its parameter too. Recording an unwrap there emits
+    * `x.value` against a parameter that has meanwhile become the opaque type.
+    *
+    * The build's own class output directories are on the classpath even when
+    * their SemanticDB is not, so a package directory that exists under one of
+    * them is this build's package. Library packages live in jars, which
+    * `readAll` never descends into, so they answer `false` here and stay
+    * foreign.
+    */
+  def isUnseenProject(symbol: String): Boolean =
+    !isProject(symbol) && packageOf(symbol).exists(existsInClassRoots)
+
+  private def packageOf(symbol: String): Option[String] = {
+    val lastSlash = symbol.lastIndexOf('/')
+    if (lastSlash <= 0) None else Some(symbol.substring(0, lastSlash))
+  }
+
+  private val packageRootCache =
+    new java.util.concurrent.ConcurrentHashMap[String, java.lang.Boolean]()
+
+  private def existsInClassRoots(packagePath: String): Boolean =
+    packageRootCache
+      .computeIfAbsent(
+        packagePath,
+        _ =>
+          java.lang.Boolean.valueOf(
+            classRoots
+              .exists(root => Files.isDirectory(root.resolve(packagePath)))
+          )
+      )
+      .booleanValue
 
   /** The type of the value a symbol produces.
     *
@@ -205,7 +248,7 @@ object SemanticdbIndex {
 
   def load(roots: List[Path]): SemanticdbIndex = {
     val key = roots.map(_.toAbsolutePath.normalize).distinct.sorted
-    cache.computeIfAbsent(key, _ => new SemanticdbIndex(readAll(key)))
+    cache.computeIfAbsent(key, _ => new SemanticdbIndex(readAll(key), key))
   }
 
   private def readAll(roots: List[Path]): List[s.TextDocument] =

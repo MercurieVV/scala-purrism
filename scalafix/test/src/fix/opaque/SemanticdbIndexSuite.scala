@@ -81,6 +81,28 @@ class SemanticdbIndexSuite extends munit.FunSuite {
     )
   }
 
+  test("a sibling module's symbol is unseen, not foreign") {
+    val root = java.nio.file.Files.createTempDirectory("classroots")
+    java.nio.file.Files.createDirectories(root.resolve("com/acme/audio"))
+    val scoped = new SemanticdbIndex(index.documents, List(root))
+
+    assert(
+      scoped.isUnseenProject("com/acme/audio/AudioSink.WriteResult."),
+      "a package with class output but no SemanticDB is this build's"
+    )
+    assert(
+      !scoped.isUnseenProject("cats/effect/IO#"),
+      "a library package has no class directory here and stays foreign"
+    )
+    val getter = index.symbolInfo.keys
+      .find(sym => sym.endsWith("#userId.") && sym.contains("User"))
+      .getOrElse(fail("no User#userId getter"))
+    assert(
+      !scoped.isUnseenProject(getter),
+      "a symbol this run can see is Project, never Unseen"
+    )
+  }
+
   test("occurrences are found across the document set") {
     val getter = index.symbolInfo.keys
       .find(sym => sym.endsWith("#userId.") && sym.contains("User"))

@@ -50,8 +50,24 @@ final class GraphBuilder(index: SemanticdbIndex, sourceroot: Path) {
         val lookup = new OccurrenceLookup(document)
         val ctx = new DocumentContext(document.uri, lookup)
 
-        val callEdges = tree.collect { case apply: Term.Apply =>
-          argumentEdges(apply, ctx)
+        val callEdges = tree.collect {
+          case apply: Term.Apply =>
+            argumentEdges(
+              ctx.calleeSymbol(apply.fun),
+              apply.argClause.values.toList,
+              ctx
+            )
+          // `a - b` is one call with one argument, exactly like `a.-(b)`. Without
+          // this case the operand side of every operator is invisible to the
+          // graph, so a wrapped value reaching `-` as the *receiver* is unwrapped
+          // while the same value reaching it as the *argument* is not, and the
+          // rewrite emits `a.value - b`, which does not compile.
+          case infix: Term.ApplyInfix =>
+            argumentEdges(
+              ctx.symbolOf(infix.op),
+              infix.argClause.values.toList,
+              ctx
+            )
         }.flatten
 
         val returnEdges = tree.collect { case defn: Defn.Def =>
@@ -115,7 +131,12 @@ final class GraphBuilder(index: SemanticdbIndex, sourceroot: Path) {
         val receiverEdges = tree.collect {
           case select @ Term.Select(qual, name) =>
             ctx.symbolOf(name).toList.flatMap { calleeSymbol =>
-              if (index.isProject(calleeSymbol)) Nil
+              // A sibling module's method is invisible here but is not a
+              // library: its own run widens it, so this is not a boundary.
+              if (
+                index.isProject(calleeSymbol) || index
+                  .isUnseenProject(calleeSymbol)
+              ) Nil
               else {
                 ctx
                   .valueNode(qual)
@@ -132,7 +153,12 @@ final class GraphBuilder(index: SemanticdbIndex, sourceroot: Path) {
             }
           case infix @ Term.ApplyInfix(lhs, op, _, _) =>
             ctx.symbolOf(op).toList.flatMap { calleeSymbol =>
-              if (index.isProject(calleeSymbol)) Nil
+              // A sibling module's method is invisible here but is not a
+              // library: its own run widens it, so this is not a boundary.
+              if (
+                index.isProject(calleeSymbol) || index
+                  .isUnseenProject(calleeSymbol)
+              ) Nil
               else {
                 ctx
                   .valueNode(lhs)
@@ -647,10 +673,10 @@ final class GraphBuilder(index: SemanticdbIndex, sourceroot: Path) {
     */
   @nowarn("cat=deprecation")
   private def argumentEdges(
-      apply: Term.Apply,
+      callee: Option[String],
+      arguments: List[Term],
       ctx: DocumentContext
   ): List[Edge] = {
-    val callee = ctx.calleeSymbol(apply.fun)
     val params = callee.toList.flatMap(index.parameterSymbols)
     if (params.isEmpty) {
       // A callee we have no signature for -- `os.proc(...)`, a JDK method, any
@@ -658,9 +684,12 @@ final class GraphBuilder(index: SemanticdbIndex, sourceroot: Path) {
       // synthetic Foreign node. That is what turns "this value crosses into a
       // library" into a reportable unwrap site instead of silence.
       callee.toList.flatMap { calleeSymbol =>
-        if (index.isProject(calleeSymbol)) Nil
+        if (
+          index.isProject(calleeSymbol) || index.isUnseenProject(calleeSymbol)
+        )
+          Nil
         else
-          apply.argClause.values.toList.zipWithIndex.flatMap { case (arg, i) =>
+          arguments.zipWithIndex.flatMap { case (arg, i) =>
             ctx.valueNode(arg).map { source =>
               Edge(
                 source,
@@ -672,8 +701,7 @@ final class GraphBuilder(index: SemanticdbIndex, sourceroot: Path) {
           }
       }
     } else {
-      val args = apply.argClause.values.toList
-      val (named, positional) = args.partition {
+      val (named, positional) = arguments.partition {
         case Term.Assign(_: Term.Name, _) => true
         case _                            => false
       }
