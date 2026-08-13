@@ -7,3 +7,8 @@ fix.PreferHKTTypeclasses
 fix.PreferCatsSyntax
 fix.SimplifyCatsExpressions
 fix.PropagateOpaqueType
+fix.PreferEffectIdioms
+fix.PreferOptionIdioms
+fix.PreferIndexedMap
+fix.PreferContainerTypeclasses
+fix.PreferStateThreading

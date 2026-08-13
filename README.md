@@ -174,6 +174,11 @@ otherwise fail the whole run with "SemanticDB not found".
 | [`PreferArrow`](#preferarrow) | `Kleisli` bodies → point-free `>>>`, `.map`, `&&&` | optional — `aggressive` |
 | [`PreferCatsSyntax`](#prefercatssyntax) | typeclass calls → Cats syntax | none |
 | [`SimplifyCatsExpressions`](#simplifycatsexpressions) | collapse expressions into existing Cats combinators | none |
+| [`PreferEffectIdioms`](#the-idiom-rules) | catch-all nets → `NonFatal`, `fold(F.unit)` → `traverse_`; reports manual resources and `AtomicReference` | optional — `rewrite`, `resources`, `refs` |
+| [`PreferOptionIdioms`](#the-idiom-rules) | `null`-guarded lookups → `Option(...).fold` | optional — `rewrite`, `mouse` |
+| [`PreferIndexedMap`](#the-idiom-rules) | `xs.indices.map(i => xs(i))` → `zipWithIndex` / plain `map`; effectful `foldLeft` → `foldM` | optional — `rewrite` |
+| [`PreferStateThreading`](#the-idiom-rules) | pair-threading `foldLeft` → `traverse` in `State` | optional — `rewrite`, `stateT` |
+| [`PreferContainerTypeclasses`](#prefercontainertypeclasses) | concrete collection parameters → `S[_]` with the weakest Cats constraint | optional — `widenPublic`, `maxConstraints`, `containers` |
 | [`PropagateOpaqueType`](#propagateopaquetype) | propagate an `opaque type` through the program | required — seeds |
 | `PreferCatsFunctions` | match project bodies against the Cats source index, rewrite to the winning public function | none |
 | `PreferHKTTypeclasses` | abstract concrete `F`-returning functions to Cats typeclass constraints | optional — `widenPublic` |
@@ -290,6 +295,63 @@ two only fire when the branch is already `F[Unit]`. Where an outer and an inner
 expression both match, only the outer rewrite is emitted.
 
 **Configuration:** none. Add `SimplifyCatsExpressions` to `rules`.
+
+### The idiom rules
+
+Four rules for shapes that recur in any Cats codebase. Each rewrites what is
+decidable from the expression and *reports* what is not, because a rewrite that
+needs a fact the expression does not carry is a rewrite that stops compiling.
+
+| rule | rewrites | reports |
+| --- | --- | --- |
+| `PreferEffectIdioms` | `catch { case _: Throwable => … }` → `catch { case NonFatal(…) => … }`; `opt.fold(F.unit)(f)` → `opt.traverse_(f)` | `try`/`finally` around an acquired resource (it is a `Resource`, but only once the body is in `F`); `AtomicReference` (it is a `Ref`, but only once every use is in `F`) |
+| `PreferOptionIdioms` | `val v = m.get(k); if (v eq null) d else f(v)` → `Option(m.get(k)).fold(d)(v => f(v))` | `getOrElse(k, throw …)` — a partial lookup in a total signature |
+| `PreferIndexedMap` | `xs.indices.map(i => f(xs(i)))` → `xs.map(x => f(x))`, or `xs.zipWithIndex.map { case (x, i) => … }` when the index is still read; `xs.foldLeft(F.pure(z))((acc, x) => acc.flatMap(…))` → `xs.foldM(z)(…)` | — |
+| `PreferStateThreading` | `xs.foldLeft((s0, empty)) { case ((s, out), x) => (s1, out :+ b) }` → `xs.traverse(x => State((s: S) => (s1, b))).run(s0).value` | a `(S, A) => (S, B)` method (that is `State[S, B]`, and `Ref#modifyState` takes one); a self-recursive effect (that is `iterateUntilM`) |
+
+`PreferIndexedMap` declines when the body subscripts by anything but the loop
+variable — `xs(i - 1)` reads a neighbour, which `zipWithIndex` does not hand
+over. `PreferStateThreading` declines when the collected half is read rather
+than only appended to, and when the seed does not say what the state type is.
+
+Every one of them takes `rewrite = false` to leave only the reports.
+
+**Opting out.** Some code is deliberately un-idiomatic: a realtime callback with
+a zero-allocation contract, a fold measured in bytes per chunk. A
+`// purrism:keep <reason>` comment suppresses every idiom rule for the
+expression on that line, the one below it, and — when it sits on a definition —
+that whole definition.
+
+```scala
+// purrism:keep per-chunk render path, measured in bytes
+def mix(xs: Array[Float]): Unit = …
+```
+
+### PreferContainerTypeclasses
+
+Widens a concrete collection in a signature to the weakest Cats typeclass the
+body actually uses:
+
+```scala
+private def names(users: List[String]): List[String] =
+  users.map(user => user.toUpperCase)
+
+private def names[S[_]: Functor](users: S[String]): S[String] =
+  users.map(user => user.toUpperCase)
+```
+
+The interesting question is when *not* to. A body that reaches an element by
+position — `xs(i)`, `.indices`, `.head` — is not expressing `Foldable`, it is
+expressing random access, and Cats has no typeclass for that; those report
+rather than rewrite. So does a definition handed over as a value, because a
+polymorphic method does not eta-expand to a monomorphic function type.
+
+**Configuration:** `widenPublic` (default `false`), `maxConstraints` (default
+`2`), `containers` (default `List`, `Seq`, `Vector`, `IndexedSeq`, `LazyList`).
+`widenPublic` defaults off because a widened signature keeps every ordinary call
+site compiling — `f(myList)` still infers `S = List` — but whether the
+definition is *also* handed over somewhere is only answerable from the file
+scalafix was given when the definition is private or local.
 
 ### PropagateOpaqueType
 
