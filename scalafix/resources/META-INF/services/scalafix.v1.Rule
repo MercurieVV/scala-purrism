@@ -12,3 +12,4 @@ fix.PreferOptionIdioms
 fix.PreferIndexedMap
 fix.PreferContainerTypeclasses
 fix.PreferStateThreading
+fix.SuspendSideEffects

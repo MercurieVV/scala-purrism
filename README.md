@@ -178,6 +178,7 @@ otherwise fail the whole run with "SemanticDB not found".
 | [`PreferOptionIdioms`](#the-idiom-rules) | `null`-guarded lookups → `Option(...).fold` | optional — `rewrite`, `mouse` |
 | [`PreferIndexedMap`](#the-idiom-rules) | `xs.indices.map(i => xs(i))` → `zipWithIndex` / plain `map`; effectful `foldLeft` → `foldM` | optional — `rewrite` |
 | [`PreferStateThreading`](#the-idiom-rules) | pair-threading `foldLeft` → `traverse` in `State` | optional — `rewrite`, `stateT` |
+| [`SuspendSideEffects`](#suspendsideeffects) | reports effects a signature does not mention; rewrites `F.pure(<effect>)` to `F.delay(<effect>)` | optional — `rewrite`, `report`, `effects` |
 | [`PreferContainerTypeclasses`](#prefercontainertypeclasses) | concrete collection parameters → `S[_]` with the weakest Cats constraint | optional — `widenPublic`, `maxConstraints`, `containers` |
 | [`PropagateOpaqueType`](#propagateopaquetype) | propagate an `opaque type` through the program | required — seeds |
 | `PreferCatsFunctions` | match project bodies against the Cats source index, rewrite to the winning public function | none |
@@ -352,6 +353,53 @@ polymorphic method does not eta-expand to a monomorphic function type.
 site compiling — `f(myList)` still infers `S = List` — but whether the
 definition is *also* handed over somewhere is only answerable from the file
 scalafix was given when the definition is private or local.
+
+### SuspendSideEffects
+
+`def write(line: String): Unit` says it computes nothing and returns nothing. If
+its body prints, opens a file or reads the clock, the type is not describing the
+method — the effect happens when the method is *called*, so nothing can sequence
+it, retry it, or run it somewhere else.
+
+The rule reports a method whose declared result is not an effect but whose body
+touches the world:
+
+```scala
+def record(target: Path, line: String): Unit =
+  Files.writeString(target, line)   // reported: this is F[Unit] under Sync
+```
+
+It does not rewrite that. Moving the method to `F[Unit]` changes its signature
+and every call site with it, which `docs/RULES.md` requires to be decided once
+for the project rather than per file.
+
+One shape *is* rewritten, because there it is a defect rather than a preference:
+
+```scala
+def startedAt: F[Long] = Sync[F].pure(System.nanoTime())
+def startedAt: F[Long] = Sync[F].delay(System.nanoTime())
+```
+
+`pure` takes its argument by value, so the clock is read once — while the `F` is
+being built — and every subsequent run of that value replays the first number.
+`delay` is what was meant. Only entry points that *have* a `delay` are rewritten:
+`Applicative[F].pure` around an effect is the same defect, but `Applicative`
+cannot suspend, so there is nothing to rewrite it to.
+
+Nothing is reported inside `Sync[F].delay { … }`, `Sync[F].blocking { … }` or
+`IO { … }` — those are the fix — nor for a method already returning `F[A]`,
+`IO[A]`, `Resource[F, A]` or `Stream[F, A]`. `F` is recognised as an effect by
+being a higher-kinded type parameter in scope, not by being in a name table, so
+`def run[F[_]: Sync](…): F[Unit]` is honest whatever its body does.
+
+**Where this report is wrong**: realtime audio callbacks, UI event handlers on
+the EDT, and measured paths — there the effect runs on a thread that cannot run
+an effect at all. Those carry `// purrism:keep <reason>`, which this rule
+honours like every other.
+
+**Configuration:** `rewrite` (default `true`), `report` (default `true`),
+`effects` — the result-type heads treated as effects, for projects with their
+own effect alias.
 
 ### PropagateOpaqueType
 
