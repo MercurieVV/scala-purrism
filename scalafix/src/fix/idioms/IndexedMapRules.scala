@@ -2,6 +2,12 @@ package fix.idioms
 
 import scala.meta._
 
+import scalafix.v1.MethodSignature
+import scalafix.v1.SemanticDocument
+import scalafix.v1.TypeRef
+import scalafix.v1.ValueSignature
+import scalafix.v1.XtensionTreeScalafix
+
 import fix.catsexpr.CatsFacts
 
 /** Loops that index a collection they already hold, and folds that thread an
@@ -15,10 +21,73 @@ private[fix] object IndexedMapRules {
 
   import TermShapes._
 
-  def rewrites(tree: Tree, facts: CatsFacts): List[IdiomRewrite] =
+  def rewrites(tree: Tree, facts: CatsFacts)(implicit
+      doc: SemanticDocument
+  ): List[IdiomRewrite] =
     tree.collect { case term: Term =>
-      zipWithIndex(term).orElse(foldM(term, facts))
+      zipWithIndex(term).orElse(foldM(term, facts)).orElse(foldMap(term))
     }.flatten
+
+  /** `xs.map(f).sum` -> `xs.foldMap(f)`.
+    *
+    * One pass instead of two, and no intermediate collection. `sum` needs a
+    * `Numeric`; `foldMap` needs a `Monoid`, and for every type `sum` compiles
+    * on -- the primitives, `BigInt`, `BigDecimal` -- Cats' `Monoid` is the
+    * additive one, so the answer is the same.
+    *
+    * The receiver is checked by *its own type*, not by the `map` it calls:
+    * `Vector` and `Set` both resolve `map` to
+    * `StrictOptimizedIterableOps#map()`, and Cats has no `Foldable[Set]` --
+    * only `UnorderedFoldable`, which spells this `unorderedFoldMap`. Rewriting
+    * a `Set` would not compile.
+    */
+  private def foldMap(term: Term)(implicit
+      doc: SemanticDocument
+  ): Option[IdiomRewrite] =
+    term match {
+      case Term.Select(inner: Term.Apply, sum)
+          if sum.symbol.value.endsWith("#sum().") =>
+        inner.fun match {
+          case Term.Select(receiver, name)
+              if name.value == "map" && isFoldable(receiver) =>
+            singleArg(inner.argClause.values).map { function =>
+              IdiomRewrite(
+                term,
+                s"${receiver.pos.text}.foldMap(${function.pos.text})",
+                needsCatsSyntax = true
+              )
+            }
+          case _ => None
+        }
+      case _ =>
+        None
+    }
+
+  /** Whether the receiver's type is a collection Cats gives a `Foldable`. */
+  private def isFoldable(receiver: Term)(implicit
+      doc: SemanticDocument
+  ): Boolean =
+    receiver.symbol.info.exists { info =>
+      val tpe = info.signature match {
+        case ValueSignature(value)           => Some(value)
+        case MethodSignature(_, _, returned) => Some(returned)
+        case _                               => None
+      }
+      tpe.exists {
+        case TypeRef(_, symbol, _) => FoldableCollections(symbol.value)
+        case _                     => false
+      }
+    }
+
+  private val FoldableCollections: Set[String] = Set(
+    "scala/collection/immutable/List#",
+    "scala/collection/immutable/Vector#",
+    "scala/collection/immutable/Seq#",
+    "scala/collection/immutable/LazyList#",
+    "scala/collection/immutable/Queue#",
+    "scala/package.List#",
+    "scala/package.Seq#"
+  )
 
   /** `xs.indices.map(i => body)` ->
     * `xs.zipWithIndex.map { case (x, i) => ... }`, or `xs.map(x => ...)` when
