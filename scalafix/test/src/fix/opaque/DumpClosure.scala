@@ -1,5 +1,8 @@
 package fix.opaque
 
+import fix.flow.TypePath
+import fix.flow.Node
+
 import java.nio.file.Paths
 
 /** Prints the closure a seed produces against a real SemanticDB target root,

@@ -1,5 +1,10 @@
 package fix.opaque
 
+import fix.flow.TypePath
+import fix.flow.EdgeKind
+import fix.flow.Node
+import fix.flow.Facts
+
 /** Builds the real flow graph from the `testInput` fixture's SemanticDB payload
   * and runs the closure over it, so the loader, the builder and the algorithm
   * are exercised together against compiler output.

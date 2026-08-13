@@ -1,5 +1,10 @@
 package fix.opaque
 
+import fix.flow.TypePath
+import fix.flow.Origin
+import fix.flow.Node
+import fix.flow.Facts
+
 import scala.meta.internal.{semanticdb => s}
 
 /** What the explorer looks for, and how much of it to report.

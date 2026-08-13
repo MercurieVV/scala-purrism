@@ -1,5 +1,8 @@
 package fix.opaque
 
+import fix.flow.TypePath
+import fix.flow.Node
+
 /** Reads the SemanticDB payload of the `testInput` fixture module, which the
   * build compiles with `-Ysemanticdb`. This pins the loader against a real
   * compiler payload rather than a hand-built protobuf.

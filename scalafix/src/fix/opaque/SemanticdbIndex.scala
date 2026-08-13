@@ -1,5 +1,7 @@
 package fix.opaque
 
+import fix.flow.Node
+
 import java.nio.file.Files
 import java.nio.file.Path
 
