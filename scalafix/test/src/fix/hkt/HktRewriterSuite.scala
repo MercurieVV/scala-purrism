@@ -6,6 +6,7 @@ import munit.FunSuite
 
 import scalafix.internal.patch.PatchInternals
 import scalafix.rule.RuleName
+import scalafix.testkit.ExpectedSources
 import scalafix.testkit.FixtureDocuments
 import scalafix.v1.SemanticDocument
 import scalafix.v1.Symbol
@@ -66,22 +67,7 @@ final class HktRewriterSuite extends FunSuite {
 
     assertEquals(
       fixed,
-      """/*
-        |rules = [DisableSyntax]
-        | */
-        |package golden
-        |
-        |import cats.Applicative
-        |import cats.Functor
-        |import cats.syntax.functor._
-        |
-        |object HktRewriterStyleCases {
-        |  private def style[F[_]: Applicative](value: F[Int]): F[Int] = value
-        |
-        |  private def transform[G[_]: Functor](values: G[Int]): G[Int] =
-        |    values.map(identity)
-        |}
-        |""".stripMargin
+      ExpectedSources(s"hktrewriter/HktRewriterContextStyle.scala")
     )
   }
 
@@ -93,22 +79,7 @@ final class HktRewriterSuite extends FunSuite {
 
     assertEquals(
       fixed,
-      """/*
-        |rules = [DisableSyntax]
-        | */
-        |package golden
-        |
-        |import cats.Applicative
-        |import cats.Functor
-        |import cats.syntax.functor._
-        |
-        |object HktRewriterUsingStyleCases {
-        |  private def style[F[_]](value: F[Int])(using Applicative[F]): F[Int] = value
-        |
-        |  private def transform[G[_]](values: G[Int])(using Functor[G]): G[Int] =
-        |    values.map(identity)
-        |}
-        |""".stripMargin
+      ExpectedSources(s"hktrewriter/HktRewriterUsingStyle.scala")
     )
   }
 
@@ -120,19 +91,7 @@ final class HktRewriterSuite extends FunSuite {
 
     assertEquals(
       fixed,
-      """/*
-        |rules = [DisableSyntax]
-        | */
-        |package golden
-        |
-        |import cats.Traverse
-        |import cats.syntax.functor._
-        |
-        |final class HktRewriterExistingReuse[G[_]: Traverse] {
-        |  private def transform(values: G[Int]): G[Int] =
-        |    values.map(identity)
-        |}
-        |""".stripMargin
+      ExpectedSources(s"hktrewriter/HktRewriterExistingReuse.scala")
     )
   }
 
@@ -144,19 +103,7 @@ final class HktRewriterSuite extends FunSuite {
 
     assertEquals(
       fixed,
-      """/*
-        |rules = [DisableSyntax]
-        | */
-        |package golden
-        |
-        |import cats.Functor
-        |import cats.syntax.all.*
-        |
-        |object HktRewriterOuterOnly {
-        |  private def transform[G[_]: Functor](values: G[List[Int]]): G[List[Int]] =
-        |    values.map(identity)
-        |}
-        |""".stripMargin
+      ExpectedSources(s"hktrewriter/HktRewriterOuterOnly.scala")
     )
   }
 
@@ -179,18 +126,7 @@ final class HktRewriterSuite extends FunSuite {
 
     assertEquals(
       fixed,
-      """/*
-        |rules = [DisableSyntax]
-        | */
-        |package golden
-        |
-        |import scala.util.Try
-        |import cats.MonadError
-        |
-        |object HktRewriterPinnedError {
-        |  private def parse[F[_]](value: F[Int])(using MonadError[F, Throwable]): F[Int] = value
-        |}
-        |""".stripMargin
+      ExpectedSources(s"hktrewriter/HktRewriterPinnedError.scala")
     )
   }
 

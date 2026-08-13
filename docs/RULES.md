@@ -39,6 +39,7 @@ Shapes surveyed and specified, not yet implemented:
 - Keep one matching relative path in `testInput/src` and `testOutput/src` for each scenario.
 - Add focused tests for helper logic when a rewrite algorithm becomes non-trivial. Keep the analysis behind a plain interface (as `Closure` sits behind `Facts`) so it can be driven by a fake, with no compiler in the loop.
 - Prefer small fixtures that isolate one transformation at a time.
+- Assert a rewriter's expected output from a file under `scalafix/testOutput/src`, read with `scalafix.testkit.ExpectedSources`, not from a string in the test source. A string is never compiled, so such a test asserts that the renderer is *stable* rather than *correct*: `(using G: Functor)` -- which names a type that does not exist -- sat in `HktRewriterSuite`'s expectations until a real codebase hit it, because every executed fixture goes through `testOutput.compile` and these did not.
 - Never guard a test with `assume` on a path resolved relative to the working directory. The forked test JVM has a different one, so the test skips and reports green forever. Locate build outputs through generated properties and `require` that they exist.
 - Run mutation testing with Stryker4s for behavior-heavy logic when the rule implementation matures.
 
