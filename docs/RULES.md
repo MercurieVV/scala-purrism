@@ -8,11 +8,21 @@
 - Every automatic rewrite must have an executed fixture under `scalafix/testInput` and `scalafix/testOutput`. See [Golden Fixtures](GOLDEN_FIXTURES.md).
 - `PreferCatsFunctions` normalization/preservation/ranking/decline semantics are specified in [Prefer Cats Functions](PREFER_CATS_FUNCTIONS.md); conform to that contract rather than re-deriving equivalence rules ad hoc.
 - Checks that cannot be safely rewritten should report diagnostics instead of producing partial edits.
+- A rewrite must preserve the expression's type. `try e catch { case _: Throwable => () }` has type `Unit`; `Either.catchNonFatal(e).void` has type `Either[Throwable, Unit]`, so the tidier form is a different program. Narrow the pattern instead. Where the type-preserving form needs a fact the expression does not carry — that a body is already in `F`, that every use of a reference is — report it.
+- Rewriting rules should honour the `// purrism:keep <reason>` marker (`fix.Suppression`). Realtime and measured paths are deliberately un-idiomatic, and no amount of semantic information says so; only the author does.
+- Prefer splicing a replacement into the original source text over rendering a transformed tree. Scalameta re-prints a transformed tree from its structure, so a substitution inside a string interpolation comes back reflowed across several lines.
 - Anchor every `Patch` on a node from `doc.tree`. A tree parsed from any other `Input` — including a re-parse of `doc.input.text` — carries positions that only coincide by luck, and writing at those offsets corrupts the file.
 - Emit diagnostics as `LintSeverity.Warning` unless they should genuinely block. Scalafix withholds a rule's patches when it reports lint *errors*, so an over-severe diagnostic silently turns the rewrite into a no-op.
 - A rewrite that changes a *signature* must re-shape every call site, and scalafix can only patch the document it is handed. So either restrict the rewrite to definitions whose callers are provably in that file, or decide once for the whole project — never per file. A filter applied per file can decline a definition after another file has already re-split its calls, and the project stops compiling. `KleisliLiftScope` is the project-wide form: it reads the SemanticDB payload up front and every document then acts on that shared verdict, applying no judgement of its own.
 - A rule that consumes another rule's output needs a recompile between them. SemanticDB describes the code as it was compiled; after a signature rewrite the payload is stale, and a rule reading types from it is reasoning about code that no longer exists. `PreferKleisli` → recompile → `PreferArrow` is the pipeline, not one invocation listing both.
 - `PreferCatsFunctions` normalization/preservation/ranking/decline semantics are specified in [Prefer Cats Functions](PREFER_CATS_FUNCTIONS.md); conform to that contract rather than re-deriving equivalence rules ad hoc.
+
+## Candidate Rules
+
+Shapes surveyed and specified, not yet implemented:
+
+- `PreferNonEmpty` — `require(xs.nonEmpty)` on a collection parameter is `NonEmptyList`/`NonEmptyVector`, and a `f(xs: A*)` that reduces its argument is `f(head: A, tail: A*)`. Deletes the runtime check rather than validating it. Signature-changing, so it needs the project-wide call-site verdict.
+- Wiring `PreferHKTTypeclasses` to the `fix.hkt` engine. Its `rewrite` is still a hardcoded list of fixture filenames and body substrings, while `UsageAnalyzer` + `CapabilitySolver` + `HktRewriter` sit beside it fully general — `PreferContainerTypeclasses` is that engine's second consumer and shows the wiring.
 
 ## Typelevel Style
 
