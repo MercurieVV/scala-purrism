@@ -29,8 +29,12 @@ private[fix] object StateThreadingRules {
       "`Ref#modifyState` takes a `State` directly."
 
   val SelfRecursiveEffect: String =
-    "this effect recurses until a condition holds. `iterateUntilM` / " +
+    "this effect polls until a condition holds. `iterateUntilM` / " +
       "`iterateWhile` names the loop."
+
+  val SelfRecursiveRetry: String =
+    "this effect retries itself on failure. That is a retry policy, not a " +
+      "fold: `iterateUntilM` does not express the give-up condition."
 
   def rewrites(tree: Tree): List[IdiomRewrite] =
     tree.collect { case term: Term =>
@@ -42,10 +46,15 @@ private[fix] object StateThreadingRules {
       case term: Term
           if stateT && threadsPair(term) && threadedFold(term).isEmpty =>
         List(IdiomFinding(term, ThreadedFold))
-      case defn: Defn.Def if isStateShaped(defn) =>
+      case defn: Defn.Def if isStateShaped(defn)(tree) =>
         List(IdiomFinding(defn, StateShapedMethod))
       case defn: Defn.Def if recursesOnItself(defn) =>
-        List(IdiomFinding(defn, SelfRecursiveEffect))
+        List(
+          IdiomFinding(
+            defn,
+            if (isRetry(defn)) SelfRecursiveRetry else SelfRecursiveEffect
+          )
+        )
     }.flatten
 
   /** `xs.foldLeft((s0, empty)) { case ((s, out), x) => (s1, out :+ b) }` ->
@@ -205,8 +214,18 @@ private[fix] object StateThreadingRules {
     }
 
   /** `def f(s: S, a: A): (S, B)` -- `State[S, B]` with the state spelled out.
+    *
+    * The shape alone is not enough. `priceKey(agent: String, model: String):
+    * (String, String)` has it and threads nothing; so does any function that
+    * pairs, keys or tags. What makes it a state transition is that something
+    * *runs* it as one, so this additionally requires a call site feeding it to
+    * `Ref#modify` or to a fold -- which is exactly where the rewrite would
+    * become `modifyState`.
     */
-  private def isStateShaped(defn: Defn.Def): Boolean = {
+  private def isStateShaped(defn: Defn.Def)(scope: Tree): Boolean =
+    hasStateShape(defn) && threadedBy(defn.name.value, scope)
+
+  private def hasStateShape(defn: Defn.Def): Boolean = {
     val parameters = defn.paramClauseGroups
       .flatMap(_.paramClauses)
       .flatMap(_.values)
@@ -218,6 +237,49 @@ private[fix] object StateThreadingRules {
         false
     }
   }
+
+  /** Whether anything in scope runs this definition as a state transition. */
+  private def threadedBy(name: String, scope: Tree): Boolean =
+    scope.collect {
+      case Term.Apply.After_4_6_0(Term.Select(_, Term.Name(consumer)), args)
+          if StateConsumers.contains(consumer) &&
+            args.values.exists(argument => references(argument, name)) =>
+        ()
+    }.nonEmpty
+
+  private val StateConsumers: Set[String] =
+    Set("modify", "modifyState", "foldLeft", "foldRight", "mapAccumulate")
+
+  /** Whether the recursion is a retry rather than a poll.
+    *
+    * A retry recurses out of an error handler, or counts down a budget --
+    * `attempt < Max`, `retriesLeft > 0`. Neither is a fold over a condition,
+    * and `iterateUntilM` has nowhere to put the giving up.
+    */
+  private def isRetry(defn: Defn.Def): Boolean =
+    defn.body.collect {
+      case Term.Select(_, Term.Name(handler)) if ErrorHandlers(handler) => ()
+    }.nonEmpty || countsDown(defn)
+
+  private val ErrorHandlers: Set[String] =
+    Set("handleErrorWith", "recoverWith", "handleError", "recover", "onError")
+
+  /** A comparison between one of the definition's parameters and a bound. */
+  private def countsDown(defn: Defn.Def): Boolean = {
+    val parameters = defn.paramClauseGroups
+      .flatMap(_.paramClauses)
+      .flatMap(_.values)
+      .flatMap(param => namedParam(param))
+      .toSet
+    defn.body.collect {
+      case infix: Term.ApplyInfix
+          if Comparisons(infix.op.value) &&
+            parameters.exists(parameter => references(infix.lhs, parameter)) =>
+        ()
+    }.nonEmpty
+  }
+
+  private val Comparisons: Set[String] = Set("<", ">", "<=", ">=")
 
   /** A def whose body is an effect that either stops or goes round again.
     *
@@ -247,8 +309,9 @@ private[fix] object StateThreadingRules {
     */
   private def sequencesAnEffect(defn: Defn.Def): Boolean =
     defn.body.collect {
-      case Term.Select(_, Term.Name("flatMap"))            => ()
-      case infix: Term.ApplyInfix if Binds(infix.op.value) => ()
+      case Term.Select(_, Term.Name("flatMap"))                         => ()
+      case Term.Select(_, Term.Name(handler)) if ErrorHandlers(handler) => ()
+      case infix: Term.ApplyInfix if Binds(infix.op.value)              => ()
     }.nonEmpty
 
   private val Binds: Set[String] = Set(">>", "*>", ">>=")
