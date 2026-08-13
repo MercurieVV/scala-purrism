@@ -2,6 +2,9 @@ package fix.idioms
 
 import scala.meta._
 
+import scalafix.v1.SemanticDocument
+import scalafix.v1.XtensionTreeScalafix
+
 /** `null`-guard idioms that are an `Option`.
   *
   * The shape these target is the Java-interop lookup:
@@ -23,10 +26,53 @@ private[fix] object OptionIdiomRules {
     "`getOrElse(key, throw ...)` is a partial lookup wearing a total " +
       "signature. Return `Option` and let the caller decide."
 
-  def rewrites(tree: Tree, mouse: Boolean): List[IdiomRewrite] =
+  def rewrites(tree: Tree, mouse: Boolean)(implicit
+      doc: SemanticDocument
+  ): List[IdiomRewrite] =
     tree.collect { case term: Term =>
-      nullGuard(term).orElse(if (mouse) cata(term) else None)
+      nullGuard(term)
+        .orElse(foldOverMapGetOrElse(term))
+        .orElse(if (mouse) cata(term) else None)
     }.flatten
+
+  /** `opt.map(f).getOrElse(d)` -> `opt.fold(d)(f)`.
+    *
+    * One traversal instead of two, and it says which branch is which. Both
+    * spellings take `d` by name, so nothing changes about when it is evaluated.
+    *
+    * Matched by symbol, not by spelling: `Either` and `Try` also have `map` and
+    * `getOrElse`, and *their* `fold` takes two arguments in one list rather
+    * than one in each. Rewriting those to the curried form would not compile.
+    */
+  private def foldOverMapGetOrElse(
+      term: Term
+  )(implicit doc: SemanticDocument): Option[IdiomRewrite] =
+    term match {
+      case outer: Term.Apply =>
+        outer.fun match {
+          case Term.Select(inner: Term.Apply, getOrElse)
+              if isOptionMember(getOrElse, "getOrElse") =>
+            inner.fun match {
+              case Term.Select(receiver, map) if isOptionMember(map, "map") =>
+                for {
+                  mapped <- singleArg(inner.argClause.values)
+                  fallback <- singleArg(outer.argClause.values)
+                } yield IdiomRewrite(
+                  term,
+                  s"${receiver.pos.text}.fold(${fallback.pos.text})(${mapped.pos.text})"
+                )
+              case _ => None
+            }
+          case _ => None
+        }
+      case _ =>
+        None
+    }
+
+  private def isOptionMember(name: Term.Name, method: String)(implicit
+      doc: SemanticDocument
+  ): Boolean =
+    name.symbol.value.startsWith(s"scala/Option#$method(")
 
   def findings(tree: Tree): List[IdiomFinding] =
     tree.collect {
