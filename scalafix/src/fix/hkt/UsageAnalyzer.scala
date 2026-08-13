@@ -462,9 +462,8 @@ object UsageAnalyzer {
       val spans = accepted.map(_.span)
       val next = calls.filter(call =>
         !accepted.exists(_.span == call.span) &&
-          spans.exists(span =>
-            call.receiver.pos.start <= span.start &&
-              span.end <= call.receiver.pos.end
+          outermostSelect(call.receiver).exists(select =>
+            spans.contains(select.pos)
           )
       )
       if (next.isEmpty) accepted else grow(accepted ++ next)
@@ -472,6 +471,22 @@ object UsageAnalyzer {
 
     grow(direct)
   }
+
+  /** The select a receiver's own spine ends in.
+    *
+    * `rows.map(f)` gives `rows.map`, so a `filter` called on it is one link
+    * further along the same chain. `wrap(rows.map(f))` gives nothing, because
+    * its spine ends in `wrap` -- an expression that merely *encloses* a call on
+    * the container is not itself on the container, and treating it as one
+    * accepts every method in the enclosing body.
+    */
+  private def outermostSelect(receiver: Term): Option[Term.Select] =
+    receiver match {
+      case select: Term.Select       => Some(select)
+      case apply: Term.Apply         => outermostSelect(apply.fun)
+      case applyType: Term.ApplyType => outermostSelect(applyType.fun)
+      case _                         => None
+    }
 
   private def resolveCall(
       symbols: List[Symbol],

@@ -210,11 +210,13 @@ final class PreferContainerTypeclasses(
   private def mentionsContainer(reason: DeclineReason): Boolean =
     reason match {
       case _: DeclineReason.OrderOrIndexSpecific => true
-      // An operation with no Cats counterpart is the other way a container
-      // fails to be abstractable, and it is the one a reader most needs told:
-      // `mkString` has no capability, so there is nothing to widen to.
-      case reason: DeclineReason.NoCapability => !reason.method.isNone
-      case _                                  => false
+      // `NoCapability` is deliberately not reported. `UsageAnalyzer` declines a
+      // definition on the first unresolvable call anywhere in its body, which
+      // in real code is usually an element-level one -- `Int#toLong`,
+      // `String#replace` -- and has nothing to say about the container. The
+      // precise version of that report is `ContainerFlow`'s, which only looks
+      // at the chain rooted at the parameter.
+      case _ => false
     }
 
   private def simpleName(symbol: Symbol): String =
