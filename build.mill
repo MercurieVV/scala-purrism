@@ -51,7 +51,7 @@ object scalafix
   // same coordinates that default would, so once the workflow pins a version
   // back the check runs exactly as before -- verified by re-pinning 0.6.2 and
   // getting the identical 68 problems.
-  def mimaPreviousVersions = Seq()
+  def mimaPreviousVersions = Seq("0.7.0")
   def mimaPreviousArtifacts = Task {
     mimaPreviousVersions().map(previous =>
       mvn"${pomSettings().organization}::${artifactName()}:$previous"
