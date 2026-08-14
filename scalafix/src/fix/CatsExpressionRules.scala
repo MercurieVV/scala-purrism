@@ -653,11 +653,19 @@ private[fix] object CatsExpressionRules {
       }
   }
 
+  /** A lambda that ignores its argument, so `fa.map(f)` is `fa.as(f())`.
+    *
+    * `exists` rather than `forall` on the parameter: `singleParam` answers
+    * `None` for a lambda that takes anything other than one argument, and
+    * `None.forall` is vacuously true -- which made every multi-parameter lambda
+    * a constant one. `xs.map((v, t) => f(v, t))` then became `xs.as(f(v, t))`,
+    * dropping both binders and leaving names that no longer resolve.
+    */
   private object ConstantLambda {
     def unapply(term: Term): Option[Term] =
       term match {
         case function: Term.Function
-            if singleParam(function).forall(param =>
+            if singleParam(function).exists(param =>
               namedParam(param).forall(name => !references(function.body, name))
             ) &&
               !function.body.is[Lit.Unit] =>
