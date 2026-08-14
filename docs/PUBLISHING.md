@@ -45,3 +45,30 @@ rtk git push origin v0.2.0
 ```
 
 The `Release` workflow publishes tagged versions to Sonatype Central.
+
+## Documentation Site
+
+<https://mercurievv.github.io/scala-purrism/>, published by the `Pages`
+workflow on every push to `master` that touches `docs/`, `mdoc-docs/`,
+`build.mill` or the workflow's own files. The repository's Pages source is
+already set to *GitHub Actions*, so no repository setting changes with this.
+
+The workflow renders `docs/` with mdoc, copies `.github/pages/_config.yml` in
+beside the output, and hands `website/docs` to Jekyll. That config is not
+optional decoration:
+
+- `jekyll-optional-front-matter` — these pages carry no front matter, and
+  without this plugin Jekyll treats each one as a static asset and serves raw
+  markdown;
+- `defaults: layout: default` — front matter is also what normally assigns a
+  layout, so without this the theme goes unused;
+- `baseurl: /scala-purrism` — a project site is served from a subpath, and
+  every internal link is written through `relative_url`.
+
+To preview it as it will be served:
+
+```bash
+rtk mill docs.run
+cp .github/pages/_config.yml website/docs/_config.yml
+jekyll serve --source website/docs
+```

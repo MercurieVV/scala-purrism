@@ -3,8 +3,10 @@
 Scalafix semantic rules for refactoring Typelevel Scala code toward pure,
 polymorphic Cats and Cats Effect style.
 
-Full rule reference: [mdoc site](website/docs/index.md) ([source](docs/index.md)).
-Run `rtk mill docs.run` to render it.
+Full rule reference: <https://mercurievv.github.io/scala-purrism/>
+([source](docs/index.md)). Published from `docs/` by the Pages workflow on every
+push to `master`; `mill docs.run` renders the same site into `website/docs`
+locally.
 
 ## Quickstart
 

@@ -1,0 +1,70 @@
+name: Pages
+
+# The rule reference lives in `docs/` and is rendered by mdoc, which compiles
+# every Scala block in it. CI already runs that render as a check; this
+# workflow publishes its output.
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - "docs/**"
+      - "mdoc-docs/**"
+      - "build.mill"
+      - ".github/pages/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_COLOR: "1"
+
+# One deployment at a time, and never cancel one in flight: a half-published
+# site is worse than a stale one.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Mill
+        run: |
+          curl -L https://repo1.maven.org/maven2/com/lihaoyi/mill-dist/1.1.7/mill-dist-1.1.7-mill.sh -o mill
+          chmod +x mill
+
+      # Fails on a documented example that no longer compiles, which is the
+      # point of documenting them in mdoc.
+      - name: Render docs
+        run: ./mill docs.run
+
+      - name: Add the Jekyll configuration
+        run: cp .github/pages/_config.yml website/docs/_config.yml
+
+      - uses: actions/configure-pages@v6
+
+      - name: Build the site
+        uses: actions/jekyll-build-pages@v1
+        with:
+          source: website/docs
+          destination: ./_site
+
+      - uses: actions/upload-pages-artifact@v5
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      pages: write
+      id-token: write
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
