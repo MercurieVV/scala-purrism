@@ -50,7 +50,7 @@ object scalafix
   // configured", which is what Mima's own default does). It builds the same
   // coordinates that default would -- verified by pinning 0.6.2 through it and
   // getting the identical 68 problems.
-  def mimaPreviousVersions = Seq("0.7.0")
+  def mimaPreviousVersions = Seq("0.8.0")
   def mimaPreviousArtifacts = Task {
     mimaPreviousVersions().map(previous =>
       mvn"${pomSettings().organization}::${artifactName()}:$previous"
