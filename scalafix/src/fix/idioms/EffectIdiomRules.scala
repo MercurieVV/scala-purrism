@@ -105,13 +105,25 @@ private[fix] object EffectIdiomRules {
         Some(
           IdiomRewrite(
             term,
-            s"${receiver.pos.text}.traverse_(${function.pos.text})",
+            renderTraverse(receiver, function),
             needsCatsSyntax = true
           )
         )
       case _ =>
         None
     }
+
+  /** `opt.traverse_(f)`, using the function's own braces where it has them.
+    *
+    * A block argument already carries them, so the parenthesised form wraps
+    * them again: `traverse_({ x => … })` parses but reads as a slip.
+    */
+  private def renderTraverse(receiver: Term, function: Term): String = {
+    val text = function.pos.text
+    if (text.startsWith("{") && text.endsWith("}"))
+      s"${receiver.pos.text}.traverse_ $text"
+    else s"${receiver.pos.text}.traverse_($text)"
+  }
 
   /** `Typeclass[F].unit`, or any Cats member spelled `unit`. */
   private def isUnitEffect(term: Term, facts: CatsFacts): Boolean =
