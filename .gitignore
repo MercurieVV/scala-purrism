@@ -58,6 +58,9 @@ prompt.txt
 /.worktrees/
 /run-ide.sh
 
+# mdoc output. `docs/` is the source; `mill docs.run` renders it here.
+/website/
+
 # Agent scratch. aider writes its transcript, input history and tags cache into
 # whatever directory it runs in; gh-tasks-llm-executor runs it inside a worktree
 # of this repo, and `git add -A` published all of it to master on 2026-08-01.

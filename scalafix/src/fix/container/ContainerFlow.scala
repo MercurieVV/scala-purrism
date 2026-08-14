@@ -2,6 +2,8 @@ package fix
 
 import scala.meta._
 
+import scalafix.v1.Symbol
+
 import fix.hkt.UsageResult
 
 /** Whether a widened parameter stays abstract for its whole life in the body.
@@ -29,8 +31,25 @@ import fix.hkt.UsageResult
   */
 private[fix] object ContainerFlow {
 
+  /** Retained shape: every operation on the chain must be one the constraints
+    * provide. Kept because it is published; new callers pass `exits`.
+    */
   def staysAbstract(
       usage: UsageResult.Abstractable
+  ): Boolean = staysAbstract(usage, _ => false)
+
+  /** As above, told which capabilities *leave* the container.
+    *
+    * `xs.toList.zipWithIndex.map(f)` is a `Foldable` use of `xs` and then a
+    * `List` expression: `Foldable[S].toList` returns a `List` for every `S`, so
+    * neither `zipWithIndex` nor the `map` after it is a constraint on the
+    * widening, and neither is an escape when the result is handed to something
+    * expecting a concrete collection. `exits` answers that per capability --
+    * `CatsIndex.exitsConstructor` -- rather than by a list of method names.
+    */
+  def staysAbstract(
+      usage: UsageResult.Abstractable,
+      exits: Symbol => Boolean
   ): Boolean =
     parameterName(usage).exists { name =>
       val chains = usage.defn.body.collect {
@@ -38,9 +57,47 @@ private[fix] object ContainerFlow {
           chainOf(reference)
       }
       chains.nonEmpty && chains.forall { chain =>
-        methodsOf(chain).forall(accountedFor(_, usage)) && !isArgument(chain)
+        val spine = methodsOf(chain).reverse
+        accountedUpToExit(spine, usage, exits) &&
+        (!isArgument(chain) || leaves(spine, usage, exits))
       }
     }
+
+  /** Whether every operation on the container itself is one the analyzer
+    * accounted for, reading the chain from the receiver outwards and stopping
+    * at the first operation whose result is no longer the container.
+    */
+  @scala.annotation.tailrec
+  private def accountedUpToExit(
+      spine: List[Term.Name],
+      usage: UsageResult.Abstractable,
+      exits: Symbol => Boolean
+  ): Boolean =
+    spine match {
+      case Nil => true
+      case method :: rest =>
+        opFor(method, usage) match {
+          case None                         => false
+          case Some(op) if exits(op.method) => true
+          case Some(_) => accountedUpToExit(rest, usage, exits)
+        }
+    }
+
+  /** Whether the chain stops being the container before its value is used. */
+  private def leaves(
+      spine: List[Term.Name],
+      usage: UsageResult.Abstractable,
+      exits: Symbol => Boolean
+  ): Boolean =
+    spine.exists(method => opFor(method, usage).exists(op => exits(op.method)))
+
+  private def opFor(
+      method: Term.Name,
+      usage: UsageResult.Abstractable
+  ): Option[fix.hkt.RequiredOp] =
+    usage.ops.find(op =>
+      op.position.start <= method.pos.start && method.pos.end <= op.position.end
+    )
 
   /** The name the widened type belongs to. */
   private def parameterName(usage: UsageResult.Abstractable): Option[String] =

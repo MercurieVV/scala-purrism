@@ -28,7 +28,7 @@ jobs:
           chmod +x mill
 
       - name: Validate
-        run: ./mill scalafix.compile scalafix.test docs.compile
+        run: ./mill scalafix.compile scalafix.test docs.run
 
       # Runs against the previous release, which is already on Maven Central, so
       # a tag that breaks binary compatibility fails here rather than after the

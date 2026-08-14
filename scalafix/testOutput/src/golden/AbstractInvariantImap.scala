@@ -1,8 +1,8 @@
 
 package golden
 
-import cats.Invariant
 import cats.syntax.invariant.*
+import cats.Invariant
 
 object AbstractInvariantImap {
   private def lift[G[_]: Invariant](sg: G[String]): G[Int] =

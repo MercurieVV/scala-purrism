@@ -45,6 +45,6 @@ run scalafix.testInput.compile
 run scalafix.testOutput.compile
 
 run scalafix.test
-run docs.compile
+run docs.run
 
 echo "gh-task-validate: all checks passed."

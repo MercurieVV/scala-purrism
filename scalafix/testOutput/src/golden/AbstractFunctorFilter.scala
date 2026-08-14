@@ -2,6 +2,6 @@
 package golden
 
 import cats.FunctorFilter
-import cats.Functor
 
-private def filter[G[_]: Functor: FunctorFilter](xs: G[Int]): G[Int] = FunctorFilter[G].filter(xs)(_ > 0)
+// Not widened: summon-style body, see AbstractReducibleNonEmpty.
+private def filter(xs: Option[Int]): Option[Int] = FunctorFilter[Option].filter(xs)(_ > 0)

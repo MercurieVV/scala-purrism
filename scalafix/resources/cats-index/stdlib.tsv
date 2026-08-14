@@ -4,6 +4,7 @@ cats/Eval#defer().	capability	cats/Defer#defer().	cats/Defer#defer().	Eval recur
 cats/Eval#flatMap().	capability	cats/FlatMap#flatMap().	cats/FlatMap#flatMap().	Eval sequencing is FlatMap
 cats/Eval#map().	capability	cats/Functor#map().	cats/Functor#map().	Eval transformation is Functor
 cats/Foldable.Ops#foldMap().	capability	cats/Foldable#foldMap().	cats/Foldable#foldMap().	Cats foldMap syntax on a covered concrete constructor
+cats/SemigroupK.Ops#`<+>`().	capability	cats/SemigroupK#combineK().	cats/SemigroupK#combineK().	Cats <+> syntax is combineK
 cats/Traverse.Ops#sequence().	capability	cats/Traverse#sequence().	cats/Traverse#sequence().	Cats sequence syntax on a covered concrete constructor
 cats/Traverse.Ops#traverse().	capability	cats/Traverse#traverse().	cats/Traverse#traverse().	Cats traverse syntax on a covered concrete constructor
 cats/data/NonEmptyList#flatMap().	capability	cats/FlatMap#flatMap().	cats/FlatMap#flatMap().	NonEmptyList sequencing is FlatMap

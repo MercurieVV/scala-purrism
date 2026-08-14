@@ -14,8 +14,22 @@ final class CatsIndex private (
     val syntax: Map[Symbol, Capability],
     val stdlib: Map[Symbol, List[StdlibEntry]],
     private val syntaxImports: Map[Symbol, String],
-    val elementRules: Map[Symbol, ElementRule]
+    val elementRules: Map[Symbol, ElementRule],
+    private val exitMethods: Set[Symbol]
 ) {
+
+  /** Whether this capability's result leaves the abstracted type constructor.
+    *
+    * `Functor#map` returns `F[B]`; `Foldable#toList` returns `List[A]`. The
+    * operations chained onto the second are operations on a `List`, whatever
+    * `F` turns out to be, so they are not constraints on the widening -- which
+    * is what lets `xs.toList.zipWithIndex.map(f)` widen `xs` to `S[_]:
+    * Foldable` while `zipWithIndex` stays exactly where it is.
+    *
+    * Read from the generated `exits` column, so it follows Cats rather than a
+    * list of method names someone maintains here.
+    */
+  def exitsConstructor(method: Symbol): Boolean = exitMethods.contains(method)
 
   /** The element rule for a concrete method, wildcards included. */
   def resolveElement(method: Symbol): Option[ElementRule] =
@@ -53,7 +67,8 @@ final class CatsIndex private (
         )
       },
       syntaxImports,
-      elementRules
+      elementRules,
+      exitMethods
     )
 
   private lazy val elementWildcards: List[(String, String, ElementRule)] =
@@ -81,7 +96,16 @@ final class CatsIndex private (
       capabilities: Map[Symbol, List[Capability]],
       syntax: Map[Symbol, Capability],
       stdlib: Map[Symbol, List[StdlibEntry]] = Map.empty
-  ) = this(typeclasses, capabilities, syntax, stdlib, Map.empty, Map.empty)
+  ) =
+    this(
+      typeclasses,
+      capabilities,
+      syntax,
+      stdlib,
+      Map.empty,
+      Map.empty,
+      Set.empty
+    )
 
   /** Every capability whose method or owner is `method`, across all
     * typeclasses, in stable order (by typeclass symbol string).
@@ -104,6 +128,26 @@ final class CatsIndex private (
       .map(_.owner)
 
   def resolveSyntax(method: Symbol): Option[Capability] = syntax.get(method)
+
+  /** Whether the index has any theory of this type constructor at all: a Cats
+    * capability declared on it, or a `stdlib.tsv` row -- exact or under a
+    * wildcard namespace -- for one of its methods.
+    *
+    * A rule that reports why it did *not* abstract something needs this.
+    * Without it the answer "your body has a `var`" is given for
+    * `def sum(out: Array[Float], n: Int): Unit`, where the obstacle is not the
+    * `var` and no capability was ever within reach. Silence is the honest
+    * report for a constructor nothing here knows anything about.
+    */
+  def knowsConstructor(constructor: Symbol): Boolean = {
+    val owner = constructor.value.stripSuffix("#")
+    lazy val exact = s"$owner#"
+    capabilities.valuesIterator.flatten.exists(
+      _.owner.value.startsWith(exact)
+    ) ||
+    stdlib.keysIterator.exists(_.value.startsWith(exact)) ||
+    wildcards.exists { case (prefix, _, _) => owner.startsWith(prefix) }
+  }
 
   def resolveStdlib(method: Symbol): List[StdlibEntry] =
     stdlib.get(method).orElse(byMethodName(method)).getOrElse(Nil)
@@ -211,9 +255,10 @@ object CatsIndex {
       typeclassList <- parseTable(typeclassesResource, typeclassRows)(
         parseTypeclassRow
       )
-      capabilityList <- parseTable(capabilitiesResource, capabilityRows)(
+      capabilityRowList <- parseTable(capabilitiesResource, capabilityRows)(
         parseCapabilityRow
       )
+      capabilityList = capabilityRowList.map(_._1)
       syntaxList <- parseTable(syntaxResource, syntaxRows)(parseSyntaxRow)
       capabilityRoots = capabilityList.iterator
         .map(capability => capability.owner -> capability.method)
@@ -221,14 +266,24 @@ object CatsIndex {
       stdlibList <- parseTable(stdlibResource, stdlibRows)(
         parseStdlibRow(_, capabilityRoots)
       )
-    } yield build(typeclassList, capabilityList, syntaxList, stdlibList)
+    } yield build(typeclassList, capabilityRowList, syntaxList, stdlibList)
 
   private def build(
       typeclassList: List[CatsTypeclass],
-      capabilityList: List[Capability],
+      capabilityRowList: List[(Capability, Boolean)],
       syntaxList: List[(Symbol, Symbol, Symbol, String)],
       stdlibRowList: List[StdlibRow]
   ): CatsIndex = {
+    val capabilityList = capabilityRowList.map(_._1)
+    // Keyed by the override-chain root, which is what `RequiredOp.method`
+    // carries: `xs.toList` resolves to `cats/Foldable#toList().` whichever
+    // typeclass row it was read from.
+    val exitMethods = capabilityRowList.iterator
+      .filter(_._2)
+      .map(_._1.owner)
+      .toSet -- capabilityRowList.iterator
+      .filterNot(_._2)
+      .map(_._1.owner)
     val stdlibList = stdlibRowList.collect { case StdlibRow.Entry(e) => e }
     val elementList = stdlibRowList.collect { case StdlibRow.Element(r) => r }
     val typeclassMap = typeclassList.map(tc => tc.symbol -> tc).toMap
@@ -283,7 +338,8 @@ object CatsIndex {
       syntaxMap,
       stdlibMap,
       exactSyntaxImports ++ resolvedSyntaxImports,
-      elementList.map(rule => rule.concreteMethod -> rule).toMap
+      elementList.map(rule => rule.concreteMethod -> rule).toMap,
+      exitMethods
     )
   }
 
@@ -370,24 +426,28 @@ object CatsIndex {
 
   private def parseCapabilityRow(
       cells: List[String]
-  ): Either[String, Capability] =
+  ): Either[String, (Capability, Boolean)] =
     cells match {
-      case List(typeclass, method, owner, kindToken, derived, arity) =>
+      case List(typeclass, method, owner, kindToken, derived, arity, exits) =>
         for {
           kind <- KindShape
             .parse(kindToken)
             .toRight(s"invalid kind: $kindToken")
           isDerived <- parseBoolean(derived, "derived")
           arityValue <- parseInt(arity, "arity")
-        } yield Capability(
-          Symbol(typeclass),
-          Symbol(method),
-          Symbol(owner),
-          kind,
-          isDerived,
-          arityValue
+          leaves <- parseBoolean(exits, "exits")
+        } yield (
+          Capability(
+            Symbol(typeclass),
+            Symbol(method),
+            Symbol(owner),
+            kind,
+            isDerived,
+            arityValue
+          ),
+          leaves
         )
-      case other => Left(s"expected 6 columns, got ${other.size}")
+      case other => Left(s"expected 7 columns, got ${other.size}")
     }
 
   private def parseSyntaxRow(

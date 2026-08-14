@@ -29,7 +29,7 @@ MILL_SONATYPE_USERNAME
 ```bash
 rtk mill scalafix.compile
 rtk mill scalafix.test
-rtk mill docs.compile
+rtk mill docs.run
 rtk mill scalafix.publishM2Local
 ```
 

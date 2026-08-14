@@ -286,7 +286,14 @@ object app extends Module {
 
 object docs extends ScalaModule {
   def scalaVersion = "3.3.8"
-  def mvnDeps = Seq(mvn"org.scalameta::mdoc:${Versions.mdoc}")
+  override def sources = Task.Sources(
+    mill.api.BuildCtx.workspaceRoot / "mdoc-docs" / "src" / "main" / "scala"
+  )
+  def mvnDeps = Seq(
+    mvn"org.scalameta::mdoc:${Versions.mdoc}",
+    mvn"org.typelevel::cats-core:${Versions.catsCore}",
+    mvn"org.typelevel::cats-effect:${Versions.catsEffect}"
+  )
   def scalacOptions = Seq("-Ysemanticdb", s"-sourceroot:${mill.api.BuildCtx.workspaceRoot}")
 }
 

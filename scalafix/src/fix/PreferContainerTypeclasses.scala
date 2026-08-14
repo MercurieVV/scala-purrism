@@ -74,8 +74,13 @@ final case class ContainerAbstractionDiagnostic(
   * it is not, and `docs/RULES.md` forbids deciding it per file.
   */
 final class PreferContainerTypeclasses(
-    config: PreferContainerTypeclassesConfig
+    config: PreferContainerTypeclassesConfig,
+    crossFile: CrossFileConfig,
+    classpath: List[java.nio.file.Path]
 ) extends SemanticRule("PreferContainerTypeclasses") {
+
+  def this(config: PreferContainerTypeclassesConfig) =
+    this(config, CrossFileConfig.default, Nil)
 
   def this() = this(PreferContainerTypeclassesConfig.default)
 
@@ -86,9 +91,29 @@ final class PreferContainerTypeclasses(
       .getOrElse("PreferContainerTypeclasses")(
         PreferContainerTypeclassesConfig.default
       )
-      .map(new PreferContainerTypeclasses(_))
+      .product(
+        configuration.conf
+          .getOrElse("PreferContainerTypeclasses")(CrossFileConfig.default)
+      )
+      .map { case (config, crossFile) =>
+        new PreferContainerTypeclasses(
+          config,
+          crossFile,
+          configuration.scalacClasspath.map(_.toNIO)
+        )
+      }
 
   private lazy val index: CatsIndex = CatsIndex.load()
+
+  /** Built once per rule instance: the scan parses every project source. */
+  private lazy val scope: WidenScope =
+    WidenScope.forRun(
+      crossFile,
+      classpath,
+      config.containers,
+      config.widenPublic,
+      symbol => index.knowsConstructor(Symbol(symbol))
+    )
 
   override def fix(implicit doc: SemanticDocument): Patch = {
     val suppression = Suppression.forDocument
@@ -100,8 +125,81 @@ final class PreferContainerTypeclasses(
           .analyze(defn, index, config.widenPublic)
           .map(result => patchFor(defn, result, handedOver))
           .asPatch
-    }.asPatch
+    }.asPatch + callSiteRepairs
   }
+
+  /** The other half of a widening: a call that named its type arguments has to
+    * stop naming them, because the def it calls has grown one it does not
+    * mention. Dropping the whole list is what `WidenScope` checked was safe --
+    * every type parameter of that def is inferable from its value parameters --
+    * and it is the only edit that works whether or not this run also visits the
+    * file the definition lives in.
+    */
+  private def callSiteRepairs(implicit doc: SemanticDocument): Patch =
+    if (scope.isEmpty) Patch.empty
+    else
+      doc.tree.collect {
+        case applyType: Term.ApplyType
+            if scope.repairs(applyType.fun.symbol.value) =>
+          Patch.removeTokens(applyType.targClause.tokens)
+        case applyType: Term.ApplyType
+            if scope.appends(applyType.fun.symbol.value).nonEmpty =>
+          appendContainerArgument(applyType)
+      }.asPatch
+
+  /** `describe[Int](rows)` -> `describe[Int, List](rows)`.
+    *
+    * The alternative repair -- dropping the list -- is not open to a def whose
+    * type parameters are not all inferable from its arguments, so the call site
+    * is told the answer instead, read off the argument it already passes.
+    * `WidenScope` established that every call site of this def can be, which is
+    * why the definition is being widened at all.
+    */
+  private def appendContainerArgument(
+      applyType: Term.ApplyType
+  )(implicit doc: SemanticDocument): Patch = {
+    val argument = scope
+      .appends(applyType.fun.symbol.value)
+      .flatMap(position =>
+        applyType.parent
+          .collect { case apply: Term.Apply => apply }
+          .flatMap(_.argClause.values.lift(position))
+      )
+
+    (
+      argument.flatMap(constructorName),
+      applyType.targClause.values.lastOption
+    ) match {
+      case (Some(container), Some(last)) =>
+        Patch.addRight(last, s", $container")
+      case _ => Patch.empty
+    }
+  }
+
+  /** The container an argument expression is built from: the declared type of
+    * the value it names, or the companion an application applies.
+    */
+  private def constructorName(
+      term: Term
+  )(implicit doc: SemanticDocument): Option[String] =
+    term match {
+      case Term.Apply.After_4_6_0(fun, _)     => constructorName(fun)
+      case Term.ApplyType.After_4_6_0(fun, _) => constructorName(fun)
+      case other =>
+        val symbol = other.symbol
+        val declared = symbol.info.flatMap {
+          _.signature match {
+            case ValueSignature(TypeRef(_, constructor, _)) =>
+              Some(simpleName(constructor))
+            case MethodSignature(_, _, TypeRef(_, constructor, _)) =>
+              Some(simpleName(constructor))
+            case _ => None
+          }
+        }
+        declared
+          .orElse(Option.when(!symbol.isNone)(simpleName(symbol)))
+          .filter(ContainerNames.matches(config.containers, _))
+    }
 
   private def patchFor(
       defn: Defn.Def,
@@ -114,7 +212,16 @@ final class PreferContainerTypeclasses(
             defn,
             usage.target
           ) =>
-        if (handedOver.contains(defn.name.value))
+        if (scope.vetoes(defn.symbol.value))
+          // A type parameter of this def is not inferable from its value
+          // parameters, so the call sites that name their type arguments
+          // cannot simply stop naming them, and this def cannot grow one.
+          lint(
+            defn.name.pos,
+            s"`${defn.name.value}` is called with explicit type arguments that " +
+              "inference cannot replace, so it cannot take another type parameter"
+          )
+        else if (handedOver.contains(defn.name.value))
           lint(
             defn.name.pos,
             s"`${defn.name.value}` is handed over as a value, so widening it " +
@@ -146,7 +253,8 @@ final class PreferContainerTypeclasses(
       // solves to `Functor` and loses the `filter`, and a body ending in
       // `mkString` solves to `Functor` over a value that no longer has one.
       // Both compile as `Vector` and neither compiles as `S`.
-      case Right(solution) if !ContainerFlow.staysAbstract(usage) =>
+      case Right(solution)
+          if !ContainerFlow.staysAbstract(usage, index.exitsConstructor) =>
         lint(
           usage.defn.name.pos,
           "the container does not stay abstract: an operation on it is not " +
@@ -197,9 +305,14 @@ final class PreferContainerTypeclasses(
           target.pos.end <= declared.pos.end
       )
 
+  /** Under `containers = ["*"]` the subject is every constructor the Cats index
+    * has a theory of, rather than a spelled-out list of collections.
+    */
   private def isContainer(constructor: Symbol): Boolean =
     !constructor.isNone &&
-      config.containers.contains(simpleName(constructor))
+      (if (ContainerNames.isWildcard(config.containers))
+         index.knowsConstructor(constructor)
+       else config.containers.contains(simpleName(constructor)))
 
   /** A decline is only this rule's to report when it is about a container.
     *

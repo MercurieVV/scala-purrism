@@ -1285,3 +1285,39 @@ final case class StdlibEntry(
     mapping: StdlibMapping
 )
 ```
+
+---
+
+## 10. As built — the wiring, and where it departs from this document
+
+The rule shell now runs on the engine (`UsageAnalyzer` → `CapabilitySolver` →
+`HktRewriter`) instead of the fixture-name table it shipped with. What landed
+differs from the sections above in the following places; each is a decision, and
+the sections above stay as the record of what was intended.
+
+| Decision | As built | Why |
+| --- | --- | --- |
+| Config type | `PreferHKTTypeclassesConfig(rewrite, widenPublic = false, maxConstraints = 2)`; the old `PreferHKTConfig` and a `PreferHKTTypeclasses(PreferHKTConfig)` constructor are retained | item 7's shape, plus `rewrite` for parity with the container rule. The old names stay because MiMa checks this module against the last release |
+| Kind shapes | `Unary` only | `Star` widening is `PreferElementTypeclasses`' subject (`A: Monoid`), and nothing in this rule renders a `Star` target. `Binary` is declined as item 6 says |
+| Type-parameter names | `G`, `H`, `K` | as in negative fixture 7, which needs all three taken to reach `NameConflict` |
+| `DeclineReason.NoCapability` | never reported | the analyzer declines on the *first* unresolvable call anywhere in the body, usually an element-level one (`String#toInt`). Reporting it would warn on most definitions. Same rationale as `PreferContainerTypeclasses.mentionsContainer` |
+| Body rewriting | none, as item 7a's rendering contract requires | which makes fixtures 8, 12, 13, 14 and 18 (`Reducible[NonEmptyList]`, `Try(...)`, `FunctorFilter[Option]`, `TraverseFilter[List]`, `Eval.defer`) **no-ops** rather than the rewrites their rows describe: each body names the concrete constructor, and only a body rewrite could carry it over. They are kept as fixtures asserting exactly that, and the shapes are listed under `docs/RULES.md` "Candidate Rules" |
+| Fixture 9 (`AbstractMonoidEmptyAndCombine`) | widens the *container* to `[A: Monoid, G[_]: Foldable]` rather than the element | the input's `foldLeft` is a `Foldable` capability on `xs`; element abstraction is the other rule |
+| `MissingEvidence` | not produced | no element-evidence check exists; the fixture supplies `Monoid[B]` locally so the widened form compiles |
+| Stale imports | the widened constructor's import is removed when nothing else in the file names it | otherwise `import cats.Eval` survives a rewrite that deleted its last use, and `-Wunused:imports -Werror` turns our rewrite into a build failure |
+| Infix calls | `Term.ApplyInfix` counts as a call on its left-hand side | `x <+> y` is `combineK`, and Cats syntax is written infix. Infix calls do not *extend* a chain: `w.extract + 1` is arithmetic on an element, not an operation on the container |
+| `<+>` | added to the hand-written `stdlib.tsv` | the generator emits an `Ops` row per capability *name*, so operator aliases (`<+>` → `combineK`) have no row. One audited row states the alias; a general alias pass would have to read `Ops` method bodies |
+| Visibility | the analyzer is always asked `widenPublic = true`, and the rule applies `UsageAnalyzer.isWidenable` to the *solved* result | asking the analyzer to decide it reports `PublicBoundary` for every public definition that merely mentions a concrete type. On `skreeep2`'s `core` that was 17 warnings, of which 1 was about a definition anything could have widened |
+| Declines | reported only when the signature names a unary constructor `CatsIndex.knowsConstructor` recognises | otherwise `def sumPlanes(out: FloatBuffer, base: Int): Unit` is told its `var` blocks an abstraction that never existed. Trialling on `skreeep2` this cut the whole-repo warning count from 52 to 12, with no rewrite lost |
+| Overrides | new `DeclineReason.InheritedSignature`, raised in `UsageAnalyzer` for a def that declares `override` or has `overriddenSymbols` | found by the same trial: the rule widened `override def apply[A](fa: Seq[A]): List[A]` into `apply[A, G[_]: Foldable]`, which implements nothing and does not compile. It is a decline for every consumer of the engine, so it belongs to the analyzer, not to this rule |
+
+### Call sites, and the shape of the trial that found them
+
+The `skreeep2` trial drove three further decisions, all about the *other* end of
+a widened signature:
+
+| Decision | As built | Why |
+| --- | --- | --- |
+| Chain exit | `capabilities.tsv` gained an `exits` column, generated from TASTy: whether a capability's result mentions the abstracted constructor. `UsageAnalyzer` stops growing a call chain at an exit, and `ContainerFlow` stops accounting there | `xs.toList.zipWithIndex.map(f)` is a `Foldable` use of `xs` and then a `List` expression. Read as one chain it declines as order-specific; read with the exit it widens, which is what `SinesGenerator.fromRatios` needed |
+| Rule overlap | `PreferHKTTypeclasses.containers` defaults to the collections, which it leaves to `PreferContainerTypeclasses` | run together on one signature the two rules produced `names[S[_]: Functor][G[_]: Functor](users: SG[String])` |
+| Call sites | `fix.container.WidenScope` (see `docs/RULES.md`), opt-in per rule as `crossFile` | widening `fromRatios[T]` to `fromRatios[T, S[_]]` compiled `signals` and broke `score`, whose `fromRatios[V](...)` names one type argument too few |

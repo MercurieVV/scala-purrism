@@ -30,8 +30,8 @@ jobs:
       - name: Test Scalafix module
         run: ./mill scalafix.test
 
-      - name: Compile docs
-        run: ./mill docs.compile
+      - name: Render docs
+        run: ./mill docs.run
 
       - name: Check binary compatibility
         run: ./mill scalafix.mimaReportBinaryIssues

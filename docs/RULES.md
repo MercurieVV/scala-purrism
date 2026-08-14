@@ -45,12 +45,95 @@ reverted: forward reachability leaves the definition through its own return,
 which the closure calls an escape and inference calls ordinary. `ContainerFlow`
 stays syntactic and in-body for that reason, not for want of a graph.
 
+## Widening and its call sites
+
+`PreferElementTypeclasses`, `PreferContainerTypeclasses` and
+`PreferHKTTypeclasses` each name what they abstract — the element, the
+collection, any other unary constructor — and `PreferTypeParameters` runs all
+three, named for the mechanism they share. Keep new members named after their
+subject: the umbrella is the only place the mechanism is the identity.
+
+
+Adding a type parameter is not the source-compatible half of a widening. `f(xs)`
+re-infers, but `f[A](xs)` names one type argument and a def that has grown a
+second no longer accepts it — and the call usually lives in another file, often
+another module, so no per-file decision can see it. `fix.container.WidenScope`
+is the project-wide answer, built the way `KleisliLiftScope` is: it reads the
+SemanticDB signatures for the type parameters and the parameter types, and the
+parsed sources for the one question the payload does not record — was this call
+*written* with type arguments?
+
+**Propagate first, protect last.** Three verdicts, and every file in the run
+computes the same one:
+
+- **repairable** — widen, and *drop* the type-argument list at each call site.
+  Open only when every type parameter of that def occurs in a value parameter,
+  so inference recovers all of them, the new one included.
+- **appendable** — widen, and *tell* each call site the new argument:
+  `describe[Int](rows)` becomes `describe[Int, List](rows)`, reading `List` off
+  the argument the call already passes. This is what keeps a def whose type
+  parameter arrives through evidence (`[A: Show]`) from being refused: the
+  answer is available, so it is supplied rather than inferred.
+- **vetoed** — only when neither repair reaches every call site, because some
+  argument names no container this can read: `summarise[Int](if (flag) List(1, 2)
+  else Nil)`. Report, widen nothing, patch nothing. A call site left behind is a
+  build that does not compile, so one unreachable site vetoes the whole
+  widening.
+
+Both repairs read the argument from the payload rather than its spelling: a
+`val` through the type of the symbol it refers to, a `List(1, 2)` through the
+companion it applies.
+
+**What gets widened is configuration, and the default is a list.** Each rule's
+`containers` names the constructors it claims, and `PreferElementTypeclasses`
+additionally names the concrete element types it will assume an instance for.
+`fix.ContainerNames` gives that list one wildcard, `"*"`, meaning every
+candidate: every constructor the Cats index has a theory of. `WidenScope` has no
+such index, so the rule hands it that test as a predicate rather than letting it
+take a unary application at face value — **a scope that predicts more widenings
+than the rules perform rewrites call sites of definitions nothing changed.** A
+first wildcard run over a real project appended a type argument to
+`Measurements.functions[F, FiniteDuration](pr)` — a def no rule widened, whose
+`PrometheusRegistry[F]` parameter only *looked* like a container — and stopped
+that module compiling. The wildcard is also restricted to names a type argument
+can be written with: the last segment of a symbol is not always a type, and
+`IndexedSeq.empty` and a type lambda's parameter arrived as `Delegate#empty()`
+and `[F]`, both duly appended. And the scope descends into a parameter type's
+arguments only through an *abstract* head, mirroring
+`UsageAnalyzer.outerConcreteTargets`: in `Ref[F, Option[Mixed]]` the target is
+`Ref`, declined for being binary, and no rule ever widens the `Option` inside
+it — descending anyway made every such def a candidate and stripped the type
+arguments off its call sites for nothing. The wildcard is a value rather than the empty list because empty already
+means "widen nothing" here and "cede nothing" in `PreferHKTTypeclasses`, and
+inverting it would change what existing configurations do. The two lists are one
+setting in practice: a wildcard on the container rule wants the same wildcard on
+the HKT rule's cede-list, or both widen one signature.
+
+Evidence is not an argument. `def recording[F[_]: Sync](dir: Path)` desugars to
+a `(using Sync[F])` parameter whose type mentions `F`, but nothing in the
+argument list does, so `recording[IO](dir)` cannot simply drop its type
+argument and expect inference to find `F` again. Implicit and given parameters
+are therefore excluded when deciding whether a type parameter is inferable --
+without that exclusion a whole-project run rewrites call sites of definitions it
+never widened, which is how this was found.
+
+Two things this deliberately does not do. It does not re-derive the verdict from
+the definition after the fact ("declares more type parameters than the call
+passes"): SemanticDB lists an extension method's own type parameters together
+with its extension's, and that test rewrites `xs.at[Store[V]](id)` for nothing.
+And it does not survive the two halves landing in different runs — see the
+ordering rule in `README.md`: one invocation over the whole project, or module
+by module with dependents first.
+
 ## Candidate Rules
 
 Shapes surveyed and specified, not yet implemented:
 
 - `PreferNonEmpty` — `require(xs.nonEmpty)` on a collection parameter is `NonEmptyList`/`NonEmptyVector`, and a `f(xs: A*)` that reduces its argument is `f(head: A, tail: A*)`. Deletes the runtime check rather than validating it. Signature-changing, so it needs the project-wide call-site verdict.
-- Wiring `PreferHKTTypeclasses` to the `fix.hkt` engine. Its `rewrite` is still a hardcoded list of fixture filenames and body substrings, while `UsageAnalyzer` + `CapabilitySolver` + `HktRewriter` sit beside it fully general — `PreferContainerTypeclasses` is that engine's second consumer and shows the wiring.
+- Summon-style bodies. `UsageAnalyzer` attributes a capability to the *receiver* of a call, so `Reducible[NonEmptyList].reduce(xs)` states nothing about `xs` — the container is only an argument — and `PreferHKTTypeclasses` leaves it alone. Reading it would also mean rewriting `Reducible[NonEmptyList]` to `Reducible[G]` in the body, which no rule in `fix.hkt` does today.
+- Result-position containers. `def square[T](count: Int, from: Int): Seq[(T, T)] = Range(...).map(...)` names a container the caller never supplies, so `PreferContainerTypeclasses.isParameter` refuses it: widening the signature alone gives `square[S[_]]: S[(T, T)]` over a body that still returns a `Seq`, which is not a program. Reaching `S` here means *building* it — `Range(...).foldMap(k => (...).pure[S])` under `Applicative` and `MonoidK` — and that is a body rewrite, the same wall as the entry below. Cats has no `Range ~> S`.
+- Lifting a concrete constructor into `F`. `private def parse(s: String): Try[Int] = Try(s.toInt)` is a `MonadError` in disguise, but reaching `parse[F[_]: MonadError[*, Throwable]]` means rewriting the body to `F.fromTry(Try(...))`. The engine widens signatures; a body rewrite is a second rule.
+- Element-level evidence. Widening `xs: List[B]` to `G[B]` under `Foldable` says nothing about the `Monoid[B]` that `xs.foldMap(identity)` also needs. Today the compiler is the check: if the evidence is absent the widened file does not compile. `DeclineReason.MissingEvidence` exists for the rule that would decline instead.
 
 ## Typelevel Style
 

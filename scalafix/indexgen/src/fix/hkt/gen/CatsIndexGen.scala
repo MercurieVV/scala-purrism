@@ -28,7 +28,7 @@ object CatsIndexGen {
       "public"
     )
   private val CapabilityHeader =
-    List("typeclass", "method", "owner", "kind", "derived", "arity")
+    List("typeclass", "method", "owner", "kind", "derived", "arity", "exits")
   private val SyntaxHeader =
     List("syntaxMethod", "owner", "method", "importPath")
   private val GapsHeader = List("typeclass", "reason", "tracked")
@@ -57,7 +57,8 @@ object CatsIndexGen {
       owner: String,
       kind: String,
       derived: Boolean,
-      arity: Int
+      arity: Int,
+      exits: Boolean
   )
 
   private final case class RawSyntax(
@@ -118,7 +119,8 @@ object CatsIndexGen {
           row.owner,
           row.kind,
           row.derived.toString,
-          row.arity.toString
+          row.arity.toString,
+          row.exits.toString
         )
       }
 
@@ -452,7 +454,8 @@ object CatsIndexGen {
               semanticSymbol(root),
               kind,
               root.owner != tc || !method.flags.is(Flags.Deferred),
-              method.paramSymss.flatten.count(_.isTerm)
+              method.paramSymss.flatten.count(_.isTerm),
+              leavesConstructor(tc, method)
             )
           }
       }
@@ -490,6 +493,75 @@ object CatsIndexGen {
             }
         }
 
+    }
+
+    /** Whether a capability's result leaves the abstracted type constructor.
+      *
+      * `Functor#map` returns `F[B]` and stays inside it; `Foldable#toList`
+      * returns `List[A]` and does not. That difference decides whether the
+      * operations *after* a call are still questions about `F`: everything
+      * chained onto `xs.toList` is chained onto a genuine `List`, and a rule
+      * that widened `xs` must not read them as constraints on the widening.
+      *
+      * A typeclass with no type parameter (there are none in v1's index) has
+      * nothing to leave, and is reported as not leaving.
+      */
+    private def leavesConstructor(using
+        quotes: Quotes
+    )(
+        typeclass: quotes.reflect.Symbol,
+        method: quotes.reflect.Symbol
+    ): Boolean = {
+      import quotes.reflect.*
+
+      def result(tpe: TypeRepr): TypeRepr =
+        tpe match {
+          case MethodType(_, _, res) => result(res)
+          case PolyType(_, _, res)   => result(res)
+          case ByNameType(res)       => result(res)
+          case other                 => other
+        }
+
+      def mentions(tpe: TypeRepr, parameter: Symbol): Boolean =
+        tpe match {
+          case AppliedType(constructor, arguments) =>
+            mentions(constructor, parameter) ||
+            arguments.exists(mentions(_, parameter))
+          case AnnotatedType(underlying, _) => mentions(underlying, parameter)
+          case Refinement(parent, _, info) =>
+            mentions(parent, parameter) || mentions(info, parameter)
+          case AndType(left, right) =>
+            mentions(left, parameter) || mentions(right, parameter)
+          case OrType(left, right) =>
+            mentions(left, parameter) || mentions(right, parameter)
+          case ByNameType(underlying) => mentions(underlying, parameter)
+          case TypeBounds(low, high) =>
+            mentions(low, parameter) || mentions(high, parameter)
+          case MethodType(_, parameters, res) =>
+            parameters.exists(mentions(_, parameter)) ||
+            mentions(res, parameter)
+          case PolyType(_, bounds, res) =>
+            bounds.exists(mentions(_, parameter)) || mentions(res, parameter)
+          case TypeLambda(_, bounds, res) =>
+            bounds.exists(mentions(_, parameter)) || mentions(res, parameter)
+          // By name, not by symbol: the type parameter reached through the
+          // primary constructor and the one a member type refers to are two
+          // symbols for the same `F`, and only the name survives both.
+          case other =>
+            other.typeSymbol == parameter ||
+            (other.typeSymbol != Symbol.noSymbol &&
+              other.typeSymbol.name == parameter.name)
+        }
+
+      typeclass.primaryConstructor.paramSymss.flatten
+        .filter(_.isType)
+        .headOption
+        .exists(parameter =>
+          !mentions(
+            result(typeclass.typeRef.memberType(method)),
+            parameter
+          )
+        )
     }
 
     private def isTypeclass(using

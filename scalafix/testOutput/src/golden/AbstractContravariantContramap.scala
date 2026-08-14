@@ -1,8 +1,8 @@
 
 package golden
 
-import cats.Contravariant
 import cats.syntax.contravariant.*
+import cats.Contravariant
 
 object AbstractContravariantContramap {
   private case class User(name: String)

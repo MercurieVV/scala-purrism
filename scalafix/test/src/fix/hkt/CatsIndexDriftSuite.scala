@@ -34,7 +34,15 @@ final class CatsIndexDriftSuite extends FunSuite {
         "public"
       ),
     "capabilities.tsv" ->
-      List("typeclass", "method", "owner", "kind", "derived", "arity"),
+      List(
+        "typeclass",
+        "method",
+        "owner",
+        "kind",
+        "derived",
+        "arity",
+        "exits"
+      ),
     "syntax.tsv" ->
       List("syntaxMethod", "owner", "method", "importPath"),
     "stdlib.tsv" ->

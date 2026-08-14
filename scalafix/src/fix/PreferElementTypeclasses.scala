@@ -42,6 +42,52 @@ object PreferElementTypeclassesConfig {
     }
 }
 
+/** The concrete element types this rule is willing to assume an instance for.
+  *
+  * A separate configuration class rather than another field on
+  * [[PreferElementTypeclassesConfig]] because that one is published: adding a
+  * field to a case class changes `apply`, `copy` and the constructor, and MiMa
+  * reads that as a break. Decoded from the same `PreferElementTypeclasses`
+  * block, so it is one key to the user.
+  *
+  * An empty list turns the filter off: every element type is then taken to have
+  * the instance the rewrite needs, which is what to set when the codebase ships
+  * its own `Show` and `Monoid` instances. The default is only the ones Cats
+  * itself documents, because the failure mode of guessing wrong is a file that
+  * does not compile.
+  */
+final case class ElementTypesConfig(
+    elements: List[String] = ElementTypesConfig.catsProvided
+)
+
+object ElementTypesConfig {
+
+  /** Element types Cats ships `Show`, `Monoid` and `Order` instances for. */
+  val catsProvided: List[String] =
+    List(
+      "String",
+      "Int",
+      "Long",
+      "Short",
+      "Byte",
+      "Double",
+      "Float",
+      "Boolean",
+      "Char",
+      "BigInt",
+      "BigDecimal"
+    )
+
+  val default: ElementTypesConfig = ElementTypesConfig()
+
+  implicit val decoder: ConfDecoder[ElementTypesConfig] =
+    ConfDecoder.from { conf =>
+      conf
+        .getOrElse("elements")(default.elements)
+        .map(ElementTypesConfig.apply)
+    }
+}
+
 /** Widens a collection whose body uses an operation that Cats spells
   * differently and derives from a typeclass on the *element*.
   *
@@ -66,8 +112,20 @@ object PreferElementTypeclassesConfig {
   * [[PreferElementTypeclasses.instanceProvided]].
   */
 final class PreferElementTypeclasses(
-    config: PreferElementTypeclassesConfig
+    config: PreferElementTypeclassesConfig,
+    crossFile: CrossFileConfig,
+    elementTypes: ElementTypesConfig,
+    classpath: List[java.nio.file.Path]
 ) extends SemanticRule("PreferElementTypeclasses") {
+
+  def this(
+      config: PreferElementTypeclassesConfig,
+      crossFile: CrossFileConfig,
+      classpath: List[java.nio.file.Path]
+  ) = this(config, crossFile, ElementTypesConfig.default, classpath)
+
+  def this(config: PreferElementTypeclassesConfig) =
+    this(config, CrossFileConfig.default, Nil)
 
   def this() = this(PreferElementTypeclassesConfig.default)
 
@@ -78,7 +136,35 @@ final class PreferElementTypeclasses(
       .getOrElse("PreferElementTypeclasses")(
         PreferElementTypeclassesConfig.default
       )
-      .map(new PreferElementTypeclasses(_))
+      .product(
+        configuration.conf
+          .getOrElse("PreferElementTypeclasses")(CrossFileConfig.default)
+      )
+      .product(
+        configuration.conf
+          .getOrElse("PreferElementTypeclasses")(ElementTypesConfig.default)
+      )
+      .map { case ((config, crossFile), elementTypes) =>
+        new PreferElementTypeclasses(
+          config,
+          crossFile,
+          elementTypes,
+          configuration.scalacClasspath.map(_.toNIO)
+        )
+      }
+
+  /** This rule widens the container too, so the call sites that name their type
+    * arguments are its problem as much as `PreferContainerTypeclasses`'. See
+    * [[WidenScope]].
+    */
+  private lazy val scope: WidenScope =
+    WidenScope.forRun(
+      crossFile,
+      classpath,
+      config.containers,
+      config.widenPublic,
+      symbol => index.knowsConstructor(Symbol(symbol))
+    )
 
   /** The index read so element operations resolve as ordinary capabilities; the
     * rename and the element bound are applied here afterwards.
@@ -96,19 +182,34 @@ final class PreferElementTypeclasses(
           .collect {
             case usage: UsageResult.Abstractable
                 if isContainer(usage.constructor) &&
-                  !handedOver.contains(defn.name.value) =>
+                  !handedOver.contains(defn.name.value) &&
+                  !scope.vetoes(defn.symbol.value) =>
               rewrite(usage)
           }
           .asPatch
-    }.asPatch
+    }.asPatch + callSiteRepairs
   }
+
+  /** The other half of a widening: a call that named its type arguments has to
+    * stop naming them, because the def it calls has grown one it does not
+    * mention.
+    */
+  private def callSiteRepairs(implicit doc: SemanticDocument): Patch =
+    if (scope.isEmpty) Patch.empty
+    else
+      doc.tree.collect {
+        case applyType: Term.ApplyType
+            if scope.repairs(applyType.fun.symbol.value) =>
+          Patch.removeTokens(applyType.targClause.tokens)
+      }.asPatch
 
   private def rewrite(
       usage: UsageResult.Abstractable
   )(implicit doc: SemanticDocument): Patch = {
     val renames = elementCalls(usage)
     if (renames.isEmpty || !config.rewrite) Patch.empty
-    else if (!ContainerFlow.staysAbstract(usage)) Patch.empty
+    else if (!ContainerFlow.staysAbstract(usage, index.exitsConstructor))
+      Patch.empty
     else
       CapabilitySolver.solve(usage.ops, index, config.maxConstraints) match {
         case Right(solution) if solution.constraints.nonEmpty =>
@@ -191,34 +292,23 @@ final class PreferElementTypeclasses(
       .flatMap(_.tparamClause.values)
       .find(param => param.name.value == usage.elementType.syntax)
 
-  /** Element types Cats ships `Show`, `Monoid` and `Order` instances for.
+  /** Whether the element's instance can be assumed to exist.
     *
-    * Deliberately short and deliberately data: the failure mode of guessing
-    * wrong is a file that does not compile, and every entry here is one Cats
-    * documents. Grow it rather than widening the test.
+    * The list is [[ElementTypesConfig]]'s and defaults to what Cats itself
+    * ships; empty means the codebase vouches for every element type.
     */
   private def instanceProvided(element: Type): Boolean =
-    ProvidedElements.contains(element.syntax)
+    ProvidedElements.isEmpty || ProvidedElements.contains(element.syntax)
 
-  private val ProvidedElements: Set[String] =
-    Set(
-      "String",
-      "Int",
-      "Long",
-      "Short",
-      "Byte",
-      "Double",
-      "Float",
-      "Boolean",
-      "Char",
-      "BigInt",
-      "BigDecimal"
-    )
+  private val ProvidedElements: Set[String] = elementTypes.elements.toSet
 
   private val TypeParamNames: List[String] = List("S", "C", "G")
 
   private def isContainer(constructor: Symbol): Boolean =
-    !constructor.isNone && config.containers.contains(simpleName(constructor))
+    !constructor.isNone &&
+      (if (ContainerNames.isWildcard(config.containers))
+         index.knowsConstructor(constructor)
+       else config.containers.contains(simpleName(constructor)))
 
   private def simpleName(symbol: Symbol): String =
     symbol.value.stripSuffix("#").split('/').last.split('.').last

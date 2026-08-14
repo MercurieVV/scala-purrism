@@ -50,6 +50,10 @@ object DeclineReason {
   final case class UnsafeBody(what: String) extends DeclineReason {
     def message: String = s"unsafe body cannot be abstracted: $what"
   }
+  final case class InheritedSignature(defName: String) extends DeclineReason {
+    def message: String =
+      s"signature is fixed by an overridden declaration: $defName"
+  }
   final case class NameConflict(tried: List[String]) extends DeclineReason {
     def message: String =
       s"no conflict-free type parameter name among: ${tried.mkString(", ")}"
@@ -94,6 +98,16 @@ object UsageAnalyzer {
       method: Symbol,
       position: Position,
       span: Position
+  )
+
+  /** The calls in one body, and which of their spans are infix applications.
+    *
+    * Infix-ness is carried beside the calls rather than on `Call` because that
+    * type is part of the published surface of this module.
+    */
+  private final case class BodyCalls(
+      all: List[Call],
+      infixSpans: Set[Position]
   )
 
   private final case class Resolved(
@@ -153,6 +167,7 @@ object UsageAnalyzer {
               index
             )
           )
+          .orElse(inheritanceDecline(defn))
           .orElse(visibilityDecline(defn, widenPublic))
           .getOrElse(
             UsageResult.Abstractable(
@@ -327,28 +342,29 @@ object UsageAnalyzer {
   private def firstBodyDecline(
       defn: Defn.Def,
       target: Target,
-      calls: List[Call],
+      calls: BodyCalls,
       synthetics: List[SyntheticEvidence],
       structuralDeclines: List[UsageResult.Declined],
       index: CatsIndex
   )(implicit doc: SemanticDocument): Option[UsageResult.Declined] = {
-    val callDeclines = targetCalls(target, calls).flatMap { call =>
-      val symbols = allCallSymbols(call, synthetics)
-      symbols.find(unsafeMethodSymbols) match {
-        case Some(method) =>
-          Some(
-            UsageResult.Declined(
-              call.position,
-              DeclineReason.UnsafeBody(method.displayName)
+    val callDeclines = targetCalls(target, calls, synthetics, index).flatMap {
+      call =>
+        val symbols = allCallSymbols(call, synthetics)
+        symbols.find(unsafeMethodSymbols) match {
+          case Some(method) =>
+            Some(
+              UsageResult.Declined(
+                call.position,
+                DeclineReason.UnsafeBody(method.displayName)
+              )
             )
-          )
-        case None =>
-          resolveCall(symbols, index) match {
-            case Left(reason) =>
-              Some(UsageResult.Declined(call.position, reason))
-            case Right(_) => None
-          }
-      }
+          case None =>
+            resolveCall(symbols, index) match {
+              case Left(reason) =>
+                Some(UsageResult.Declined(call.position, reason))
+              case Right(_) => None
+            }
+        }
     }
     val patternDeclines = constructorMatchDeclines(defn, target)
 
@@ -419,11 +435,11 @@ object UsageAnalyzer {
 
   private def requiredOps(
       target: Target,
-      calls: List[Call],
+      calls: BodyCalls,
       synthetics: List[SyntheticEvidence],
       index: CatsIndex
   )(implicit doc: SemanticDocument): List[RequiredOp] =
-    targetCalls(target, calls)
+    targetCalls(target, calls, synthetics, index)
       .flatMap { call =>
         resolveCall(allCallSymbols(call, synthetics), index).toOption.map {
           resolved =>
@@ -450,18 +466,39 @@ object UsageAnalyzer {
     * the chain, because a call on *its* result has no capability and is
     * dropped, which `ContainerFlow` then reports rather than widening.
     */
-  private def targetCalls(target: Target, calls: List[Call])(implicit
+  private def targetCalls(
+      target: Target,
+      calls: BodyCalls,
+      synthetics: List[SyntheticEvidence],
+      index: CatsIndex
+  )(implicit
       doc: SemanticDocument
   ): List[Call] = {
-    val direct = calls.filter(call =>
+    val direct = calls.all.filter(call =>
       receiverConstructor(call.receiver).contains(target.constructor)
     )
 
+    // A call whose capability *leaves* the constructor ends the chain: the
+    // value `xs.toList` returns is a `List` whatever `xs` was, so
+    // `xs.toList.zipWithIndex.map(f)` asks `Foldable` of `xs` and asks nothing
+    // of it thereafter. Without this, `zipWithIndex` is read as an operation on
+    // the abstracted container, and a body that widens perfectly well is
+    // declined as order-specific.
+    def exits(call: Call): Boolean =
+      resolveCall(allCallSymbols(call, synthetics), index).toOption
+        .exists(resolved => index.exitsConstructor(resolved.owner))
+
     @scala.annotation.tailrec
     def grow(accepted: List[Call]): List[Call] = {
-      val spans = accepted.map(_.span)
-      val next = calls.filter(call =>
-        !accepted.exists(_.span == call.span) &&
+      val spans = accepted.filterNot(exits).map(_.span)
+      // Infix calls do not extend the chain. `w.extract + 1` reads as `+`
+      // applied to the result of a recognised call, but that result is an
+      // element -- an `Int` -- and its arithmetic is not a question about the
+      // container. An infix operator only counts when its own left-hand side is
+      // the target, which the direct pass above already decides.
+      val next = calls.all.filter(call =>
+        !calls.infixSpans.contains(call.span) &&
+          !accepted.exists(_.span == call.span) &&
           outermostSelect(call.receiver).exists(select =>
             spans.contains(select.pos)
           )
@@ -642,8 +679,11 @@ object UsageAnalyzer {
 
   private def bodyCalls(defn: Defn.Def)(implicit
       doc: SemanticDocument
-  ): List[Call] =
-    defn.body
+  ): BodyCalls = {
+    val infixSpans = defn.body.collect {
+      case infix: Term.ApplyInfix if belongsTo(defn, infix) => infix.pos
+    }.toSet
+    val calls = defn.body
       .collect {
         case select @ Term.Select(receiver: Term, method: Term.Name)
             if belongsTo(defn, select) =>
@@ -651,10 +691,20 @@ object UsageAnalyzer {
         case apply @ Term.Apply.After_4_6_0(receiver: Term.Name, _)
             if belongsTo(defn, apply) =>
           Call(receiver, Symbol.None, apply.pos, apply.pos)
+        // `x <+> y` is the same call as `x.combineK(y)` and the same question
+        // about `x`'s typeclass, but it is a `Term.ApplyInfix`, not a
+        // `Term.Select`. Cats syntax is written infix more often than not, so
+        // without this the operator forms of `combineK`, `|+|` and `>>` all
+        // read as bodies that never touch their receiver.
+        case infix: Term.ApplyInfix if belongsTo(defn, infix) =>
+          Call(infix.lhs, infix.op.symbol, infix.op.pos, infix.pos)
       }
       .sortBy(call =>
         (call.position.start, call.position.end, call.method.value)
       )
+
+    BodyCalls(calls, infixSpans)
+  }
 
   private def receiverConstructor(term: Term)(implicit
       doc: SemanticDocument
@@ -675,7 +725,13 @@ object UsageAnalyzer {
       case _                     => None
     }
 
-  private def canonicalConstructor(symbol: Symbol): Symbol =
+  /** The one symbol a constructor is known by.
+    *
+    * `List[Int]` is written `scala/package.List#` and inferred
+    * `scala/collection/immutable/List#`; everything downstream -- the index,
+    * the decline tables -- is keyed on the second.
+    */
+  def canonicalConstructor(symbol: Symbol): Symbol =
     constructorAliases.getOrElse(symbol, symbol)
 
   private def syntheticEvidence(implicit
@@ -712,6 +768,28 @@ object UsageAnalyzer {
       right != Position.None &&
       left.start <= right.end &&
       right.start <= left.end
+
+  /** A definition whose signature is not its own to change.
+    *
+    * `override def apply[A](fa: Seq[A]): List[A]` implements `FunctionK`, and
+    * `apply[A, G[_]: Foldable]` implements nothing: a type parameter added here
+    * is a different method, and the compiler says so. The supertype is not in
+    * this file and often not in this project, so the only sound move is to
+    * leave the definition alone.
+    */
+  private def inheritanceDecline(
+      defn: Defn.Def
+  )(implicit doc: SemanticDocument): Option[UsageResult.Declined] = {
+    val declaredOverride = defn.mods.exists(_.is[Mod.Override])
+    val inherited =
+      defn.symbol.info.exists(_.overriddenSymbols.nonEmpty)
+    Option.when(declaredOverride || inherited)(
+      UsageResult.Declined(
+        defn.name.pos,
+        DeclineReason.InheritedSignature(defn.name.value)
+      )
+    )
+  }
 
   private def visibilityDecline(
       defn: Defn.Def,

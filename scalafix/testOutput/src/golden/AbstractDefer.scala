@@ -1,9 +1,11 @@
 
 package golden
 
-import cats.Defer
+import cats.Eval
 
 object AbstractDefer {
-  private def repeat[G[_]: Defer](value: G[Int]): G[Int] =
-    Defer[G].defer(repeat(value))
+  // Not widened: `Eval.defer` is a companion call, see
+  // AbstractMonadErrorEitherRaiseHandle.
+  private def repeat(value: Eval[Int]): Eval[Int] =
+    Eval.defer(repeat(value))
 }

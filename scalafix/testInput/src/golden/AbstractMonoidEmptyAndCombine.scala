@@ -1,5 +1,9 @@
 /*
 rules = [PreferHKTTypeclasses]
+
+# The collections are `PreferContainerTypeclasses`' subject by default; these
+# fixtures are about the shape, not about who owns `List`.
+PreferHKTTypeclasses.containers = []
  */
 package golden
 

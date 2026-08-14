@@ -2,7 +2,7 @@
 package golden
 
 import cats.Traverse
-import cats.syntax.functor.*
+import cats.syntax.functor._
 
 class AbstractExistingConstraintReuse[G[_]: Traverse] {
   private case class User(name: String)

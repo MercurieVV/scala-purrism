@@ -11,6 +11,7 @@ fix.PreferEffectIdioms
 fix.PreferOptionIdioms
 fix.PreferIndexedMap
 fix.PreferContainerTypeclasses
+fix.PreferTypeParameters
 fix.PreferStateThreading
 fix.SuspendSideEffects
 fix.PreferElementTypeclasses

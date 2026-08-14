@@ -147,7 +147,7 @@ final class CatsIndexSuite extends FunSuite {
 
   test("parse rejects malformed stdlib rows with the resource and line") {
     val capabilityRows = Iterator(
-      "cats/Functor#\tcats/Functor#map().\tcats/Functor#map().\tUnary\tfalse\t2"
+      "cats/Functor#\tcats/Functor#map().\tcats/Functor#map().\tUnary\tfalse\t2\tfalse"
     )
     val stdlibRows = Iterator(
       "#concreteMethod\tkind\towner\tmethod\tnote",

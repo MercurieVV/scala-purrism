@@ -1,9 +1,9 @@
 
 package golden
 
-import cats.Comonad
 import cats.syntax.coflatMap.*
 import cats.syntax.comonad.*
+import cats.Comonad
 
 object AbstractComonadExtractCoflatMap {
   private def duplicate[G[_]: Comonad](e: G[Int]): G[Int] =
