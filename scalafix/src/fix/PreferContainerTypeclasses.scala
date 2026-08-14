@@ -137,14 +137,22 @@ final class PreferContainerTypeclasses(
       // -- an unconstrained type parameter and an empty using clause, which is
       // not a weaker signature but an uncompilable one.
       case Right(solution) if solution.constraints.isEmpty =>
-        Patch.empty
+        lint(
+          usage.defn.name.pos,
+          "no Cats capability covers this container's use; nothing to widen to"
+        )
       // `UsageAnalyzer` reports the ops it could map to a capability. It does
       // not report that it dropped one, so a body mixing `map` with `filter`
       // solves to `Functor` and loses the `filter`, and a body ending in
       // `mkString` solves to `Functor` over a value that no longer has one.
       // Both compile as `Vector` and neither compiles as `S`.
       case Right(solution) if !ContainerFlow.staysAbstract(usage) =>
-        Patch.empty
+        lint(
+          usage.defn.name.pos,
+          "the container does not stay abstract: an operation on it is not " +
+            "covered by " + solution.constraints.map(_.value).mkString(", ") +
+            ", or its value is passed to a signature that names a container"
+        )
       case Right(solution) if config.rewrite =>
         HktRewriter
           .freshTypeParamName(usage.defn, TypeParamNames)
@@ -202,7 +210,13 @@ final class PreferContainerTypeclasses(
   private def mentionsContainer(reason: DeclineReason): Boolean =
     reason match {
       case _: DeclineReason.OrderOrIndexSpecific => true
-      case _                                     => false
+      // `NoCapability` is deliberately not reported. `UsageAnalyzer` declines a
+      // definition on the first unresolvable call anywhere in its body, which
+      // in real code is usually an element-level one -- `Int#toLong`,
+      // `String#replace` -- and has nothing to say about the container. The
+      // precise version of that report is `ContainerFlow`'s, which only looks
+      // at the chain rooted at the parameter.
+      case _ => false
     }
 
   private def simpleName(symbol: Symbol): String =

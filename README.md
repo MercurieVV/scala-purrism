@@ -180,6 +180,7 @@ otherwise fail the whole run with "SemanticDB not found".
 | [`PreferStateThreading`](#the-idiom-rules) | pair-threading `foldLeft` → `traverse` in `State` | optional — `rewrite`, `stateT` |
 | [`SuspendSideEffects`](#suspendsideeffects) | reports effects a signature does not mention; rewrites `F.pure(<effect>)` to `F.delay(<effect>)` | optional — `rewrite`, `report`, `effects` |
 | [`PreferContainerTypeclasses`](#prefercontainertypeclasses) | concrete collection parameters → `S[_]` with the weakest Cats constraint | optional — `widenPublic`, `maxConstraints`, `containers` |
+| [`PreferElementTypeclasses`](#preferelementtypeclasses) | operations whose Cats form is spelled differently and derives from a typeclass on the *element* | optional — `widenPublic`, `containers` |
 | [`PropagateOpaqueType`](#propagateopaquetype) | propagate an `opaque type` through the program | required — seeds |
 | `PreferCatsFunctions` | match project bodies against the Cats source index, rewrite to the winning public function | none |
 | `PreferHKTTypeclasses` | abstract concrete `F`-returning functions to Cats typeclass constraints | optional — `widenPublic` |
@@ -305,15 +306,24 @@ needs a fact the expression does not carry is a rewrite that stops compiling.
 
 | rule | rewrites | reports |
 | --- | --- | --- |
-| `PreferEffectIdioms` | `catch { case _: Throwable => … }` → `catch { case NonFatal(…) => … }`; `opt.fold(F.unit)(f)` → `opt.traverse_(f)` | `try`/`finally` around an acquired resource (it is a `Resource`, but only once the body is in `F`); `AtomicReference` (it is a `Ref`, but only once every use is in `F`) |
-| `PreferOptionIdioms` | `val v = m.get(k); if (v eq null) d else f(v)` → `Option(m.get(k)).fold(d)(v => f(v))` | `getOrElse(k, throw …)` — a partial lookup in a total signature |
-| `PreferIndexedMap` | `xs.indices.map(i => f(xs(i)))` → `xs.map(x => f(x))`, or `xs.zipWithIndex.map { case (x, i) => … }` when the index is still read; `xs.foldLeft(F.pure(z))((acc, x) => acc.flatMap(…))` → `xs.foldM(z)(…)` | — |
+| `PreferEffectIdioms` | `catch { case _: Throwable => … }` → `catch { case NonFatal(…) => … }`; `opt.fold(F.unit)(f)` → `opt.traverse_(f)`; `try body finally r.close()` → `Using.resource(r)(_ => body)` | a `finally` that closes *and* does something else; `AtomicReference` (it is a `Ref`, but only once every use is in `F`); `asInstanceOf` |
+| `PreferOptionIdioms` | `val v = m.get(k); if (v eq null) d else f(v)` → `Option(m.get(k)).fold(d)(v => f(v))`; `opt.map(f).getOrElse(d)` → `opt.fold(d)(f)` | `getOrElse(k, throw …)` — a partial lookup in a total signature |
+| `PreferIndexedMap` | `xs.indices.map(i => f(xs(i)))` → `xs.map(x => f(x))`, or `xs.zipWithIndex.map { case (x, i) => … }` when the index is still read; `xs.foldLeft(F.pure(z))((acc, x) => acc.flatMap(…))` → `xs.foldM(z)(…)`; `xs.map(f).sum` → `xs.foldMap(f)` | — |
 | `PreferStateThreading` | `xs.foldLeft((s0, empty)) { case ((s, out), x) => (s1, out :+ b) }` → `xs.traverse(x => State((s: S) => (s1, b))).run(s0).value` | a `(S, A) => (S, B)` method (that is `State[S, B]`, and `Ref#modifyState` takes one); a self-recursive effect (that is `iterateUntilM`) |
 
 `PreferIndexedMap` declines when the body subscripts by anything but the loop
 variable — `xs(i - 1)` reads a neighbour, which `zipWithIndex` does not hand
 over. `PreferStateThreading` declines when the collected half is read rather
 than only appended to, and when the seed does not say what the state type is.
+It also distinguishes a poll loop from a *retry*: a recursion that leaves an
+error handler or counts a budget down is not a fold over a condition, and
+`iterateUntilM` has nowhere to put the giving up.
+
+`Using.resource` rather than cats-effect `Resource`, because the rewrite has to
+preserve the type: `Resource.fromAutoCloseable(…).use(…)` yields an `F[A]`
+where the `try` yielded an `A`, so it applies only once the body is already in
+`F`. `.map(f).sum` → `.foldMap(f)` checks the receiver's *own* type — `Vector`
+and `Set` resolve `map` to the same symbol, and Cats has no `Foldable[Set]`.
 
 Every one of them takes `rewrite = false` to leave only the reports.
 
@@ -400,6 +410,49 @@ honours like every other.
 **Configuration:** `rewrite` (default `true`), `report` (default `true`),
 `effects` — the result-type heads treated as effects, for projects with their
 own effect alias.
+
+### PreferElementTypeclasses
+
+`PreferContainerTypeclasses` only ever widens a signature; the body it leaves
+alone. Some stdlib operations have no same-named Cats counterpart, and the Cats
+form takes its meaning from a typeclass on the *element* rather than on the
+container:
+
+```scala
+private def rendered(rows: List[String]): String =
+  rows.mkString("[", ",", "]")
+
+private def rendered[S[_]: Foldable](rows: S[String]): String =
+  rows.mkString_("[", ",", "]")
+```
+
+This is a **separate rule because it can change what the program prints.**
+`mkString` renders each element with `toString`; `mkString_` renders it with
+`Show`, and the two agree only where someone made them agree. `sum` against
+`combineAll` is the same story for `Numeric` against `Monoid`.
+
+Where the element is the definition's own type parameter, the rule adds the
+constraint:
+
+```scala
+private def joined[A, S[_]: Foldable](rows: S[A])(using Show[A]): String =
+  rows.mkString_(", ")
+```
+
+Where the element is concrete, it fires only for types Cats ships the instance
+for. A domain type declines: nothing says `Show[Reading]` exists, and assuming
+it does produces a file that will not compile.
+
+**Configuration:** `widenPublic` (default `false`), `maxConstraints`,
+`containers` — the same set as `PreferContainerTypeclasses`.
+
+The rules live in `scalafix/resources/cats-index/stdlib.tsv` as `kind=element`
+rows, which carry two columns the other kinds do not — the Cats spelling to
+rename the call to, and the typeclass the meaning comes from:
+
+```
+scala/collection/*#mkString().	element	cats/Foldable#foldLeft().	cats/Foldable#foldLeft().	mkString_	cats/Show#	…
+```
 
 ### PropagateOpaqueType
 

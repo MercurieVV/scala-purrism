@@ -16,6 +16,18 @@ scala/Option#isDefined().	decline		ConcreteConstructorMatch	Option constructor t
 scala/Option#isEmpty().	decline		ConcreteConstructorMatch	Option constructor test
 scala/Option#map().	capability	cats/Functor#map().	cats/Functor#map().	Option map
 scala/Option#nonEmpty().	decline		ConcreteConstructorMatch	Option constructor test
+scala/collection/*#collectFirst().	capability	cats/Foldable#collectFirst().	cats/Foldable#collectFirst().	any collection collectFirst is Foldable
+scala/collection/*#count().	capability	cats/UnorderedFoldable#count().	cats/UnorderedFoldable#count().	any collection count is UnorderedFoldable
+scala/collection/*#exists().	capability	cats/UnorderedFoldable#exists().	cats/UnorderedFoldable#exists().	any collection exists is Foldable
+scala/collection/*#filter().	capability	cats/FunctorFilter#filter().	cats/FunctorFilter#filter().	any collection filter is FunctorFilter
+scala/collection/*#filterNot().	capability	cats/FunctorFilter#filterNot().	cats/FunctorFilter#filterNot().	any collection filterNot is FunctorFilter
+scala/collection/*#find().	capability	cats/Foldable#find().	cats/Foldable#find().	any collection find is Foldable
+scala/collection/*#forall().	capability	cats/UnorderedFoldable#forall().	cats/UnorderedFoldable#forall().	any collection forall is Foldable
+scala/collection/*#isEmpty().	capability	cats/UnorderedFoldable#isEmpty().	cats/UnorderedFoldable#isEmpty().	any collection isEmpty is Foldable
+scala/collection/*#mkString().	element	cats/Foldable#foldLeft().	cats/Foldable#foldLeft().	mkString_	cats/Show#	mkString renders with toString; mkString_ renders with Show
+scala/collection/*#nonEmpty().	capability	cats/UnorderedFoldable#nonEmpty().	cats/UnorderedFoldable#nonEmpty().	any collection nonEmpty is Foldable
+scala/collection/*#sum().	element	cats/Foldable#combineAll().	cats/Foldable#combineAll().	combineAll	cats/kernel/Monoid#	sum adds with Numeric; combineAll combines with Monoid
+scala/collection/*#toList().	capability	cats/Foldable#toList().	cats/Foldable#toList().	any collection toList is Foldable
 scala/collection/IndexedSeqOps#foldRight().	capability	cats/Foldable#foldRight().	cats/Foldable#foldRight().	Vector foldRight
 scala/collection/IndexedSeqOps#headOption().	decline		OrderOrIndexSpecific	Vector headOption
 scala/collection/IndexedSeqOps#reverse().	decline		OrderOrIndexSpecific	Vector reverse
@@ -23,7 +35,7 @@ scala/collection/IterableOnceOps#foldLeft().	capability	cats/Foldable#foldLeft()
 scala/collection/IterableOnceOps#foldRight().	capability	cats/Foldable#foldRight().	cats/Foldable#foldRight().	Map foldRight
 scala/collection/IterableOnceOps#reduce().	capability	cats/Reducible#reduceLeft().	cats/Reducible#reduceLeft().	Ambiguous reduction candidate requiring non-empty structure
 scala/collection/IterableOnceOps#reduce().	capability	cats/kernel/Semigroup#combine().	cats/kernel/Semigroup#combine().	Ambiguous reduction candidate requiring element combination
-scala/collection/IterableOnceOps#size().	decline		OrderOrIndexSpecific	Map size
+scala/collection/IterableOnceOps#size().	capability	cats/UnorderedFoldable#size().	cats/UnorderedFoldable#size().	Map size
 scala/collection/IterableOps#`++`().	capability	cats/SemigroupK#combineK().	cats/SemigroupK#combineK().	List and Vector concatenation
 scala/collection/IterableOps#collect().	capability	cats/FunctorFilter#mapFilter().	cats/FunctorFilter#mapFilter().	Seq collect is FunctorFilter
 scala/collection/IterableOps#drop().	decline		OrderOrIndexSpecific	Map drop

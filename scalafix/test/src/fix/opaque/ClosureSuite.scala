@@ -1,5 +1,13 @@
 package fix.opaque
 
+import fix.flow.TypePath
+import fix.flow.Provenance
+import fix.flow.Origin
+import fix.flow.EdgeKind
+import fix.flow.Node
+import fix.flow.Edge
+import fix.flow.Facts
+
 /** Drives `Closure.compute` through a fake symbol table, so the graph algorithm
   * is pinned without needing a compiler or any SemanticDB on disk.
   *

@@ -115,6 +115,9 @@ private[fix] object IdiomPatches {
          else Patch.empty) +
         (if (rewrite.needsNonFatal)
            Patch.addGlobalImport(Symbol("scala/util/control/NonFatal."))
+         else Patch.empty) +
+        (if (rewrite.needsUsing)
+           Patch.addGlobalImport(Symbol("scala/util/Using."))
          else Patch.empty)
     }
     val lints = findings

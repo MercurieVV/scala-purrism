@@ -18,6 +18,32 @@
 - A rule that consumes another rule's output needs a recompile between them. SemanticDB describes the code as it was compiled; after a signature rewrite the payload is stale, and a rule reading types from it is reasoning about code that no longer exists. `PreferKleisli` → recompile → `PreferArrow` is the pipeline, not one invocation listing both.
 - `PreferCatsFunctions` normalization/preservation/ranking/decline semantics are specified in [Prefer Cats Functions](PREFER_CATS_FUNCTIONS.md); conform to that contract rather than re-deriving equivalence rules ad hoc.
 
+## Change Closures
+
+A rewrite that changes a type has to follow that type wherever the value goes.
+`fix.flow` holds the shared half of that — `Node`, `Edge`, `Facts`,
+`Reachability` — and says nothing about what following the value *means*.
+
+The meaning is not shared, and the difference is not a detail:
+
+- **Opaque propagation is monomorphic.** The type genuinely spreads. Every
+  signature the value reaches must change too, and where it meets something
+  outside the closure the value can still cross by being wrapped or unwrapped.
+  That is what `fix.opaque.Closure` computes: `genesis`, `leaves`, `mergePoints`,
+  and `widen` to pull an intruder in.
+- **Container widening is polymorphic.** `def f(xs: List[A])` becoming
+  `def f[S[_]: Foldable](xs: S[A])` generalises at *one* site; every call site
+  then re-instantiates `S`, and inference does that silently. So the value
+  flowing out of the definition into a concrete `Seq`-typed signature is
+  harmless — `f(myList)` still infers `S = List`. Only an escape *inside* the
+  widened body is fatal, because there `S` is universally quantified and cannot
+  be instantiated: `Phrase(pitches.map(f), d)` is the failing shape.
+
+Seating `PreferContainerTypeclasses` on the opaque closure was tried and
+reverted: forward reachability leaves the definition through its own return,
+which the closure calls an escape and inference calls ordinary. `ContainerFlow`
+stays syntactic and in-body for that reason, not for want of a graph.
+
 ## Candidate Rules
 
 Shapes surveyed and specified, not yet implemented:
@@ -39,6 +65,7 @@ Shapes surveyed and specified, not yet implemented:
 - Keep one matching relative path in `testInput/src` and `testOutput/src` for each scenario.
 - Add focused tests for helper logic when a rewrite algorithm becomes non-trivial. Keep the analysis behind a plain interface (as `Closure` sits behind `Facts`) so it can be driven by a fake, with no compiler in the loop.
 - Prefer small fixtures that isolate one transformation at a time.
+- Assert a rewriter's expected output from a file under `scalafix/testOutput/src`, read with `scalafix.testkit.ExpectedSources`, not from a string in the test source. A string is never compiled, so such a test asserts that the renderer is *stable* rather than *correct*: `(using G: Functor)` -- which names a type that does not exist -- sat in `HktRewriterSuite`'s expectations until a real codebase hit it, because every executed fixture goes through `testOutput.compile` and these did not.
 - Never guard a test with `assume` on a path resolved relative to the working directory. The forked test JVM has a different one, so the test skips and reports green forever. Locate build outputs through generated properties and `require` that they exist.
 - Run mutation testing with Stryker4s for behavior-heavy logic when the rule implementation matures.
 

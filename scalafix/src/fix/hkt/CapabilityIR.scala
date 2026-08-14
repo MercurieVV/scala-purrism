@@ -52,6 +52,26 @@ final case class StdlibEntry(
     mapping: StdlibMapping
 )
 
+/** A stdlib operation whose Cats counterpart is spelled differently and takes
+  * its meaning from a typeclass on the *element*.
+  *
+  * `xs.mkString(p, d, s)` becomes `xs.mkString_(p, d, s)`, which needs
+  * `Foldable[S]` like any other container operation, but also `Show[A]` -- and
+  * `Show` is not `toString`. That makes the rewrite a change of behaviour
+  * wherever the two disagree, which is why these rules are read by a separate
+  * rule rather than folded into the container one.
+  *
+  * `capabilityOwner`/`capabilityMethod` are the container capability the
+  * operation still needs, so the ordinary solver can account for it.
+  */
+final case class ElementRule(
+    concreteMethod: Symbol,
+    renameTo: String,
+    capabilityOwner: Symbol,
+    capabilityMethod: Symbol,
+    elementConstraint: Symbol
+)
+
 final case class CatsTypeclass(
     symbol: Symbol,
     parents: List[Symbol],

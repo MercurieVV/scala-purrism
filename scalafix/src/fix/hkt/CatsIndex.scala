@@ -13,15 +13,75 @@ final class CatsIndex private (
     val capabilities: Map[Symbol, List[Capability]],
     val syntax: Map[Symbol, Capability],
     val stdlib: Map[Symbol, List[StdlibEntry]],
-    private val syntaxImports: Map[Symbol, String]
+    private val syntaxImports: Map[Symbol, String],
+    val elementRules: Map[Symbol, ElementRule]
 ) {
+
+  /** The element rule for a concrete method, wildcards included. */
+  def resolveElement(method: Symbol): Option[ElementRule] =
+    elementRules
+      .get(method)
+      .orElse(
+        matchWildcard(method, elementWildcards).map(_._2)
+      )
+
+  /** This index with every element rule also readable as an ordinary
+    * capability.
+    *
+    * `UsageAnalyzer` declines a definition on the first call it cannot resolve,
+    * so `mkString` would stop the analysis before any constraint set is solved.
+    * Read this way the operation resolves to the container capability it still
+    * needs -- `Foldable` for `mkString_` -- and the rename and the element
+    * constraint are applied afterwards by the rule that asked for this view.
+    *
+    * The plain index deliberately does *not* resolve them: a rule that renders
+    * only a signature would widen the container and leave `mkString` behind,
+    * which does not compile.
+    */
+  def withElementRules: CatsIndex =
+    new CatsIndex(
+      typeclasses,
+      capabilities,
+      syntax,
+      stdlib ++ elementRules.map { case (concrete, rule) =>
+        concrete -> List(
+          StdlibEntry(
+            concrete,
+            StdlibMapping
+              .ToCapability(rule.capabilityOwner, rule.capabilityMethod)
+          )
+        )
+      },
+      syntaxImports,
+      elementRules
+    )
+
+  private lazy val elementWildcards: List[(String, String, ElementRule)] =
+    elementRules.toList.flatMap { case (symbol, rule) =>
+      splitMethod(symbol.value).collect {
+        case (namespace, name) if namespace.endsWith("*") =>
+          (namespace.dropRight(1), name, rule)
+      }
+    }
+
+  private def matchWildcard[A](
+      method: Symbol,
+      rules: List[(String, String, A)]
+  ): Option[(String, A)] =
+    splitMethod(method.value).flatMap { case (namespace, name) =>
+      rules.collectFirst {
+        case (prefix, suffix, value)
+            if name == suffix && namespace.startsWith(prefix) =>
+          name -> value
+      }
+    }
 
   def this(
       typeclasses: Map[Symbol, CatsTypeclass],
       capabilities: Map[Symbol, List[Capability]],
       syntax: Map[Symbol, Capability],
       stdlib: Map[Symbol, List[StdlibEntry]] = Map.empty
-  ) = this(typeclasses, capabilities, syntax, stdlib, Map.empty)
+  ) = this(typeclasses, capabilities, syntax, stdlib, Map.empty, Map.empty)
 
   /** Every capability whose method or owner is `method`, across all
     * typeclasses, in stable order (by typeclass symbol string).
@@ -46,7 +106,47 @@ final class CatsIndex private (
   def resolveSyntax(method: Symbol): Option[Capability] = syntax.get(method)
 
   def resolveStdlib(method: Symbol): List[StdlibEntry] =
-    stdlib.getOrElse(method, Nil)
+    stdlib.get(method).orElse(byMethodName(method)).getOrElse(Nil)
+
+  /** The wildcard fallback: a row whose owner ends in a star -- the namespace
+    * `scala.collection` followed by `*`, then `#filter().` -- answers for every
+    * class under that namespace.
+    *
+    * The compiler resolves `xs.filter` to the *concrete* collection --
+    * `scala/collection/immutable/List#filter().` -- and there is no SemanticDB
+    * for the standard library on the classpath, so the declaration it overrides
+    * cannot be looked up. Without a wildcard the table therefore needs one row
+    * per collection class per method, which is a combinatorial list that
+    * silently misses whichever pair nobody wrote down. A namespace and a method
+    * name is the fact actually being stated.
+    */
+  private def byMethodName(method: Symbol): Option[List[StdlibEntry]] =
+    splitMethod(method.value).flatMap { case (namespace, name) =>
+      wildcards.collectFirst {
+        case (prefix, suffix, entries)
+            if name == suffix && namespace.startsWith(prefix) =>
+          entries
+      }
+    }
+
+  /** Rows whose owner ends in `*`, as (namespace prefix, method name, entries).
+    */
+  private lazy val wildcards: List[(String, String, List[StdlibEntry])] =
+    stdlib.toList.flatMap { case (symbol, entries) =>
+      splitMethod(symbol.value).collect {
+        case (namespace, name) if namespace.endsWith("*") =>
+          (namespace.dropRight(1), name, entries)
+      }
+    }
+
+  /** Splits `<owner>#<name>(...)` into its owner and its method name. */
+  private def splitMethod(value: String): Option[(String, String)] = {
+    val hash = value.indexOf('#')
+    val paren = value.indexOf('(', hash + 1)
+    Option.when(hash > 0 && paren > hash)(
+      value.substring(0, hash) -> value.substring(hash + 1, paren)
+    )
+  }
 
   /** The syntax wildcard import for a syntax method or its resolved primitive
     * owner.
@@ -127,8 +227,10 @@ object CatsIndex {
       typeclassList: List[CatsTypeclass],
       capabilityList: List[Capability],
       syntaxList: List[(Symbol, Symbol, Symbol, String)],
-      stdlibList: List[StdlibEntry]
+      stdlibRowList: List[StdlibRow]
   ): CatsIndex = {
+    val stdlibList = stdlibRowList.collect { case StdlibRow.Entry(e) => e }
+    val elementList = stdlibRowList.collect { case StdlibRow.Element(r) => r }
     val typeclassMap = typeclassList.map(tc => tc.symbol -> tc).toMap
     val capabilitiesByTypeclass = capabilityList.groupBy(_.typeclass)
     val capabilitiesByOwnerMethod = capabilityList
@@ -180,8 +282,16 @@ object CatsIndex {
       capabilitiesByTypeclass,
       syntaxMap,
       stdlibMap,
-      exactSyntaxImports ++ resolvedSyntaxImports
+      exactSyntaxImports ++ resolvedSyntaxImports,
+      elementList.map(rule => rule.concreteMethod -> rule).toMap
     )
+  }
+
+  /** A parsed stdlib row: an ordinary mapping, or an element rule. */
+  private sealed trait StdlibRow
+  private object StdlibRow {
+    final case class Entry(entry: StdlibEntry) extends StdlibRow
+    final case class Element(rule: ElementRule) extends StdlibRow
   }
 
   private def readResourceLines(resource: String): List[String] = {
@@ -292,8 +402,37 @@ object CatsIndex {
   private def parseStdlibRow(
       cells: List[String],
       capabilityRoots: Set[(Symbol, Symbol)]
-  ): Either[String, StdlibEntry] =
+  ): Either[String, StdlibRow] =
     cells match {
+      // An element rule carries two extra columns: the Cats spelling to rename
+      // the call to, and the typeclass its meaning comes from.
+      case List(
+            concreteMethod,
+            "element",
+            owner,
+            method,
+            renameTo,
+            element,
+            _
+          ) =>
+        val target = Symbol(owner) -> Symbol(method)
+        if (concreteMethod.isEmpty) Left("concreteMethod must not be empty")
+        else if (renameTo.isEmpty) Left("element rename must not be empty")
+        else if (element.isEmpty) Left("element constraint must not be empty")
+        else if (!capabilityRoots(target))
+          Left(s"unknown capability target: $owner / $method")
+        else
+          Right(
+            StdlibRow.Element(
+              ElementRule(
+                Symbol(concreteMethod),
+                renameTo,
+                target._1,
+                target._2,
+                Symbol(element)
+              )
+            )
+          )
       case List(concreteMethod, "capability", owner, method, _) =>
         val target = Symbol(owner) -> Symbol(method)
         if (concreteMethod.isEmpty) Left("concreteMethod must not be empty")
@@ -303,9 +442,11 @@ object CatsIndex {
           Left(s"unknown capability target: $owner / $method")
         else
           Right(
-            StdlibEntry(
-              Symbol(concreteMethod),
-              StdlibMapping.ToCapability(target._1, target._2)
+            StdlibRow.Entry(
+              StdlibEntry(
+                Symbol(concreteMethod),
+                StdlibMapping.ToCapability(target._1, target._2)
+              )
             )
           )
       case List(concreteMethod, "decline", owner, reason, _) =>
@@ -315,14 +456,18 @@ object CatsIndex {
           Left(s"invalid decline reason: $reason")
         else
           Right(
-            StdlibEntry(
-              Symbol(concreteMethod),
-              StdlibMapping.ToDecline(reason)
+            StdlibRow.Entry(
+              StdlibEntry(
+                Symbol(concreteMethod),
+                StdlibMapping.ToDecline(reason)
+              )
             )
           )
       case List(_, kind, _, _, _) =>
         Left(s"invalid stdlib kind: $kind")
-      case other => Left(s"expected 5 columns, got ${other.size}")
+      case List(_, kind, _, _, _, _, _) =>
+        Left(s"invalid stdlib kind for a 7-column row: $kind")
+      case other => Left(s"expected 5 or 7 columns, got ${other.size}")
     }
 
   private val stdlibDeclineReasons: Set[String] =

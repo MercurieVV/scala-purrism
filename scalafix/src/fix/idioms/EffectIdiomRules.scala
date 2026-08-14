@@ -18,8 +18,13 @@ private[fix] object EffectIdiomRules {
   import TermShapes._
 
   val ManualResource: String =
-    "`try`/`finally` around an acquired resource is a `Resource`. " +
-      "Lift the body into `F` and use `Resource.fromAutoCloseable`."
+    "this `finally` closes a resource and does something else too, so the " +
+      "close cannot be lifted out mechanically. `Using.resource` handles it " +
+      "once the finally only closes; `Resource` once the body is in `F`."
+
+  val UnsafeCast: String =
+    "`asInstanceOf` is a claim the compiler cannot check. Model the case " +
+      "in the type, or match on it."
 
   val MutableReference: String =
     "`AtomicReference` threading state through an effectful body is a " +
@@ -32,6 +37,8 @@ private[fix] object EffectIdiomRules {
     tree.collect {
       case term: Term    => traverseUnit(term, facts).toList
       case attempt: Case => nonFatalNet(attempt).toList
+    }.flatten ++ tree.collect { case attempt: Term.Try =>
+      usingResource(attempt).toList
     }.flatten
 
   def findings(
@@ -39,10 +46,13 @@ private[fix] object EffectIdiomRules {
       refs: Boolean
   ): List[IdiomFinding] =
     tree.collect {
-      case term: Term.Try if closesInFinally(term) =>
+      case term: Term.Try
+          if closesInFinally(term) && usingResource(term).isEmpty =>
         IdiomFinding(term, ManualResource)
       case term: Term.New if refs && isAtomicReference(term) =>
         IdiomFinding(term, MutableReference)
+      case term: Term.ApplyType if isUnsafeCast(term) =>
+        IdiomFinding(term, UnsafeCast)
     }
 
   /** `catch { case _: Throwable => … }` -> `catch { case NonFatal(_) => … }`.
@@ -95,7 +105,7 @@ private[fix] object EffectIdiomRules {
         Some(
           IdiomRewrite(
             term,
-            s"${receiver.syntax}.traverse_(${function.syntax})",
+            s"${receiver.pos.text}.traverse_(${function.pos.text})",
             needsCatsSyntax = true
           )
         )
@@ -139,15 +149,86 @@ private[fix] object EffectIdiomRules {
       case _                                   => None
     }
 
+  /** Whether the `finally` closes something, wherever in it that happens.
+    *
+    * `finally { log("done"); stream.close() }` still manages a resource by
+    * hand; it is only the *rewrite* that needs the finally to do nothing else.
+    */
   private def closesInFinally(term: Term.Try): Boolean =
-    term.finallyp.exists {
-      case Term.Apply.After_4_6_0(Term.Select(_, Term.Name(name)), _) =>
-        CloseMethods.contains(name)
-      case Term.Select(_, Term.Name(name)) => CloseMethods.contains(name)
-      case _                               => false
+    term.finallyp.exists { cleanup =>
+      cleanup.collect {
+        case Term.Select(_, Term.Name(name)) if CloseMethods.contains(name) =>
+          ()
+      }.nonEmpty
     }
 
   private val CloseMethods: Set[String] = Set("close", "release", "shutdown")
+
+  /** `try body finally r.close()` -> `Using.resource(r)(_ => body)`.
+    *
+    * Type-preserving, which `Resource.fromAutoCloseable(...).use(...)` is not:
+    * that yields an `F[A]` where the `try` yielded an `A`, so it only applies
+    * once the body is already in `F`. These bodies are not -- they sit inside a
+    * `Try`, a `Sync[F].blocking`, or a bare `Runnable` -- and rewriting them to
+    * `Resource` would change the type of the expression around them.
+    *
+    * Only a stable identifier is accepted as the resource: `Using.resource`
+    * evaluates its argument once, and re-evaluating an arbitrary expression
+    * would acquire a second one.
+    */
+  private def usingResource(attempt: Term.Try): Option[IdiomRewrite] =
+    for {
+      closed <- closedIdentifier(attempt)
+      if attempt.cases.isEmpty
+      body = attempt.expr
+    } yield IdiomRewrite(
+      attempt,
+      renderUsing(closed, body, attempt),
+      needsUsing = true
+    )
+
+  /** `Using.resource(r)(_ => body)`, reusing the body's own braces.
+    *
+    * A block body already carries them, so wrapping it again nests two layers
+    * for nothing. A single expression gets the parenthesised form.
+    */
+  private def renderUsing(
+      closed: String,
+      body: Term,
+      attempt: Term.Try
+  ): String = {
+    val text = body.pos.text
+    if (text.startsWith("{") && text.endsWith("}"))
+      s"Using.resource($closed) { _ =>${text.drop(1).dropRight(1)}}"
+    else if (text.contains('\n')) {
+      // A position starts at the first token, not at the start of its line, so
+      // splicing an indentation-syntax body drops the first line's indentation
+      // and leaves the closing brace in column zero. Both columns are known;
+      // put them back.
+      val bodyIndent = " " * body.pos.startColumn
+      val closeIndent = " " * attempt.pos.startColumn
+      s"Using.resource($closed) { _ =>\n$bodyIndent$text\n$closeIndent}"
+    } else s"Using.resource($closed)(_ => $text)"
+  }
+
+  /** The stable name the `finally` closes, when that is all it does. */
+  private def closedIdentifier(attempt: Term.Try): Option[String] =
+    attempt.finallyp.collect {
+      case Term.Apply.After_4_6_0(
+            Term.Select(Term.Name(name), Term.Name(method)),
+            argClause
+          ) if CloseMethods.contains(method) && argClause.values.isEmpty =>
+        name
+      case Term.Select(Term.Name(name), Term.Name(method))
+          if CloseMethods.contains(method) =>
+        name
+    }
+
+  private def isUnsafeCast(term: Term.ApplyType): Boolean =
+    term.fun match {
+      case Term.Select(_, Term.Name("asInstanceOf")) => true
+      case _                                         => false
+    }
 
   private def isAtomicReference(term: Term.New): Boolean =
     term.init.tpe match {

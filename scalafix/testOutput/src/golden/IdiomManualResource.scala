@@ -1,12 +1,10 @@
-/*
-rules = [PreferEffectIdioms]
- */
+
 package golden
 
 import java.io.PrintWriter
+import scala.util.Using
 
 final class IdiomManualResource {
   def write(out: PrintWriter, line: String): Unit =
-    try out.println(line)
-    finally out.close()
+    Using.resource(out)(_ => out.println(line))
 }

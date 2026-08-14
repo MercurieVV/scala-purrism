@@ -5,21 +5,21 @@ package golden
 
 import scala.concurrent.duration.FiniteDuration
 
-/** Three bodies whose parameter looks abstractable and is not. Each one
-  * compiled as a concrete collection and would not compile as an `S[_]`.
+/** Two bodies whose parameter looks abstractable and is not. Each one compiled
+  * as a concrete collection and would not compile as an `S[_]`.
   */
 final class ContainerFlowDecline {
 
-  /** `filter` is `FunctorFilter`, not `Functor`; solving on `map` alone drops it. */
-  private def positive(rows: List[Int]): List[Int] =
-    rows.map(row => row + 1).filter(row => row > 0)
-
-  /** `mkString` is not any Cats capability. */
+  /** `mkString` is not any Cats capability, so the analyzer declines the
+    * definition before a constraint set is ever solved -- silently, because a
+    * body full of element-level calls it cannot resolve is the normal case and
+    * not something to report.
+    */
   private def rendered(rows: List[String]): String =
     rows.map(row => row.trim).mkString("[", ",", "]")
 
   /** The mapped value is handed to something that asked for a `Seq`. */
-  private def wrapped(rows: Seq[String], width: FiniteDuration): Padded =
+  private def wrapped(rows: Seq[String], width: FiniteDuration): Padded = // assert: PreferContainerTypeclasses
     Padded(rows.map(row => row.take(3)), width)
 }
 

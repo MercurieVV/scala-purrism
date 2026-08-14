@@ -433,12 +433,60 @@ object UsageAnalyzer {
       .distinctBy(op => (op.method, op.position.start, op.position.end))
       .sortBy(op => (op.position.start, op.method.value))
 
+  /** Every call made on the target, including further along a chain.
+    *
+    * A receiver is recognised by its type, which needs `symbol.info` -- and
+    * that is unavailable for the standard library, since no SemanticDB for it
+    * is on the classpath. So `rows` types as `List[Int]` and is recognised,
+    * while the `rows.map(f)` that `filter` is called on types as nothing and is
+    * not. A chained body then reports only its first operation, and solving
+    * over that gives a constraint set too weak to compile: `map(f).filter(p)`
+    * comes back as `Functor` alone.
+    *
+    * What is available is the structure. A call whose receiver *contains* an
+    * already-recognised call is one link further along the same chain, so the
+    * recognised set grows to a fixpoint from the calls on the target itself. An
+    * operation that leaves the container -- `exists`, `mkString` -- still ends
+    * the chain, because a call on *its* result has no capability and is
+    * dropped, which `ContainerFlow` then reports rather than widening.
+    */
   private def targetCalls(target: Target, calls: List[Call])(implicit
       doc: SemanticDocument
-  ): List[Call] =
-    calls.filter(call =>
+  ): List[Call] = {
+    val direct = calls.filter(call =>
       receiverConstructor(call.receiver).contains(target.constructor)
     )
+
+    @scala.annotation.tailrec
+    def grow(accepted: List[Call]): List[Call] = {
+      val spans = accepted.map(_.span)
+      val next = calls.filter(call =>
+        !accepted.exists(_.span == call.span) &&
+          outermostSelect(call.receiver).exists(select =>
+            spans.contains(select.pos)
+          )
+      )
+      if (next.isEmpty) accepted else grow(accepted ++ next)
+    }
+
+    grow(direct)
+  }
+
+  /** The select a receiver's own spine ends in.
+    *
+    * `rows.map(f)` gives `rows.map`, so a `filter` called on it is one link
+    * further along the same chain. `wrap(rows.map(f))` gives nothing, because
+    * its spine ends in `wrap` -- an expression that merely *encloses* a call on
+    * the container is not itself on the container, and treating it as one
+    * accepts every method in the enclosing body.
+    */
+  private def outermostSelect(receiver: Term): Option[Term.Select] =
+    receiver match {
+      case select: Term.Select       => Some(select)
+      case apply: Term.Apply         => outermostSelect(apply.fun)
+      case applyType: Term.ApplyType => outermostSelect(applyType.fun)
+      case _                         => None
+    }
 
   private def resolveCall(
       symbols: List[Symbol],
@@ -638,8 +686,26 @@ object UsageAnalyzer {
   private def allCallSymbols(
       call: Call,
       synthetics: List[SyntheticEvidence]
-  ): List[Symbol] =
-    fix.SemanticSupport.symbolsAt(call.span, call.method, synthetics)
+  )(implicit doc: SemanticDocument): List[Symbol] =
+    fix.SemanticSupport
+      .symbolsAt(call.span, call.method, synthetics)
+      .flatMap(symbol => symbol :: overriddenBy(symbol))
+      .distinct
+
+  /** A symbol and the declarations it overrides, nearest first.
+    *
+    * The compiler resolves `xs.filter` on a `List` to
+    * `scala/collection/immutable/List#filter().`, not to the `IterableOps`
+    * declaration it inherits. Without the override chain the capability table
+    * has to name every concrete collection separately -- one row for `List`,
+    * one for `Vector`, one for `Seq` -- which is a row per class per method and
+    * silently misses whichever pair nobody thought of. With it, one row on the
+    * trait answers for every collection that inherits it.
+    */
+  private def overriddenBy(
+      symbol: Symbol
+  )(implicit doc: SemanticDocument): List[Symbol] =
+    symbol.info.toList.flatMap(_.overriddenSymbols)
 
   private def positionsOverlap(left: Position, right: Position): Boolean =
     left != Position.None &&

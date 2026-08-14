@@ -1,5 +1,10 @@
 package fix
 
+import fix.flow.TypePath
+import fix.flow.Provenance
+import fix.flow.Node
+import fix.flow.Facts
+
 import java.nio.file.Path
 
 import scala.annotation.nowarn

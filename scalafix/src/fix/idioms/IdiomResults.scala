@@ -13,7 +13,8 @@ private[fix] final case class IdiomRewrite(
     tree: Tree,
     replacement: String,
     needsCatsSyntax: Boolean = false,
-    needsNonFatal: Boolean = false
+    needsNonFatal: Boolean = false,
+    needsUsing: Boolean = false
 )
 
 /** Something an idiom rule recognised but will not rewrite.
