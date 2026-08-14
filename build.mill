@@ -37,19 +37,18 @@ object scalafix
   // workflow rewrites this line after a successful publish, so it should not
   // need editing by hand.
   //
-  // Empty for 0.7.0: the flow-graph types the opaque rules are built on --
-  // `Node`, `TypePath`, `Facts`, `Graph`, `Provenance` -- moved from
-  // `fix.opaque` to `fix.flow` so the container and HKT rules could share them.
-  // That is 68 genuine breakages against 0.6.2, which is what the minor bump
-  // says. Filtering them would claim they are acceptable; there is simply no
-  // compatible baseline to check 0.7.0 against. The workflow re-pins this to
-  // 0.7.0 once published, so the next release is checked again.
+  // Set it to `Seq()` for a release that intentionally breaks compatibility --
+  // 0.7.0 did, moving the flow-graph types (`Node`, `TypePath`, `Facts`,
+  // `Graph`, `Provenance`) from `fix.opaque` to `fix.flow` so the container and
+  // HKT rules could share them. That was 68 genuine breakages against 0.6.2,
+  // which is what the minor bump says; filters would instead claim they are
+  // acceptable. The workflow pins a baseline back after publishing, so the
+  // clearing lasts exactly one release.
   //
-  // The override below is what makes an empty baseline mean "nothing to check
-  // against" rather than a hard failure ("No previous artifacts configured",
-  // which is what Mima's own default does on an empty list). It builds the
-  // same coordinates that default would, so once the workflow pins a version
-  // back the check runs exactly as before -- verified by re-pinning 0.6.2 and
+  // `mimaPreviousArtifacts` is overridden so an empty list means "nothing to
+  // check against" rather than a hard failure ("No previous artifacts
+  // configured", which is what Mima's own default does). It builds the same
+  // coordinates that default would -- verified by pinning 0.6.2 through it and
   // getting the identical 68 problems.
   def mimaPreviousVersions = Seq("0.7.0")
   def mimaPreviousArtifacts = Task {
