@@ -16,6 +16,20 @@ class OpaqueCandidateExplorerSuite extends munit.FunSuite {
       OpaqueCandidateExplorer.explore(FixtureIndex.index, FixtureIndex.facts)
     )
 
+  test("the threshold counts declarations, not type positions") {
+    // One declaration reaching several type positions is one entity. Were the
+    // threshold applied to nodes, a single deeply-nested signature could clear
+    // it alone -- which is the cluster an opaque type buys nothing for.
+    val nested = List(
+      fix.flow.Node("a/B#field.", fix.flow.TypePath.root),
+      fix.flow.Node("a/B#field.", fix.flow.TypePath(List(0))),
+      fix.flow.Node("a/B#field.", fix.flow.TypePath(List(1))),
+      fix.flow.Node("a/B#other.", fix.flow.TypePath.root)
+    )
+    assertEquals(nested.size, 4)
+    assertEquals(OpaqueCandidateExplorer.entityCount(nested), 2)
+  }
+
   test("the largest flow in the fixture is ranked first") {
     val top = candidates.headOption.getOrElse(fail("no candidates at all"))
 
@@ -31,7 +45,7 @@ class OpaqueCandidateExplorerSuite extends munit.FunSuite {
     assertEquals(top.owner, "golden/Run#")
     assertEquals(top.underlying, "scala/Predef.String#")
     assert(
-      candidates.tail.forall(_.size <= top.size),
+      candidates.tail.forall(_.entities <= top.entities),
       "candidates are not ordered by closure size"
     )
   }
@@ -110,7 +124,10 @@ class OpaqueCandidateExplorerSuite extends munit.FunSuite {
   }
 
   test("minClusterSize is a threshold, and raising it converges to empty") {
-    val maxSize = candidates.map(_.size).max
+    // Entities, not nodes: the threshold counts distinct declarations, so a
+    // cluster whose one deeply-nested signature contributes many nodes does not
+    // clear it on its own.
+    val maxSize = candidates.map(_.entities).max
 
     // At the threshold only the largest flows survive, and every one of them
     // clears it -- the knob keeps clusters, it does not cap their count.
@@ -120,8 +137,8 @@ class OpaqueCandidateExplorerSuite extends munit.FunSuite {
       ExplorerConfig(minClusterSize = maxSize)
     )
     assert(atMax.nonEmpty)
-    assert(atMax.forall(_.size >= maxSize))
-    assertEquals(atMax.map(_.size).distinct, List(maxSize))
+    assert(atMax.forall(_.entities >= maxSize))
+    assertEquals(atMax.map(_.entities).distinct, List(maxSize))
 
     // One past the largest cluster: nothing is worth converting, so the rule
     // hands back nothing -- the convergence a fixed `topN` never reached.

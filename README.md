@@ -564,9 +564,9 @@ and propagation continues through it.
 #### Auto-discovering and propagating in one pass
 
 `PropagateOpaqueType.autoDiscover` runs the same ranking the explorer below
-uses, in-process, and folds the top candidates straight into this rule's own
-`types` — one Scalafix invocation both finds and rewrites, no separate
-explorer run and no intermediate `.conf` file required:
+uses, in-process, and folds every candidate over the size threshold straight
+into this rule's own `types` — one Scalafix invocation both finds and rewrites,
+no separate explorer run and no intermediate `.conf` file required:
 
 ```hocon
 rules = [ PropagateOpaqueType ]
@@ -577,7 +577,7 @@ PropagateOpaqueType.types = [
 
 PropagateOpaqueType.autoDiscover {
   enabled = true
-  topN = 10
+  minClusterSize = 4
   basicTypes = [ "scala/Predef.String#", "scala/Int#" ]
 }
 ```
@@ -585,9 +585,23 @@ PropagateOpaqueType.autoDiscover {
 | key | default | meaning |
 | --- | --- | --- |
 | `enabled` | `false` | turn discovery on |
-| `topN` | `10` | how many discovered clusters to add |
+| `minClusterSize` | `4` | keep a cluster whose value-flow closure covers at least this many **declarations** |
 | `basicTypes` | `String, Int, Long, Double, Boolean, UUID` | underlying types worth wrapping |
 | `serialize` | `false` | see below — **not supported**, kept only to fail with a pointer to the explorer |
+
+`minClusterSize` is a threshold, not a cap: every cluster over it is emitted and
+every smaller one is dropped, with no limit on how many survive. That is what
+makes discovery converge — once the wide flows are opaque, a rerun finds only
+sub-threshold clusters and does nothing, whereas a fixed "top N" always has N
+more to hand back.
+
+It counts **entities — distinct declarations the rewrite would retype — not
+closure nodes.** A closure is a set of `(symbol, type position)` pairs, so one
+declaration contributes as many nodes as the flow reaches positions inside it: a
+`Map[String, List[String]]` field is three on its own. Counting nodes would let
+a single deeply-nested signature clear the threshold without the value
+travelling anywhere, which is exactly the cluster an opaque type buys nothing
+for. The ranking prints both columns.
 
 Discovered candidates are **additive** to any hand-written `types`, but a
 hand-written spec always wins a conflict: a discovered candidate is dropped if
@@ -611,10 +625,10 @@ overlapping passes.
 #### Finding seeds automatically
 
 Hand-picking seeds does not scale to a whole codebase, so the explorer picks
-them mechanically. It ranks every basic-typed value by **how many nodes its
-value-flow closure covers** — the more of the program an opaque type would
-protect, the higher it ranks — and emits the top N as a pasteable
-`PropagateOpaqueType.types` block.
+them mechanically. It ranks every basic-typed value by **how many declarations
+its value-flow closure covers** — the more of the program an opaque type would
+protect, the higher it ranks — and emits every cluster over `--min-cluster-size`
+as a pasteable `PropagateOpaqueType.types` block.
 
 This is the same ranking `PropagateOpaqueType.autoDiscover` runs in-process
 (above); reach for the driver below instead when you want to review the HOCON
@@ -640,7 +654,7 @@ rather than reporting zero candidates when the payload is missing.
 ./mill scalafix.explorer.runMain fix.opaque.ExploreOpaques \
   --target /path/to/target-project \
   --out /tmp/opaque-candidates.conf \
-  -n 10 \
+  -m 4 \
   --dry-run
 ```
 
@@ -648,7 +662,7 @@ rather than reporting zero candidates when the payload is missing.
 | --- | --- |
 | `--target` | required — the compiled codebase to explore |
 | `--out` | `<target>/opaque-candidates.conf` |
-| `-n`, `--top` | `10` clusters |
+| `-m`, `--min-cluster-size` | `4` declarations — a threshold, not a cap (see above) |
 | `--basic-types` | `scala/Predef.String#,scala/Int#,scala/Long#,scala/Double#,scala/Boolean#,java/util/UUID#` |
 | `--dry-run` | rank and write the config, but do not rewrite |
 
@@ -663,7 +677,7 @@ driver apply every spec itself:
 
 ```bash
 ./mill scalafix.explorer.runMain fix.opaque.ExploreOpaques \
-  --target /path/to/target-project -n 10
+  --target /path/to/target-project -m 4
 ```
 
 One spec failing is reported and the rest still run. Rewrites land in the

@@ -14,10 +14,20 @@ import scala.meta.internal.{semanticdb => s}
   * benefit most from an opaque wrapper.
   *
   * `minClusterSize` is the threshold, not a cap: every cluster whose value-flow
-  * closure reaches at least this many nodes is emitted, and every smaller one
-  * is dropped. That is what makes the explorer converge -- once the big flows
-  * are opaque, the remainder fall below the threshold and a rerun is a no-op --
-  * unlike a fixed "top N" count, which always has N more clusters to hand back.
+  * closure reaches at least this many *entities* is emitted, and every smaller
+  * one is dropped. That is what makes the explorer converge -- once the big
+  * flows are opaque, the remainder fall below the threshold and a rerun is a
+  * no-op -- unlike a fixed "top N" count, which always has N more clusters to
+  * hand back.
+  *
+  * An entity is a distinct declaration the rewrite would retype, i.e. a member
+  * symbol, not a [[fix.flow.Node]]. One declaration contributes as many nodes
+  * as the closure reaches type positions inside it -- a
+  * `Map[String, List[String]]` field is three -- so counting nodes lets a
+  * single declaration clear a threshold on its own, which is exactly the
+  * cluster not worth an opaque type. Counting entities asks the question the
+  * threshold is for: how much of the program would stop confusing one String
+  * with another.
   *
   * `maxSeedsPerType` bounds the cost: one closure is computed per seed, so a
   * codebase with ten thousand Strings would otherwise run ten thousand graph
@@ -47,9 +57,10 @@ object ExplorerConfig {
     "java/util/UUID#"
   )
 
-  /** Below this a cluster is too small to be worth an opaque type. Also the
-    * convergence point: a rerun over a codebase whose larger flows are already
-    * opaque finds only sub-threshold clusters and emits nothing.
+  /** Below this many entities a cluster is too small to be worth an opaque
+    * type. Also the convergence point: a rerun over a codebase whose larger
+    * flows are already opaque finds only sub-threshold clusters and emits
+    * nothing.
     */
   val DefaultMinClusterSize: Int = 4
 
@@ -71,7 +82,16 @@ final case class OpaqueCandidate(
     members: List[Node],
     owner: String
 ) {
+
+  /** Nodes in the closure: type positions, several of which can belong to one
+    * declaration.
+    */
   def size: Int = members.size
+
+  /** Distinct declarations the rewrite would retype. This is what the size
+    * threshold is applied to -- see [[ExplorerConfig]].
+    */
+  def entities: Int = OpaqueCandidateExplorer.entityCount(members)
 
   def spec: fix.OpaqueTypeSpec =
     fix.OpaqueTypeSpec(
@@ -84,7 +104,7 @@ final case class OpaqueCandidate(
 
   /** One line of the human-readable ranking. */
   def ranking(position: Int): String =
-    f"$position%3d. ${size}%5d nodes  $name%-24s $owner"
+    f"$position%3d. ${entities}%5d entities ${size}%5d nodes  $name%-24s $owner"
 }
 
 /** Picks opaque-type candidates out of a compiled codebase, mechanically.
@@ -115,10 +135,16 @@ object OpaqueCandidateExplorer {
   ): List[OpaqueCandidate] = {
     val ranked = config.basicTypes.flatMap(clustersFor(index, facts, config, _))
 
-    // Bigger closure first; ties broken by the cluster's first seed so two runs
-    // over the same payload emit the same list in the same order.
+    // More entities first -- the same measure the threshold cuts on, so the
+    // ordering and the filter cannot disagree about which cluster is bigger.
+    // Nodes break a tie, then the cluster's first seed, so two runs over the
+    // same payload emit the same list in the same order.
     val ordered = ranked.sortBy(cluster =>
-      (-cluster.members.size, cluster.seeds.headOption.getOrElse(""))
+      (
+        -entityCount(cluster.members),
+        -cluster.members.size,
+        cluster.seeds.headOption.getOrElse("")
+      )
     )
 
     // Every cluster over the threshold is kept; `clustersFor` already dropped
@@ -132,6 +158,17 @@ object OpaqueCandidateExplorer {
       facts: Facts
   ): List[OpaqueCandidate] =
     explore(index, facts, ExplorerConfig.default)
+
+  /** How many distinct declarations a closure covers.
+    *
+    * The closure is a set of `(symbol, TypePath)` nodes, so one declaration
+    * appears once per type position the flow reaches inside it. Counting nodes
+    * therefore measures how nested a signature is as much as how far the value
+    * travels; counting symbols measures only the latter, which is what the
+    * threshold means.
+    */
+  def entityCount(members: Iterable[Node]): Int =
+    members.iterator.map(_.symbol).toSet.size
 
   /** A cluster before it has been named. */
   private final case class Cluster(
@@ -157,10 +194,12 @@ object OpaqueCandidateExplorer {
     }
 
     closures
-      .filter(_._2.size >= config.minClusterSize)
+      .filter { case (_, members) =>
+        entityCount(members) >= config.minClusterSize
+      }
       // Seeds that reach the same set of nodes describe one cluster, not
-      // several: reporting each separately would fill the whole top-N with
-      // aliases of a single case-class field.
+      // several: reporting each separately would emit one candidate per alias
+      // of a single case-class field.
       .groupBy(_._2)
       .map { case (members, group) =>
         Cluster(underlying, group.map(_._1).sorted, members)
@@ -196,7 +235,7 @@ object OpaqueCandidateExplorer {
     *
     * Two seeds can reach different node sets and still describe one value: a
     * field downstream of another sees only the tail of the flow. Emitting both
-    * would spend two of N slots on one opaque type.
+    * would mint two opaque types for one value.
     */
   private def dropSubsumed(clusters: List[Cluster]): List[Cluster] = {
     val sets = clusters.map(_.members.toSet)
@@ -446,24 +485,29 @@ object OpaqueCandidateExplorer {
 
   /** How many candidates landed at each closure size, largest first.
     *
-    * One line per distinct size -- "cluster size 5 (10 of them)" -- so a run
-    * shows at a glance what the threshold let through and where it cut.
+    * Bucketed by entity count, because that is what the threshold cuts on -- a
+    * histogram over nodes would show a distribution the `-m` flag does not act
+    * on. One line per distinct size -- "cluster size 5 entities (10 of them)"
+    * -- so a run shows at a glance what the threshold let through and where it
+    * cut.
     */
   def renderSizeHistogram(candidates: List[OpaqueCandidate]): String =
     if (candidates.isEmpty) "no clusters over the size threshold"
     else
       candidates
-        .groupBy(_.size)
+        .groupBy(_.entities)
         .toList
         .sortBy { case (size, _) => -size }
         .map { case (size, group) =>
-          f"cluster size $size%3d (${group.size}%d of them)"
+          f"cluster size $size%3d entities (${group.size}%d of them)"
         }
         .mkString("\n")
 
   /** The ranking, for a human to eyeball before pasting anything. */
   def renderRanking(candidates: List[OpaqueCandidate]): String =
-    (Seq(f"""${"#"}%3s ${"nodes"}%5s  ${"name"}%-24s owner""") ++
+    (Seq(
+      f"""${"#"}%3s ${"entities"}%8s ${"nodes"}%5s  ${"name"}%-24s owner"""
+    ) ++
       candidates.zipWithIndex.map { case (candidate, index) =>
         candidate.ranking(index + 1)
       }).mkString("\n")
