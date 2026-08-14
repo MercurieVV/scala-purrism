@@ -327,6 +327,11 @@ and `Set` resolve `map` to the same symbol, and Cats has no `Foldable[Set]`.
 
 Every one of them takes `rewrite = false` to leave only the reports.
 
+**Run them twice.** Each rule is idempotent on its own, but one rule's output is
+another's input — `opt.map(f).getOrElse(F.unit)` becomes a `fold` on the first
+pass and `traverse_` on the second — so a single run can leave work on the
+table. A second run reaches the fixpoint.
+
 **Opting out.** Some code is deliberately un-idiomatic: a realtime callback with
 a zero-allocation contract, a fold measured in bytes per chunk. A
 `// purrism:keep <reason>` comment suppresses every idiom rule for the
