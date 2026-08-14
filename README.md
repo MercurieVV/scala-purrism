@@ -18,7 +18,7 @@ before any rule can run.
 Latest release:
 
 ```text
-io.github.mercurievv:scala-purrism-scalafix_3:0.5.0
+io.github.mercurievv:scala-purrism-scalafix_3:0.7.0
 ```
 
 The published rule artifact currently targets Scala 3 and Scalafix `0.14.7`.
@@ -35,7 +35,7 @@ Add the rule dependency to `build.sbt`:
 
 ```scala
 ThisBuild / scalafixDependencies +=
-  "io.github.mercurievv" %% "scala-purrism-scalafix" % "0.5.0"
+  "io.github.mercurievv" %% "scala-purrism-scalafix" % "0.7.0"
 
 ThisBuild / scalacOptions += "-Ysemanticdb"
 ```
@@ -63,7 +63,7 @@ object app extends ScalaModule, ScalafixModule {
   def scalacOptions = Seq("-Ysemanticdb")
 
   def scalafixIvyDeps = Seq(
-    mvn"io.github.mercurievv::scala-purrism-scalafix:0.5.0"
+    mvn"io.github.mercurievv::scala-purrism-scalafix:0.7.0"
   )
 }
 ```
@@ -79,7 +79,7 @@ Run:
 Add the external rule dependency as a Scala CLI directive:
 
 ```scala
-//> using scalafix.dep io.github.mercurievv::scala-purrism-scalafix:0.5.0
+//> using scalafix.dep io.github.mercurievv::scala-purrism-scalafix:0.7.0
 ```
 
 For semantic rules, make sure Scala CLI emits SemanticDB:
@@ -105,7 +105,7 @@ cs install scalafix   # once
 
 scalafix \
   --rules TypeclassWeakening \
-  --tool-classpath "$(cs fetch -p io.github.mercurievv::scala-purrism-scalafix:0.5.0)" \
+  --tool-classpath "$(cs fetch -p io.github.mercurievv::scala-purrism-scalafix:0.7.0)" \
   --semanticdb-targetroots target/scala-3.8.4/classes \
   --sourceroot . \
   $(git ls-files '*.scala' | sed 's/^/--files /')
@@ -527,7 +527,7 @@ PropagateOpaqueType.types = []
 ```bash
 scalafix \
   --rules PropagateOpaqueType \
-  --tool-classpath "$(cs fetch -p io.github.mercurievv::scala-purrism-scalafix:0.5.0)" \
+  --tool-classpath "$(cs fetch -p io.github.mercurievv::scala-purrism-scalafix:0.7.0)" \
   --semanticdb-targetroots target/scala-3.8.4/classes \
   --sourceroot . \
   $(git ls-files '*.scala' | sed 's/^/--files /')
