@@ -223,7 +223,7 @@ object ExploreOpaques {
        |  --out <file>                 where to write the HOCON fragment
        |                               (default: <target>/opaque-candidates.conf)
        |  -m, --min-cluster-size <n>   emit only clusters reaching at least this
-       |                               many nodes (default: ${ExplorerConfig.DefaultMinClusterSize})
+       |                               many distinct declarations (default: ${ExplorerConfig.DefaultMinClusterSize})
        |  --basic-types <list>         comma-separated underlying type symbols
        |                               (default: ${ExplorerConfig.DefaultBasicTypes
         .mkString(",")})
