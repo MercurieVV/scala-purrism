@@ -50,6 +50,15 @@ object SimplifyCatsExpressions {
   * the symbols it depends on does not fire.
   */
 private[fix] object CatsExpressionRules {
+
+  /** A rewrite, with its replacement built from the *source text* of the parts
+    * it keeps.
+    *
+    * `Tree.syntax` re-prints a tree from its structure, which reflows whatever
+    * the author wrote: a multi-line string interpolation comes back split
+    * across a dozen lines, and `0xff` comes back as `255`. Since every part
+    * these matchers splice came from the file, `pos.text` returns it verbatim.
+    */
   final case class Rewrite(tree: Tree, replacement: String)
 
   /** `Patch.addGlobalImport(Symbol("cats/syntax/all."))` renders as `import
@@ -154,7 +163,7 @@ private[fix] object CatsExpressionRules {
               value <- singleArg(apply.argClause.values)
             } yield Rewrite(
               term,
-              s"${value.syntax}.pure[${effectType.syntax}]"
+              s"${value.pos.text}.pure[${effectType.pos.text}]"
             )
           case _ =>
             None
@@ -180,7 +189,7 @@ private[fix] object CatsExpressionRules {
                   error <- singleArg(apply.argClause.values)
                 } yield Rewrite(
                   term,
-                  s"${error.syntax}.raiseError[${effectType.syntax}, ${resultType.syntax}]"
+                  s"${error.pos.text}.raiseError[${effectType.pos.text}, ${resultType.pos.text}]"
                 )
               case _ =>
                 None
@@ -217,7 +226,7 @@ private[fix] object CatsExpressionRules {
                   function <- singleArg(apply.argClause.values)
                 } yield Rewrite(
                   term,
-                  s"${effect.syntax}.$method(${function.syntax})"
+                  s"${effect.pos.text}.$method(${function.pos.text})"
                 )
               case _ =>
                 None
@@ -238,11 +247,11 @@ private[fix] object CatsExpressionRules {
               // is never true and this case used to be dead.
               if facts.isCatsOperation(select) &&
                 singleArg(apply.argClause.values).exists(_.is[Lit.Unit]) =>
-            Some(Rewrite(term, s"${effect.syntax}.void"))
+            Some(Rewrite(term, s"${effect.pos.text}.void"))
           case select @ Term.Select(effect, Term.Name("map"))
               if facts.isCatsOperation(select) &&
                 singleArg(apply.argClause.values).exists(UnitLambda.unapply) =>
-            Some(Rewrite(term, s"${effect.syntax}.void"))
+            Some(Rewrite(term, s"${effect.pos.text}.void"))
           case _ =>
             None
         }
@@ -259,7 +268,7 @@ private[fix] object CatsExpressionRules {
             singleArg(apply.argClause.values)
               .flatMap(ConstantLambda.unapply)
               .map { value =>
-                Rewrite(term, s"${effect.syntax}.as(${value.syntax})")
+                Rewrite(term, s"${effect.pos.text}.as(${value.pos.text})")
               }
           case _ =>
             None
@@ -288,7 +297,7 @@ private[fix] object CatsExpressionRules {
                   if namedParam(param).exists(name => references(body, name))
                 } yield Rewrite(
                   term,
-                  s"${effect.syntax}.map(${lambdaParamSyntax(lambda.paramClause)} => ${body.syntax})"
+                  s"${effect.pos.text}.map(${lambdaParamSyntax(lambda.paramClause)} => ${body.pos.text})"
                 )
               }
           case _ =>
@@ -307,7 +316,7 @@ private[fix] object CatsExpressionRules {
             singleArg(apply.argClause.values)
               .flatMap(ConstantLambda.unapply)
               .map { next =>
-                Rewrite(term, s"${effect.syntax} *> ${next.syntax}")
+                Rewrite(term, s"${effect.pos.text} *> ${next.pos.text}")
               }
           case _ =>
             None
@@ -344,7 +353,7 @@ private[fix] object CatsExpressionRules {
             } yield {
               Rewrite(
                 term,
-                s"(${firstEffect.syntax}, ${secondEffect.syntax}).mapN(${mapNFunction(firstParam, secondFunction)})"
+                s"(${firstEffect.pos.text}, ${secondEffect.pos.text}).mapN(${mapNFunction(firstParam, secondFunction)})"
               )
             }
           case _ =>
@@ -364,7 +373,7 @@ private[fix] object CatsExpressionRules {
           ) if isNone(none, facts) =>
         someValue(someApply, facts)
           .filter(some => sameSyntax(value, some))
-          .map(_ => Rewrite(term, s"Option(${value.syntax})"))
+          .map(_ => Rewrite(term, s"Option(${value.pos.text})"))
       case Term.If.After_4_4_0(
             NullComparison(value, "!="),
             someApply: Term.Apply,
@@ -373,7 +382,7 @@ private[fix] object CatsExpressionRules {
           ) if isNone(none, facts) =>
         someValue(someApply, facts)
           .filter(some => sameSyntax(value, some))
-          .map(_ => Rewrite(term, s"Option(${value.syntax})"))
+          .map(_ => Rewrite(term, s"Option(${value.pos.text})"))
       case _ =>
         None
     }
@@ -389,7 +398,7 @@ private[fix] object CatsExpressionRules {
             Some(
               Rewrite(
                 term,
-                s"Either.cond(${condition.syntax}, ${right.syntax}, ${left.syntax})"
+                s"Either.cond(${condition.pos.text}, ${right.pos.text}, ${left.pos.text})"
               )
             )
           case _ =>
@@ -401,7 +410,7 @@ private[fix] object CatsExpressionRules {
                 Some(
                   Rewrite(
                     term,
-                    s"Either.cond(!(${condition.syntax}), ${right.syntax}, ${left.syntax})"
+                    s"Either.cond(!(${condition.pos.text}), ${right.pos.text}, ${left.pos.text})"
                   )
                 )
               case _ =>
@@ -420,7 +429,7 @@ private[fix] object CatsExpressionRules {
           case select @ Term.Select(effect, Term.Name("flatMap"))
               if facts.isCatsOperation(select) &&
                 singleArg(apply.argClause.values).exists(isIdentity) =>
-            Some(Rewrite(term, s"${effect.syntax}.flatten"))
+            Some(Rewrite(term, s"${effect.pos.text}.flatten"))
           case _ =>
             None
         }
@@ -462,7 +471,7 @@ private[fix] object CatsExpressionRules {
             singleArg(inner.argClause.values).map { function =>
               Rewrite(
                 term,
-                s"${effect.syntax}.${MapThenCombinators(after)}(${function.syntax})"
+                s"${effect.pos.text}.${MapThenCombinators(after)}(${function.pos.text})"
               )
             }
           case _ =>
@@ -491,13 +500,19 @@ private[fix] object CatsExpressionRules {
       case Term.If.After_4_4_0(condition, thenBranch, elseBranch, _) =>
         if (isUnitEffect(elseBranch, facts) && facts.isUnitEffect(thenBranch))
           Some(
-            Rewrite(term, s"${thenBranch.syntax}.whenA(${condition.syntax})")
+            Rewrite(
+              term,
+              s"${thenBranch.pos.text}.whenA(${condition.pos.text})"
+            )
           )
         else if (
           isUnitEffect(thenBranch, facts) && facts.isUnitEffect(elseBranch)
         )
           Some(
-            Rewrite(term, s"${elseBranch.syntax}.unlessA(${condition.syntax})")
+            Rewrite(
+              term,
+              s"${elseBranch.pos.text}.unlessA(${condition.pos.text})"
+            )
           )
         else None
       case _ =>
@@ -521,7 +536,7 @@ private[fix] object CatsExpressionRules {
                   function <- singleArg(outer.argClause.values)
                 } yield Rewrite(
                   term,
-                  s"${receiver.syntax}.fold(${value.syntax}.pure[${effectType.syntax}])(${function.syntax})"
+                  s"${receiver.pos.text}.fold(${value.pos.text}.pure[${effectType.pos.text}])(${function.pos.text})"
                 )
               case _ =>
                 None
@@ -567,7 +582,7 @@ private[fix] object CatsExpressionRules {
               innerParam <- singleParam(innerFunction)
               innerName <- namedParam(innerParam)
               if isPair(innerFunction.body, outerName, innerName)
-            } yield Rewrite(term, s"${effect.syntax}.mproduct($generator)")
+            } yield Rewrite(term, s"${effect.pos.text}.mproduct($generator)")
           case _ =>
             None
         }
@@ -751,7 +766,7 @@ private[fix] object CatsExpressionRules {
   ): String =
     secondFunction.paramClause.values match {
       case List(secondParam) =>
-        s"(${firstParam.syntax}, ${secondParam.syntax}) => ${secondFunction.body.syntax}"
+        s"(${firstParam.pos.text}, ${secondParam.pos.text}) => ${secondFunction.body.pos.text}"
       case _ =>
         secondFunction.syntax
     }
