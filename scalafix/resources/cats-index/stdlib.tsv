@@ -28,11 +28,9 @@ scala/collection/*#mkString().	element	cats/Foldable#foldLeft().	cats/Foldable#f
 scala/collection/*#nonEmpty().	capability	cats/UnorderedFoldable#nonEmpty().	cats/UnorderedFoldable#nonEmpty().	any collection nonEmpty is Foldable
 scala/collection/*#sum().	element	cats/Foldable#combineAll().	cats/Foldable#combineAll().	combineAll	cats/kernel/Monoid#	sum adds with Numeric; combineAll combines with Monoid
 scala/collection/*#toList().	capability	cats/Foldable#toList().	cats/Foldable#toList().	any collection toList is Foldable
-scala/collection/IndexedSeqOps#foldRight().	capability	cats/Foldable#foldRight().	cats/Foldable#foldRight().	Vector foldRight
 scala/collection/IndexedSeqOps#headOption().	decline		OrderOrIndexSpecific	Vector headOption
 scala/collection/IndexedSeqOps#reverse().	decline		OrderOrIndexSpecific	Vector reverse
 scala/collection/IterableOnceOps#foldLeft().	capability	cats/Foldable#foldLeft().	cats/Foldable#foldLeft().	Vector and Map foldLeft
-scala/collection/IterableOnceOps#foldRight().	capability	cats/Foldable#foldRight().	cats/Foldable#foldRight().	Map foldRight
 scala/collection/IterableOnceOps#reduce().	capability	cats/Reducible#reduceLeft().	cats/Reducible#reduceLeft().	Ambiguous reduction candidate requiring non-empty structure
 scala/collection/IterableOnceOps#reduce().	capability	cats/kernel/Semigroup#combine().	cats/kernel/Semigroup#combine().	Ambiguous reduction candidate requiring element combination
 scala/collection/IterableOnceOps#size().	capability	cats/UnorderedFoldable#size().	cats/UnorderedFoldable#size().	Map size
@@ -68,7 +66,6 @@ scala/collection/StrictOptimizedIterableOps#zipWithIndex().	decline		OrderOrInde
 scala/collection/StrictOptimizedLinearSeqOps#drop().	decline		OrderOrIndexSpecific	List drop
 scala/collection/immutable/List#collect().	capability	cats/FunctorFilter#mapFilter().	cats/FunctorFilter#mapFilter().	List collect is FunctorFilter
 scala/collection/immutable/List#flatMap().	capability	cats/FlatMap#flatMap().	cats/FlatMap#flatMap().	List flatMap
-scala/collection/immutable/List#foldRight().	capability	cats/Foldable#foldRight().	cats/Foldable#foldRight().	List foldRight
 scala/collection/immutable/List#last().	decline		OrderOrIndexSpecific	List last
 scala/collection/immutable/List#length().	decline		OrderOrIndexSpecific	List length
 scala/collection/immutable/List#map().	capability	cats/Functor#map().	cats/Functor#map().	List map

@@ -85,17 +85,16 @@ private[fix] object OptionIdiomRules {
       case _ => false
     }
 
+  /** Companions whose `empty` is a `Monoid`'s empty *unconditionally*.
+    *
+    * `Map` is not among them: Cats gives `Monoid[Map[K, V]]` only when `V` has
+    * a `Semigroup`, because merging two maps has to merge the values that
+    * collide. `Map[AgentPurpose, SessionId]` has none, and `orEmpty` there does
+    * not compile. `Set` is fine -- its monoid is union, which asks nothing of
+    * the element.
+    */
   private val EmptyOwners: Set[String] =
-    Set(
-      "List",
-      "Vector",
-      "Seq",
-      "Set",
-      "Map",
-      "LazyList",
-      "IndexedSeq",
-      "Chain"
-    )
+    Set("List", "Vector", "Seq", "Set", "LazyList", "IndexedSeq", "Chain")
 
   /** `opt.map(f).getOrElse(d)` -> `opt.fold(d)(f)`.
     *
