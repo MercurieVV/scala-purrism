@@ -53,7 +53,38 @@ final class PreferTypeParameters(
 
   override def withConfiguration(
       configuration: Configuration
-  ): Configured[Rule] = {
+  ): Configured[Rule] = PreferTypeParameters.from(configuration)
+
+  /** Built once, not per document: each sub-rule holds a lazily built index --
+    * and, under `crossFile`, a scan of every source in the project.
+    */
+  private val rules: List[SemanticRule] =
+    List(
+      new PreferContainerTypeclasses(container, containerCrossFile, classpath),
+      new PreferElementTypeclasses(
+        element,
+        elementCrossFile,
+        elementTypes,
+        classpath
+      ),
+      new PreferHKTTypeclasses(hkt, hktCrossFile, classpath)
+    )
+
+  override def fix(implicit doc: SemanticDocument): Patch =
+    rules.map(_.fix).asPatch
+}
+
+object PreferTypeParameters {
+
+  /** The configured rule, typed as itself.
+    *
+    * `withConfiguration` widens the result to `Rule`, which is all a rule
+    * loaded by name needs; [[TypelevelPurrism]] holds this one as a field and
+    * calls `fix` on it, so it needs the type back.
+    */
+  private[fix] def from(
+      configuration: Configuration
+  ): Configured[PreferTypeParameters] = {
     // Read one member's block at a time and keep the pieces in a local: a
     // `product` chain nests its result into a tuple one level deeper per
     // key, and the pattern match that unpicks seven of them is unreadable.
@@ -106,22 +137,4 @@ final class PreferTypeParameters(
           )
       }
   }
-
-  /** Built once, not per document: each sub-rule holds a lazily built index --
-    * and, under `crossFile`, a scan of every source in the project.
-    */
-  private val rules: List[SemanticRule] =
-    List(
-      new PreferContainerTypeclasses(container, containerCrossFile, classpath),
-      new PreferElementTypeclasses(
-        element,
-        elementCrossFile,
-        elementTypes,
-        classpath
-      ),
-      new PreferHKTTypeclasses(hkt, hktCrossFile, classpath)
-    )
-
-  override def fix(implicit doc: SemanticDocument): Patch =
-    rules.map(_.fix).asPatch
 }

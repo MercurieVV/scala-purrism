@@ -67,7 +67,7 @@ changes signatures that another rule reads semantically.
 ### TypelevelPurrism
 
 Runs `TypeclassWeakening`, `PreferKleisli`, `PreferArrow`,
-`PreferCatsFunctions`, `PreferHKTTypeclasses`, `PreferCatsSyntax`, and
+`PreferCatsFunctions`, `PreferTypeParameters`, `PreferCatsSyntax`, and
 `SimplifyCatsExpressions`.
 
 ```diff
@@ -75,10 +75,23 @@ Runs `TypeclassWeakening`, `PreferKleisli`, `PreferArrow`,
 + rules = [ TypelevelPurrism ]
 ```
 
+Since 0.8.0 the widening member is `PreferTypeParameters` — all three of
+`PreferElementTypeclasses`, `PreferContainerTypeclasses` and
+`PreferHKTTypeclasses` — where it was `PreferHKTTypeclasses` alone. Every
+member key reaches them through the umbrella:
+
 ```hocon
 PreferArrow.aggressive = true
 PreferHKTTypeclasses.widenPublic = true
+PreferContainerTypeclasses.crossFile = true
+PreferElementTypeclasses.rewrite = false   # opt out: see below
 ```
+
+`PreferElementTypeclasses` is the one member that rewrites a *body*:
+`mkString` becomes `mkString_`, which renders elements with `Show` rather than
+`toString`. Where the two disagree the program prints something different. Set
+`PreferElementTypeclasses.rewrite = false` to keep the umbrella's widenings
+purely at the signature.
 
 ### TypeclassWeakening
 

@@ -14,8 +14,25 @@ import scalafix.v1._
 final class TypelevelPurrism(
     preferArrow: PreferArrowConfig,
     preferHKT: PreferHKTConfig,
-    classpath: List[java.nio.file.Path]
+    classpath: List[java.nio.file.Path],
+    typeParameters: PreferTypeParameters
 ) extends SemanticRule("TypelevelPurrism") {
+
+  /** The shape before `PreferTypeParameters` joined: the widening member was
+    * `PreferHKTTypeclasses` alone, configured through [[PreferHKTConfig]].
+    * Retained because this constructor is published.
+    */
+  def this(
+      preferArrow: PreferArrowConfig,
+      preferHKT: PreferHKTConfig,
+      classpath: List[java.nio.file.Path]
+  ) =
+    this(
+      preferArrow,
+      preferHKT,
+      classpath,
+      new PreferTypeParameters()
+    )
 
   def this() = this(PreferArrowConfig.default, PreferHKTConfig.default, Nil)
 
@@ -25,21 +42,30 @@ final class TypelevelPurrism(
       .product(
         config.conf.getOrElse("PreferHKTTypeclasses")(PreferHKTConfig.default)
       )
+      // Configured through its own member keys, exactly as when it is listed
+      // by name -- `PreferContainerTypeclasses.crossFile` and the rest reach it
+      // here too.
+      .product(PreferTypeParameters.from(config))
       // The classpath carries the SemanticDB payloads `PreferArrow` needs to
       // recognise a Kleisli declared in another file; dropping it here would
       // silently make the umbrella weaker than the rule run on its own.
-      .map { case (preferArrow, preferHKT) =>
+      .map { case ((preferArrow, preferHKT), typeParameters) =>
         new TypelevelPurrism(
           preferArrow,
           preferHKT,
-          config.scalacClasspath.map(_.toNIO)
+          config.scalacClasspath.map(_.toNIO),
+          typeParameters
         )
       }
 
   override def fix(implicit doc: SemanticDocument): Patch =
     new TypeclassWeakening().fix + new PreferKleisli().fix +
       new PreferArrow(preferArrow, classpath).fix +
-      new PreferCatsFunctions().fix + new PreferHKTTypeclasses(preferHKT).fix +
+      new PreferCatsFunctions().fix +
+      // Held as a field rather than constructed here: it owns the Cats index
+      // and, under `crossFile`, a scan of every source in the project, and
+      // building that per document would redo both for every file.
+      typeParameters.fix +
       new PreferCatsSyntax().fix + new SimplifyCatsExpressions().fix
 }
 
