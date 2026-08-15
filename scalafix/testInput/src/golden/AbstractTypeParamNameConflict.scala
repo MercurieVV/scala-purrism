@@ -1,15 +1,15 @@
 /*
-rules = [PreferHKTTypeclasses]
+rules = [PreferPolymorphicTypeclasses]
 
-PreferHKTTypeclasses.widenPublic = true
+PreferPolymorphicTypeclasses.widenPublic = true
 
-# The collections are `PreferContainerTypeclasses`' subject by default; these
+# The collections are `PreferPolymorphicCollections`' subject by default; these
 # fixtures are about the shape, not about who owns `List`.
-PreferHKTTypeclasses.containers = []
+PreferPolymorphicTypeclasses.containers = []
  */
 package golden
 
 object AbstractTypeParamNameConflict {
-  def process[G, H, K](xs: List[Int]): List[String] = // assert: PreferHKTTypeclasses
+  def process[G, H, K](xs: List[Int]): List[String] = // assert: PreferPolymorphicTypeclasses
     xs.map(_.toString)
 }

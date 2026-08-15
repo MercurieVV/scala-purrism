@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="en-US">
+  <head>
+    <meta charset="UTF-8">
+
+<!-- Begin Jekyll SEO tag v2.9.0 -->
+<title>scala-purrism | Scalafix semantic rules for refactoring Typelevel Scala toward pure, polymorphic Cats style.</title>
+<meta name="generator" content="Jekyll v4.4.1" />
+<meta property="og:title" content="scala-purrism" />
+<meta property="og:locale" content="en_US" />
+<meta name="description" content="Scalafix semantic rules for refactoring Typelevel Scala toward pure, polymorphic Cats style." />
+<meta name="twitter:description" property="og:description" content="Scalafix semantic rules for refactoring Typelevel Scala toward pure, polymorphic Cats style." />
+<link rel="canonical" href="http://localhost:4000/scala-purrism/ARROW_PATTERNS.html" />
+<meta property="og:url" content="http://localhost:4000/scala-purrism/ARROW_PATTERNS.html" />
+<meta property="og:site_name" content="scala-purrism" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:title" content="scala-purrism" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebPage","description":"Scalafix semantic rules for refactoring Typelevel Scala toward pure, polymorphic Cats style.","headline":"scala-purrism","url":"http://localhost:4000/scala-purrism/ARROW_PATTERNS.html"}</script>
+<!-- End Jekyll SEO tag -->
+
+    <link rel="preconnect" href="https://fonts.gstatic.com">
+    <link rel="preload" href="https://fonts.googleapis.com/css?family=Open+Sans:400,700&display=swap" as="style" type="text/css" crossorigin>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#157878">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="stylesheet" href="/scala-purrism/assets/css/style.css?v=">
+    <!-- start custom head snippets, customize with your own _includes/head-custom.html file -->
+
+<!-- Setup Google Analytics -->
+
+
+
+<!-- You can set your favicon here -->
+<!-- link rel="shortcut icon" type="image/x-icon" href="/scala-purrism/favicon.ico" -->
+
+<!-- end custom head snippets -->
+
+  </head>
+  <body>
+    <a id="skip-to-content" href="#content">Skip to the content.</a>
+
+    <header class="page-header" role="banner">
+      <h1 class="project-name">scala-purrism</h1>
+      <h2 class="project-tagline">Scalafix semantic rules for refactoring Typelevel Scala toward pure, polymorphic Cats style.</h2>
+      
+      
+    </header>
+
+    <main id="content" class="main-content" role="main">
+      <h1 id="kleisli--arrow-rewrite-catalogue-preferarrow">Kleisli → Arrow rewrite catalogue (<code class="language-plaintext highlighter-rouge">PreferArrow</code>)</h1>
+
+<h2 id="status-v2-engine-arrow-ir-compiler">Status: v2 engine (arrow-IR compiler)</h2>
+
+<p>The original catalogue below was the specification for three hand-written
+syntactic matchers. Those matchers fired on <strong>zero</strong> sites in the reference
+corpus <code class="language-plaintext highlighter-rouge">gh-tasks-llm-executor</code>, because four of their five gates sat upstream of
+pattern matching (return type spelled literally <code class="language-plaintext highlighter-rouge">F[…]</code>; no type parameters
+allowed; body an un-wrapped <code class="language-plaintext highlighter-rouge">for</code>/<code class="language-plaintext highlighter-rouge">flatMap</code>; Kleisli identity by the token
+<code class="language-plaintext highlighter-rouge">Kleisli</code>). They were replaced by a small arrow-IR compiler
+(<code class="language-plaintext highlighter-rouge">scalafix/src/fix/arrow/</code>): parse a monadic body into <code class="language-plaintext highlighter-rouge">ArrowIR</code>, normalize to a
+fixpoint, gate on a readability budget, render <code class="language-plaintext highlighter-rouge">&gt;&gt;&gt;</code>/<code class="language-plaintext highlighter-rouge">&amp;&amp;&amp;</code>/<code class="language-plaintext highlighter-rouge">|||</code>/<code class="language-plaintext highlighter-rouge">.map</code>/<code class="language-plaintext highlighter-rouge">.local</code>.</p>
+
+<p>What ships now:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Shape</th>
+      <th>Status</th>
+      <th>Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>A — linear chain (n≥2) → <code class="language-plaintext highlighter-rouge">&gt;&gt;&gt;</code></td>
+      <td><strong>shipped</strong></td>
+      <td><code class="language-plaintext highlighter-rouge">for</code> and desugared <code class="language-plaintext highlighter-rouge">flatMap</code> forms; renders <code class="language-plaintext highlighter-rouge">&gt;&gt;&gt;</code> (a <code class="language-plaintext highlighter-rouge">Compose</code> op), not <code class="language-plaintext highlighter-rouge">andThen</code>.</td>
+    </tr>
+    <tr>
+      <td>B — <code class="language-plaintext highlighter-rouge">k.run(x).map(f)</code> → <code class="language-plaintext highlighter-rouge">k.map(f)</code></td>
+      <td><strong>shipped</strong></td>
+      <td>Declines when <code class="language-plaintext highlighter-rouge">f</code> captures the input.</td>
+    </tr>
+    <tr>
+      <td>C — fan-out → <code class="language-plaintext highlighter-rouge">&amp;&amp;&amp;</code>, <strong>any arity</strong></td>
+      <td><strong>shipped</strong></td>
+      <td>Arity ≥3 nests as <code class="language-plaintext highlighter-rouge">((a, b), c)</code> with a flattening <code class="language-plaintext highlighter-rouge">.map</code>; the arity-2 cap of the old matcher is gone. Branches may read <em>projections</em> of the input (<code class="language-plaintext highlighter-rouge">k.run(x.field)</code> → <code class="language-plaintext highlighter-rouge">k.local(x =&gt; x.field)</code>) and multi-argument <strong>auto-tupled</strong> applications (<code class="language-plaintext highlighter-rouge">k(a, b)</code> → <code class="language-plaintext highlighter-rouge">k.local(x =&gt; (a, b))</code>). Binding identity is by SemanticDB symbol; the shadowed-input near-miss still warns.</td>
+    </tr>
+    <tr>
+      <td>D — ask-merge (<code class="language-plaintext highlighter-rouge">Kleisli.ask &amp;&amp;&amp; k</code>)</td>
+      <td><strong>not shipped</strong></td>
+      <td>The IR (<code class="language-plaintext highlighter-rouge">Merge(Id, _)</code>) exists but the parser does not yet produce it; it is also the shape the readability budget most often declines.</td>
+    </tr>
+    <tr>
+      <td>E — <code class="language-plaintext highlighter-rouge">Either</code> branch → <code class="language-plaintext highlighter-rouge">\|\|\|</code></td>
+      <td><strong>shipped (clean sub-shape)</strong></td>
+      <td><code class="language-plaintext highlighter-rouge">k.run(x).flatMap { case Left(l) =&gt; kl.run(l); case Right(r) =&gt; kr.run(r) }</code> → <code class="language-plaintext highlighter-rouge">k &gt;&gt;&gt; (kl \|\|\| kr)</code>. Restricted to an <code class="language-plaintext highlighter-rouge">Either</code> scrutinee with two arms, each a lone Kleisli application of the matched value; a guard, a third case, or a non-Kleisli arm is declined. <code class="language-plaintext highlighter-rouge">Option</code>/<code class="language-plaintext highlighter-rouge">Boolean</code> scrutinees are not yet lifted to <code class="language-plaintext highlighter-rouge">Either</code>.</td>
+    </tr>
+    <tr>
+      <td>F, G</td>
+      <td><strong>dropped</strong></td>
+      <td>Unchanged from the verdicts below.</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Two entry points feed one engine: <strong>body-only</strong> (rewrite the interior of a
+<code class="language-plaintext highlighter-rouge">Kleisli { x =&gt; … }</code> in place, signature untouched — the entry that reaches the
+idiomatic corpus) and <strong>signature-lifting</strong> (<code class="language-plaintext highlighter-rouge">def m(x: A): F[B]</code> →
+<code class="language-plaintext highlighter-rouge">def m: Kleisli[F, A, B]</code>). Kleisli identity is <code class="language-plaintext highlighter-rouge">fix.arrow.KleisliType</code>, which
+dealiases through <code class="language-plaintext highlighter-rouge">--&gt;</code>, <code class="language-plaintext highlighter-rouge">Flow</code>, fully-qualified and inferred types via
+SemanticDB — and rejects <code class="language-plaintext highlighter-rouge">--&gt;</code> used as an abstract type parameter.</p>
+
+<p>The n=2 <code class="language-plaintext highlighter-rouge">composition</code> path was deleted from <code class="language-plaintext highlighter-rouge">PreferKleisli</code> (it duplicated
+<code class="language-plaintext highlighter-rouge">PreferArrow</code> and could double-patch the same span under the umbrella rule);
+<code class="language-plaintext highlighter-rouge">PreferKleisli.kleisliApplyRewrite</code> now steps aside for single-parameter
+composition-shaped bodies via <code class="language-plaintext highlighter-rouge">leaveToPreferArrow</code>, so the two rules never emit
+overlapping patches. Verified by <code class="language-plaintext highlighter-rouge">golden/ArrowUmbrellaNoConflict.scala</code>.</p>
+
+<hr />
+
+<h2 id="original-catalogue-historical">Original catalogue (historical)</h2>
+
+<p>Specification only. No rule code and no fixtures ship with this document; the
+subtasks under #4 read the shipped set from here.</p>
+
+<h2 id="verdicts">Verdicts</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>Pattern</th>
+      <th>Verdict</th>
+      <th>Reasoning</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>A</td>
+      <td>n-step (n≥2) <code class="language-plaintext highlighter-rouge">flatMap</code> / <code class="language-plaintext highlighter-rouge">for</code> chain → <code class="language-plaintext highlighter-rouge">k1.andThen(k2).andThen(k3)</code></td>
+      <td><strong>ship</strong></td>
+      <td>Generalises the single existing emission site (<code class="language-plaintext highlighter-rouge">TypelevelPurrism.scala:1363</code>), which today handles only n=2. Highest value per unit of risk: the shape is purely linear, needs no effect-ordering argument (it <em>is</em> the <code class="language-plaintext highlighter-rouge">flatMap</code> sequencing), and subsumes the code already in the tree.</td>
+    </tr>
+    <tr>
+      <td>B</td>
+      <td><code class="language-plaintext highlighter-rouge">k.run(x).map(f)</code> → <code class="language-plaintext highlighter-rouge">k.map(f).run(x)</code> / <code class="language-plaintext highlighter-rouge">k.map(f)</code></td>
+      <td><strong>ship</strong></td>
+      <td>Mechanical and local. <code class="language-plaintext highlighter-rouge">Kleisli.map</code> is defined as <code class="language-plaintext highlighter-rouge">Kleisli(a =&gt; F.map(run(a))(f))</code>, so the rewrite is an equality, not an approximation. Cheap to implement, cheap to review, and it is what makes A’s chains stay point-free when a pure step sits between two effectful ones.</td>
+    </tr>
+    <tr>
+      <td>C</td>
+      <td>fan-out <code class="language-plaintext highlighter-rouge">for { b &lt;- k1.run(x); c &lt;- k2.run(x) } yield (b, c)</code> → <code class="language-plaintext highlighter-rouge">k1 &amp;&amp;&amp; k2</code></td>
+      <td><strong>ship</strong></td>
+      <td>Real shape in Kleisli-heavy code, and the effect ordering is provably preserved (see below). Requires SemanticDB for binding identity, which is the main cost. Third and last shipped pattern.</td>
+    </tr>
+    <tr>
+      <td>D</td>
+      <td>later step needs input <em>and</em> intermediate → <code class="language-plaintext highlighter-rouge">(Kleisli.ask &amp;&amp;&amp; k1).andThen(k2)</code></td>
+      <td><strong>defer</strong></td>
+      <td>The output is markedly less readable than the input, and the <code class="language-plaintext highlighter-rouge">.first</code> / <code class="language-plaintext highlighter-rouge">.local</code> alternative produces a different shape again, so there is no single right answer to encode. <strong>Would change the verdict:</strong> three or more instances of the shape found in a real consuming codebase (<code class="language-plaintext highlighter-rouge">gh-tasks-llm-executor</code> is the reference corpus, as <code class="language-plaintext highlighter-rouge">KleisliFlow.scala</code> already mirrors it), plus agreement on one target form.</td>
+    </tr>
+    <tr>
+      <td>E</td>
+      <td><code class="language-plaintext highlighter-rouge">Either</code> / <code class="language-plaintext highlighter-rouge">Option</code> branching → <code class="language-plaintext highlighter-rouge">ArrowChoice</code> (<code class="language-plaintext highlighter-rouge">choice</code>, <code class="language-plaintext highlighter-rouge">\|\|\|</code>, <code class="language-plaintext highlighter-rouge">.left</code>, <code class="language-plaintext highlighter-rouge">.right</code>)</td>
+      <td><strong>defer</strong></td>
+      <td>The only pattern that justifies <code class="language-plaintext highlighter-rouge">ArrowChoice</code> at all, but the detection surface is large: <code class="language-plaintext highlighter-rouge">Either</code> in the effect (<code class="language-plaintext highlighter-rouge">EitherT</code>, <code class="language-plaintext highlighter-rouge">F[Either[..]]</code>), <code class="language-plaintext highlighter-rouge">flatMap</code> on the <code class="language-plaintext highlighter-rouge">Either</code> itself, <code class="language-plaintext highlighter-rouge">fold</code>, <code class="language-plaintext highlighter-rouge">match</code> on <code class="language-plaintext highlighter-rouge">Case</code> trees — each a distinct predicate. Shipping it alongside A–C would break the 2–4 budget and the “small enough to review” criterion. <strong>Would change the verdict:</strong> A–C landed and green, plus a decision to restrict E to exactly one sub-shape (recommended first cut: <code class="language-plaintext highlighter-rouge">k1.andThen(Kleisli(_.fold(l, r)))</code> where both branches are Kleislis → <code class="language-plaintext highlighter-rouge">k1.andThen(kl \|\|\| kr)</code>).</td>
+    </tr>
+    <tr>
+      <td>F</td>
+      <td><code class="language-plaintext highlighter-rouge">Function1</code> <code class="language-plaintext highlighter-rouge">andThen</code> / <code class="language-plaintext highlighter-rouge">compose</code> → <code class="language-plaintext highlighter-rouge">&gt;&gt;&gt;</code> / <code class="language-plaintext highlighter-rouge">&lt;&lt;&lt;</code></td>
+      <td><strong>drop</strong></td>
+      <td>Cosmetic. <code class="language-plaintext highlighter-rouge">f andThen g</code> is already point-free and already readable; <code class="language-plaintext highlighter-rouge">&gt;&gt;&gt;</code> swaps one symbol for another and buys no compositional power. It also fires on every <code class="language-plaintext highlighter-rouge">Function1</code> in the codebase, which is a large blast radius for zero semantic gain. <strong>Would change the verdict:</strong> a request to normalise mixed <code class="language-plaintext highlighter-rouge">andThen</code>/<code class="language-plaintext highlighter-rouge">&gt;&gt;&gt;</code> style within one file, which is a formatting concern and belongs in scalafmt or a lint, not a rewrite.</td>
+    </tr>
+    <tr>
+      <td>G</td>
+      <td>generalise <code class="language-plaintext highlighter-rouge">Kleisli[F, A, B]</code> signatures to abstract <code class="language-plaintext highlighter-rouge">Arrow[=&gt;:]</code></td>
+      <td><strong>drop</strong></td>
+      <td>Out of scope as stated, and dropping outright rather than warning. A <code class="language-plaintext highlighter-rouge">LintSeverity.Warning</code> here would fire on every Kleisli-typed member in a codebase that deliberately chose Kleisli, with no automatic fix and no local way to tell whether abstraction is wanted. Per <code class="language-plaintext highlighter-rouge">docs/RULES.md</code> an over-severe diagnostic is actively harmful (Scalafix withholds a rule’s patches when it reports lint errors), and even a warning-level version is noise-per-signature with no actionable next step. <strong>Would change the verdict:</strong> nothing local; this needs whole-program knowledge of every call site, which a single-file Scalafix rule does not have.</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Shipped set: <strong>A, B, C</strong> (three patterns, inside the 2–4 budget).</p>
+
+<h2 id="decision-the-existing-2-step-composition-case">Decision: the existing 2-step <code class="language-plaintext highlighter-rouge">composition</code> case</h2>
+
+<p><code class="language-plaintext highlighter-rouge">TypelevelPurrism.scala:1363</code> — <code class="language-plaintext highlighter-rouge">CompositionRewrite(s"$first.andThen($second)")</code>,
+reached from <code class="language-plaintext highlighter-rouge">composition</code> via <code class="language-plaintext highlighter-rouge">kleisliCompositionRewrite</code> — <strong>migrates into
+<code class="language-plaintext highlighter-rouge">PreferArrow</code></strong> and is deleted from <code class="language-plaintext highlighter-rouge">PreferKleisli</code>.</p>
+
+<p>Rationale: A is a strict generalisation of that case. Leaving it in place means
+two rules can emit an <code class="language-plaintext highlighter-rouge">andThen</code> for the same source span, and Scalafix has no
+ordering guarantee between rules in one run, so the overlapping patches are a
+conflict waiting to happen. <code class="language-plaintext highlighter-rouge">PreferKleisli</code> keeps <em>introduction</em> of <code class="language-plaintext highlighter-rouge">Kleisli</code>
+(<code class="language-plaintext highlighter-rouge">kleisliAliasRewrite</code>, <code class="language-plaintext highlighter-rouge">kleisliApplyRewrite</code>, <code class="language-plaintext highlighter-rouge">tupledCallPatches</code>,
+<code class="language-plaintext highlighter-rouge">sequencedLocalCompositionRewrites</code>); <code class="language-plaintext highlighter-rouge">PreferArrow</code> owns <em>composition of
+existing</em> Kleislis.</p>
+
+<p>This is a behaviour change and is fixture-covered in two steps:</p>
+
+<ol>
+  <li><strong>Before the move</strong>, add an executed characterization fixture under
+<code class="language-plaintext highlighter-rouge">scalafix/testInput/src</code> + <code class="language-plaintext highlighter-rouge">testOutput/src</code> with <code class="language-plaintext highlighter-rouge">rules = [PreferKleisli]</code>
+pinning today’s n=2 output. <code class="language-plaintext highlighter-rouge">PreferKleisli</code> currently has no executed
+fixture at all (<code class="language-plaintext highlighter-rouge">golden/KleisliFlow.scala</code> names <code class="language-plaintext highlighter-rouge">DisableSyntax</code> and only
+feeds <code class="language-plaintext highlighter-rouge">GraphBuilderSuite</code>), so “existing behaviour stays green” is unproven
+until this exists. Generate it with <code class="language-plaintext highlighter-rouge">SCALAFIX_SAVE_EXPECT=true</code> and read the
+diff — it records what the rule <em>does</em>, which may not be what it <em>should</em> do.</li>
+  <li><strong>With the move</strong>, retarget that fixture’s header to
+<code class="language-plaintext highlighter-rouge">rules = [PreferArrow]</code>. If the produced text is identical, the migration is
+behaviour-preserving; any diff is the real behaviour change and must be
+justified in the PR.</li>
+</ol>
+
+<h2 id="shipped-patterns">Shipped patterns</h2>
+
+<h3 id="a--linear-chain--andthen">A — linear chain → <code class="language-plaintext highlighter-rouge">andThen</code></h3>
+
+<p>Before:</p>
+
+<div class="language-scala highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">def</span> <span class="nf">enrich</span><span class="o">(</span><span class="n">id</span><span class="k">:</span> <span class="kt">UserId</span><span class="o">)</span><span class="k">:</span> <span class="kt">F</span><span class="o">[</span><span class="kt">Report</span><span class="o">]</span> <span class="k">=</span>
+  <span class="nv">loadUser</span><span class="o">.</span><span class="py">run</span><span class="o">(</span><span class="n">id</span><span class="o">).</span><span class="py">flatMap</span><span class="o">(</span><span class="n">user</span> <span class="k">=&gt;</span> <span class="nv">loadOrders</span><span class="o">.</span><span class="py">run</span><span class="o">(</span><span class="n">user</span><span class="o">).</span><span class="py">flatMap</span><span class="o">(</span><span class="n">orders</span> <span class="k">=&gt;</span> <span class="nv">summarise</span><span class="o">.</span><span class="py">run</span><span class="o">(</span><span class="n">orders</span><span class="o">)))</span>
+
+<span class="k">def</span> <span class="nf">enrichFor</span><span class="o">(</span><span class="n">id</span><span class="k">:</span> <span class="kt">UserId</span><span class="o">)</span><span class="k">:</span> <span class="kt">F</span><span class="o">[</span><span class="kt">Report</span><span class="o">]</span> <span class="k">=</span>
+  <span class="k">for</span> <span class="o">{</span>
+    <span class="n">user</span>   <span class="k">&lt;-</span> <span class="nv">loadUser</span><span class="o">.</span><span class="py">run</span><span class="o">(</span><span class="n">id</span><span class="o">)</span>
+    <span class="n">orders</span> <span class="k">&lt;-</span> <span class="nv">loadOrders</span><span class="o">.</span><span class="py">run</span><span class="o">(</span><span class="n">user</span><span class="o">)</span>
+    <span class="n">report</span> <span class="k">&lt;-</span> <span class="nv">summarise</span><span class="o">.</span><span class="py">run</span><span class="o">(</span><span class="n">orders</span><span class="o">)</span>
+  <span class="o">}</span> <span class="k">yield</span> <span class="n">report</span>
+</code></pre></div></div>
+
+<p>After (both forms):</p>
+
+<div class="language-scala highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">def</span> <span class="nf">enrich</span><span class="k">:</span> <span class="kt">Kleisli</span><span class="o">[</span><span class="kt">F</span>, <span class="kt">UserId</span>, <span class="kt">Report</span><span class="o">]</span> <span class="k">=</span>
+  <span class="nv">loadUser</span><span class="o">.</span><span class="py">andThen</span><span class="o">(</span><span class="n">loadOrders</span><span class="o">).</span><span class="py">andThen</span><span class="o">(</span><span class="n">summarise</span><span class="o">)</span>
+</code></pre></div></div>
+
+<p><strong>Detection.</strong> Two entry shapes, normalised to one list of steps before
+emission:</p>
+
+<ul>
+  <li>Desugared: <code class="language-plaintext highlighter-rouge">Term.Apply(Term.Select(qual, Term.Name("flatMap")), Term.ArgClause(List(f: Term.Function), _))</code>, recursing into <code class="language-plaintext highlighter-rouge">f.body</code>. This is the existing <code class="language-plaintext highlighter-rouge">composition</code> matcher generalised from a fixed pair to a fold.</li>
+  <li><code class="language-plaintext highlighter-rouge">for</code>-comprehension: <code class="language-plaintext highlighter-rouge">Term.ForYield(enums, yieldTerm)</code> where every enum is an
+<code class="language-plaintext highlighter-rouge">Enumerator.Generator(Pat.Var(v), rhs)</code> — reject <code class="language-plaintext highlighter-rouge">Enumerator.Val</code> and
+<code class="language-plaintext highlighter-rouge">Enumerator.Guard</code> outright — and <code class="language-plaintext highlighter-rouge">yieldTerm</code> is <code class="language-plaintext highlighter-rouge">Term.Name</code> equal to the last
+generator’s pattern. A <code class="language-plaintext highlighter-rouge">yield</code> that is anything else is pattern B territory,
+not A.</li>
+</ul>
+
+<p>Each step’s <code class="language-plaintext highlighter-rouge">rhs</code> must be <code class="language-plaintext highlighter-rouge">Term.Apply(Term.Select(k, Term.Name("run" | "apply")), Term.ArgClause(List(arg), _))</code>, or a bare <code class="language-plaintext highlighter-rouge">Term.Apply(k, List(arg))</code> where <code class="language-plaintext highlighter-rouge">k</code> is Kleisli-typed. Step <em>i&gt;0</em>’s <code class="language-plaintext highlighter-rouge">arg</code> must be exactly the <code class="language-plaintext highlighter-rouge">Term.Name</code> bound by step <em>i-1</em>; step 0’s <code class="language-plaintext highlighter-rouge">arg</code> must be the enclosing <code class="language-plaintext highlighter-rouge">def</code>’s single parameter.</p>
+
+<p><strong>Preconditions.</strong></p>
+
+<ol>
+  <li>Every callee resolves to <code class="language-plaintext highlighter-rouge">cats/data/Kleisli#</code> with a compatible <code class="language-plaintext highlighter-rouge">F</code>.</li>
+  <li>Each intermediate binding is used exactly once, as the sole argument of the
+next step. Any other use of <code class="language-plaintext highlighter-rouge">user</code> in the body kills the rewrite — it is no
+longer a pure pipe.</li>
+  <li>No <code class="language-plaintext highlighter-rouge">Enumerator.Guard</code>, no nested <code class="language-plaintext highlighter-rouge">Term.Block</code> statements between steps, no
+binding shadowing another in scope.</li>
+  <li>The enclosing <code class="language-plaintext highlighter-rouge">def</code> has exactly one plain parameter and a declared return
+type <code class="language-plaintext highlighter-rouge">F[R]</code> (reuse <code class="language-plaintext highlighter-rouge">isFResult</code> / <code class="language-plaintext highlighter-rouge">singlePlainParameter</code>), or a declared
+<code class="language-plaintext highlighter-rouge">Kleisli[...]</code> return type for the already-point-free body form.</li>
+</ol>
+
+<p><strong>Symbols vs names.</strong> <strong>SemanticDB required.</strong> Precondition 2 and 3 are binding
+identity questions, and <code class="language-plaintext highlighter-rouge">collectKleisliNames</code> is name-based, which conflicts
+with <code class="language-plaintext highlighter-rouge">docs/RULES.md</code> (“Identifier names are not identity”). <code class="language-plaintext highlighter-rouge">PreferArrow</code> must
+resolve each callee’s symbol via <code class="language-plaintext highlighter-rouge">doc.info</code> / <code class="language-plaintext highlighter-rouge">Symbol</code> rather than matching a
+<code class="language-plaintext highlighter-rouge">Set[String]</code>. Do not extend <code class="language-plaintext highlighter-rouge">collectKleisliNames</code>.</p>
+
+<p><strong>Sketch.</strong> Add <code class="language-plaintext highlighter-rouge">def steps(body: Term, input: Term.Name): Option[List[String]]</code>
+that unfolds either entry shape into a <code class="language-plaintext highlighter-rouge">List[KleisliStep(callee, argument,
+binding)]</code>. Validate the chain with a single left fold checking that each
+<code class="language-plaintext highlighter-rouge">argument</code> is the previous <code class="language-plaintext highlighter-rouge">binding</code>. Emit
+<code class="language-plaintext highlighter-rouge">steps.map(_.callee).mkString(".andThen(") + ")" * (n - 1)</code>, or build it with a
+<code class="language-plaintext highlighter-rouge">reduceLeft</code>. Reuse the existing <code class="language-plaintext highlighter-rouge">renderModifiers</code> / signature rewriting from
+<code class="language-plaintext highlighter-rouge">kleisliCompositionRewrite</code> for the <code class="language-plaintext highlighter-rouge">def</code> header. n=2 falls out of the same
+fold, which is what makes the migration above a no-op on output.</p>
+
+<h3 id="b--map-after-run">B — <code class="language-plaintext highlighter-rouge">map</code> after <code class="language-plaintext highlighter-rouge">run</code></h3>
+
+<p>Before:</p>
+
+<div class="language-scala highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">def</span> <span class="nf">name</span><span class="o">(</span><span class="n">id</span><span class="k">:</span> <span class="kt">UserId</span><span class="o">)</span><span class="k">:</span> <span class="kt">F</span><span class="o">[</span><span class="kt">String</span><span class="o">]</span> <span class="k">=</span>
+  <span class="nv">loadUser</span><span class="o">.</span><span class="py">run</span><span class="o">(</span><span class="n">id</span><span class="o">).</span><span class="py">map</span><span class="o">(</span><span class="nv">_</span><span class="o">.</span><span class="py">name</span><span class="o">)</span>
+</code></pre></div></div>
+
+<p>After:</p>
+
+<div class="language-scala highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">def</span> <span class="nf">name</span><span class="k">:</span> <span class="kt">Kleisli</span><span class="o">[</span><span class="kt">F</span>, <span class="kt">UserId</span>, <span class="kt">String</span><span class="o">]</span> <span class="k">=</span>
+  <span class="nv">loadUser</span><span class="o">.</span><span class="py">map</span><span class="o">(</span><span class="nv">_</span><span class="o">.</span><span class="py">name</span><span class="o">)</span>
+</code></pre></div></div>
+
+<p><strong>Detection.</strong> <code class="language-plaintext highlighter-rouge">Term.Apply(Term.Select(inner, Term.Name("map")), Term.ArgClause(List(f), _))</code> where <code class="language-plaintext highlighter-rouge">inner</code> matches the same “Kleisli applied to the def’s parameter” shape as an A step. Also fires as the terminal element of an A chain, where the <code class="language-plaintext highlighter-rouge">for</code>’s <code class="language-plaintext highlighter-rouge">yield</code> is <code class="language-plaintext highlighter-rouge">Term.Name("f")</code> applied to the last binding rather than the binding itself — in that position, emit <code class="language-plaintext highlighter-rouge">.map(...)</code> after the final <code class="language-plaintext highlighter-rouge">.andThen(...)</code>.</p>
+
+<p><strong>Preconditions.</strong></p>
+
+<ol>
+  <li><code class="language-plaintext highlighter-rouge">inner</code>’s callee resolves to <code class="language-plaintext highlighter-rouge">Kleisli</code>; the <code class="language-plaintext highlighter-rouge">.map</code> must be the one on <code class="language-plaintext highlighter-rouge">F</code>,
+not one already on a <code class="language-plaintext highlighter-rouge">Kleisli</code> (otherwise the rule is a no-op that still
+rewrites, breaking idempotency).</li>
+  <li><code class="language-plaintext highlighter-rouge">f</code> is a single-argument function or placeholder that does not mention the
+def’s input parameter. If it does, the rewrite drops a capture and is wrong.</li>
+  <li>Same single-plain-parameter / <code class="language-plaintext highlighter-rouge">F[R]</code> return-type shape as A.</li>
+</ol>
+
+<p><strong>Symbols vs names.</strong> <strong>SemanticDB required</strong>, for precondition 1 only: telling
+<code class="language-plaintext highlighter-rouge">F.map</code> from <code class="language-plaintext highlighter-rouge">Kleisli.map</code> is a type question, and getting it wrong makes the
+rule non-idempotent, which <code class="language-plaintext highlighter-rouge">docs/RULES.md</code> forbids. The syntactic match itself
+is name-independent.</p>
+
+<p><strong>Sketch.</strong> A small <code class="language-plaintext highlighter-rouge">mapAfterRun</code> matcher sharing A’s step extractor. Once A’s
+extractor returns <code class="language-plaintext highlighter-rouge">KleisliStep</code>, B is “a step whose result is consumed by
+exactly one <code class="language-plaintext highlighter-rouge">map</code>”. Implement B <em>inside</em> A’s emitter rather than as a separate
+traversal, so the two never produce overlapping patches on the same span.</p>
+
+<h3 id="c--fan-out--">C — fan-out → <code class="language-plaintext highlighter-rouge">&amp;&amp;&amp;</code></h3>
+
+<p>Before:</p>
+
+<div class="language-scala highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">def</span> <span class="nf">profile</span><span class="o">(</span><span class="n">id</span><span class="k">:</span> <span class="kt">UserId</span><span class="o">)</span><span class="k">:</span> <span class="kt">F</span><span class="o">[(</span><span class="kt">User</span>, <span class="kt">Settings</span><span class="o">)]</span> <span class="k">=</span>
+  <span class="k">for</span> <span class="o">{</span>
+    <span class="n">user</span>     <span class="k">&lt;-</span> <span class="nv">loadUser</span><span class="o">.</span><span class="py">run</span><span class="o">(</span><span class="n">id</span><span class="o">)</span>
+    <span class="n">settings</span> <span class="k">&lt;-</span> <span class="nv">loadSettings</span><span class="o">.</span><span class="py">run</span><span class="o">(</span><span class="n">id</span><span class="o">)</span>
+  <span class="o">}</span> <span class="nf">yield</span> <span class="o">(</span><span class="n">user</span><span class="o">,</span> <span class="n">settings</span><span class="o">)</span>
+</code></pre></div></div>
+
+<p>After:</p>
+
+<div class="language-scala highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">def</span> <span class="nf">profile</span><span class="k">:</span> <span class="kt">Kleisli</span><span class="o">[</span><span class="kt">F</span>, <span class="kt">UserId</span>, <span class="o">(</span><span class="kt">User</span>, <span class="kt">Settings</span><span class="o">)]</span> <span class="k">=</span>
+  <span class="n">loadUser</span> <span class="o">&amp;&amp;&amp;</span> <span class="n">loadSettings</span>
+</code></pre></div></div>
+
+<p><strong>Detection.</strong> <code class="language-plaintext highlighter-rouge">Term.ForYield(enums, Term.Tuple(List(Term.Name(a), Term.Name(b))))</code>
+with exactly two <code class="language-plaintext highlighter-rouge">Enumerator.Generator</code>s, both matching the A step shape, both
+arguments being the <em>same</em> <code class="language-plaintext highlighter-rouge">Term.Name</code>, and <code class="language-plaintext highlighter-rouge">(a, b)</code> being the two generator
+patterns in that order. The desugared <code class="language-plaintext highlighter-rouge">flatMap</code>/<code class="language-plaintext highlighter-rouge">map</code> form is
+<code class="language-plaintext highlighter-rouge">k1.run(x).flatMap(a =&gt; k2.run(x).map(b =&gt; (a, b)))</code> — match it too, since
+<code class="language-plaintext highlighter-rouge">for</code> with a non-<code class="language-plaintext highlighter-rouge">yield</code>-identity body desugars to <code class="language-plaintext highlighter-rouge">map</code> and A’s extractor
+already walks that spine.</p>
+
+<p><strong>Preconditions.</strong></p>
+
+<ol>
+  <li>Both <code class="language-plaintext highlighter-rouge">run</code> arguments are the same <em>binding</em>, not merely the same spelling —
+the whole reason C needs symbols.</li>
+  <li>That binding is unshadowed between the two generators and is the enclosing
+<code class="language-plaintext highlighter-rouge">def</code>’s parameter.</li>
+  <li>Neither generator’s callee mentions the other’s binding.</li>
+  <li><code class="language-plaintext highlighter-rouge">Monad[F]</code> must be available, not merely <code class="language-plaintext highlighter-rouge">FlatMap[F]</code> — see below. In
+practice the enclosing signature already carries it, but if the context bound
+is <code class="language-plaintext highlighter-rouge">F[_]: FlatMap</code> the rewrite must not fire.</li>
+  <li>Tuple order matches generator order. A <code class="language-plaintext highlighter-rouge">yield (settings, user)</code> is <em>not</em> <code class="language-plaintext highlighter-rouge">&amp;&amp;&amp;</code>
+(it is <code class="language-plaintext highlighter-rouge">(k1 &amp;&amp;&amp; k2).map(_.swap)</code>); do not rewrite it.</li>
+</ol>
+
+<p><strong>Symbols vs names.</strong> <strong>SemanticDB required</strong>, unconditionally. Precondition 1
+is exactly the case <code class="language-plaintext highlighter-rouge">docs/RULES.md</code> calls out: two unrelated bindings can share
+a name, and a name-based match here silently fuses two different inputs into
+one.</p>
+
+<p><strong>Sketch.</strong> Runs after A’s extractor, on the same normalised step list, in a
+branch taken when two steps share an argument binding rather than chaining. Emit
+<code class="language-plaintext highlighter-rouge">s"$k1 &amp;&amp;&amp; $k2"</code>, parenthesising each callee if it is not a <code class="language-plaintext highlighter-rouge">Term.Name</code> or
+<code class="language-plaintext highlighter-rouge">Term.Select</code>. Limit the first cut to arity two; three-way fan-out
+(<code class="language-plaintext highlighter-rouge">k1 &amp;&amp;&amp; k2 &amp;&amp;&amp; k3</code> nests as <code class="language-plaintext highlighter-rouge">((A, B), C)</code>, which does <em>not</em> match a flat
+<code class="language-plaintext highlighter-rouge">yield (a, b, c)</code>) is out of scope and must be explicitly rejected, not
+silently mis-emitted.</p>
+
+<h2 id="effect-ordering-for-c-and-d">Effect ordering for C (and D)</h2>
+
+<p>The instance is <code class="language-plaintext highlighter-rouge">Kleisli.catsDataArrowChoiceForKleisli[F](implicit F: Monad[F]): ArrowChoice[Kleisli[F, *, *]]</code> (<code class="language-plaintext highlighter-rouge">cats.data.KleisliInstances</code>, mixed in via <code class="language-plaintext highlighter-rouge">KleisliArrowChoice extends ArrowChoice[Kleisli[F, *, *]] with CommutativeArrow[...]</code>). Note the constraint is <code class="language-plaintext highlighter-rouge">Monad[F]</code>, strictly stronger than the <code class="language-plaintext highlighter-rouge">FlatMap[F]</code> the original <code class="language-plaintext highlighter-rouge">for</code>-comprehension needs — hence precondition 4.</p>
+
+<p><code class="language-plaintext highlighter-rouge">&amp;&amp;&amp;</code> comes from <code class="language-plaintext highlighter-rouge">Arrow.ArrowOps</code> and is <code class="language-plaintext highlighter-rouge">Arrow[F].merge(f, g)</code>, whose default
+implementation is:</p>
+
+<div class="language-scala highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">def</span> <span class="nf">merge</span><span class="o">[</span><span class="kt">A</span>, <span class="kt">B</span>, <span class="kt">C</span><span class="o">](</span><span class="n">f</span><span class="k">:</span> <span class="kt">F</span><span class="o">[</span><span class="kt">A</span>, <span class="kt">B</span><span class="o">],</span> <span class="n">g</span><span class="k">:</span> <span class="kt">F</span><span class="o">[</span><span class="kt">A</span>, <span class="kt">C</span><span class="o">])</span><span class="k">:</span> <span class="kt">F</span><span class="o">[</span><span class="kt">A</span>, <span class="o">(</span><span class="kt">B</span>, <span class="kt">C</span><span class="o">)]</span> <span class="k">=</span>
+  <span class="nf">andThen</span><span class="o">(</span><span class="nf">lift</span><span class="o">((</span><span class="n">x</span><span class="k">:</span> <span class="kt">A</span><span class="o">)</span> <span class="k">=&gt;</span> <span class="o">(</span><span class="n">x</span><span class="o">,</span> <span class="n">x</span><span class="o">)),</span> <span class="nf">split</span><span class="o">(</span><span class="n">f</span><span class="o">,</span> <span class="n">g</span><span class="o">))</span>
+
+<span class="c1">// Strong / Category defaults</span>
+<span class="k">def</span> <span class="nf">split</span><span class="o">[</span><span class="kt">A</span>, <span class="kt">B</span>, <span class="kt">C</span>, <span class="kt">D</span><span class="o">](</span><span class="n">f</span><span class="k">:</span> <span class="kt">F</span><span class="o">[</span><span class="kt">A</span>, <span class="kt">B</span><span class="o">],</span> <span class="n">g</span><span class="k">:</span> <span class="kt">F</span><span class="o">[</span><span class="kt">C</span>, <span class="kt">D</span><span class="o">])</span><span class="k">:</span> <span class="kt">F</span><span class="o">[(</span><span class="kt">A</span>, <span class="kt">C</span><span class="o">)</span>, <span class="o">(</span><span class="kt">B</span>, <span class="kt">D</span><span class="o">)]</span> <span class="k">=</span>
+  <span class="nf">andThen</span><span class="o">(</span><span class="nf">first</span><span class="o">(</span><span class="n">f</span><span class="o">),</span> <span class="nf">second</span><span class="o">(</span><span class="n">g</span><span class="o">))</span>
+</code></pre></div></div>
+
+<p><code class="language-plaintext highlighter-rouge">Kleisli</code>’s <code class="language-plaintext highlighter-rouge">andThen</code> is <code class="language-plaintext highlighter-rouge">flatMap</code> under the hood, and <code class="language-plaintext highlighter-rouge">first(f)</code> is
+<code class="language-plaintext highlighter-rouge">Kleisli { case (a, c) =&gt; F.map(f.run(a))((_, c)) }</code>. Substituting, <code class="language-plaintext highlighter-rouge">(k1 &amp;&amp;&amp; k2).run(x)</code> reduces to
+<code class="language-plaintext highlighter-rouge">k1.run(x).flatMap(b =&gt; k2.run(x).map(c =&gt; (b, c)))</code> — <strong>the exact desugaring of the
+<code class="language-plaintext highlighter-rouge">for</code>-comprehension in C</strong>, with <code class="language-plaintext highlighter-rouge">k1</code> sequenced strictly before <code class="language-plaintext highlighter-rouge">k2</code>.</p>
+
+<p>Consequences:</p>
+
+<ul>
+  <li><strong>Ordering preserved.</strong> Left-to-right, same as the source.</li>
+  <li><strong>Short-circuiting preserved.</strong> If <code class="language-plaintext highlighter-rouge">F</code> is <code class="language-plaintext highlighter-rouge">Either</code>-like / <code class="language-plaintext highlighter-rouge">OptionT</code> /
+<code class="language-plaintext highlighter-rouge">MonadError</code>, a failure in <code class="language-plaintext highlighter-rouge">k1</code> prevents <code class="language-plaintext highlighter-rouge">k2</code> from running, because the
+reduction is a <code class="language-plaintext highlighter-rouge">flatMap</code> on <code class="language-plaintext highlighter-rouge">F</code>. Nothing is made eager or parallel.</li>
+  <li><code class="language-plaintext highlighter-rouge">CommutativeArrow</code> in the instance’s parent list is a claim about the
+<em>Kleisli</em> category, not licence to reorder effects — it holds only when <code class="language-plaintext highlighter-rouge">F</code> is
+a commutative monad, and the rewrite never relies on it.</li>
+  <li><strong><code class="language-plaintext highlighter-rouge">Parallel</code> is not involved.</strong> <code class="language-plaintext highlighter-rouge">&amp;&amp;&amp;</code> is emphatically not <code class="language-plaintext highlighter-rouge">parTupled</code>; anyone
+reading the output expecting concurrency is mistaken, but the rule is not.</li>
+  <li><strong>D</strong> would additionally need <code class="language-plaintext highlighter-rouge">Kleisli.ask[F, A]</code>, which requires only
+<code class="language-plaintext highlighter-rouge">Applicative[F]</code> and performs no effect, so <code class="language-plaintext highlighter-rouge">(Kleisli.ask &amp;&amp;&amp; k1)</code> runs <code class="language-plaintext highlighter-rouge">k1</code>
+exactly once in the same position. D’s ordering is therefore also sound; its
+deferral is a readability call, not a correctness one.</li>
+</ul>
+
+<h2 id="fixture-obligations-for-the-shipped-set">Fixture obligations for the shipped set</h2>
+
+<p>Per <code class="language-plaintext highlighter-rouge">docs/RULES.md</code>, every automatic rewrite needs an executed fixture under
+<code class="language-plaintext highlighter-rouge">scalafix/testInput</code> + <code class="language-plaintext highlighter-rouge">scalafix/testOutput</code> — not <code class="language-plaintext highlighter-rouge">scalafix/test/resources</code>,
+where nothing runs. Minimum:</p>
+
+<ul>
+  <li>The <code class="language-plaintext highlighter-rouge">PreferKleisli</code> characterization fixture for the n=2 case, added <em>before</em>
+the migration.</li>
+  <li>A per-pattern fixture for A (both the <code class="language-plaintext highlighter-rouge">flatMap</code> and <code class="language-plaintext highlighter-rouge">for</code> entry shapes), B,
+and C.</li>
+  <li>One negative fixture per pattern for the precondition that is most likely to
+be violated in real code: A/binding used twice, B/<code class="language-plaintext highlighter-rouge">f</code> captures the input,
+C/same spelling but different binding. A negative fixture that produces no
+output file is the cheapest way to pin “the rule correctly does nothing”.</li>
+</ul>
+
+<h2 id="aggressive-mode-preferarrowaggressive-opt-in-off-by-default">Aggressive mode (<code class="language-plaintext highlighter-rouge">PreferArrow.aggressive</code>, opt-in, off by default)</h2>
+
+<p>The conservative budget only fires where point-free is at least as readable as
+the source. Real monadic codebases often keep the input around in the <code class="language-plaintext highlighter-rouge">yield</code>
+and call <em>plain</em> effectful methods (not existing Kleislis) in each generator —
+shapes where the point-free form is <em>correct</em> but busier. <code class="language-plaintext highlighter-rouge">PreferArrow.aggressive
+= true</code> opts a project into rewriting those anyway.</p>
+
+<div class="language-hocon highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nl">PreferArrow.aggressive</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">true</span><span class="w">
+</span></code></pre></div></div>
+
+<p>What it unlocks, on top of the conservative shapes:</p>
+
+<ul>
+  <li><strong>Plain-<code class="language-plaintext highlighter-rouge">F</code> lifting.</strong> A generator <code class="language-plaintext highlighter-rouge">b &lt;- svc.thing(x.a, x.b)</code> whose right-hand
+side is an ordinary <code class="language-plaintext highlighter-rouge">F</code>-returning call is lifted in place into
+<code class="language-plaintext highlighter-rouge">Kleisli { (x: T) =&gt; svc.thing(x.a, x.b) }</code>, so independent generators can fan
+out even though none of them was a Kleisli to begin with.</li>
+  <li><strong>Input retention via <code class="language-plaintext highlighter-rouge">Kleisli.ask</code>.</strong> When the <code class="language-plaintext highlighter-rouge">yield</code> still references the
+arrow input, a leading <code class="language-plaintext highlighter-rouge">Kleisli.ask[F, A]</code> carries it alongside the fanned-out
+results, and the trailing <code class="language-plaintext highlighter-rouge">.map</code> destructures the nested tuple back to the
+original <code class="language-plaintext highlighter-rouge">yield</code> body.</li>
+  <li><strong>Eta-collapse.</strong> <code class="language-plaintext highlighter-rouge">Kleisli { x =&gt; k.run(x) }</code> reduces to <code class="language-plaintext highlighter-rouge">k</code>.</li>
+  <li><strong>Arms that ignore the input.</strong> Only <em>one</em> generator has to be a function of
+the arrow input; the others may be constant effects (<code class="language-plaintext highlighter-rouge">t &lt;- svc.total</code>), lifted
+as <code class="language-plaintext highlighter-rouge">Kleisli { (x: T) =&gt; svc.total }</code>. A fan-out where <em>no</em> arm reads the input
+is still declined — that is a plain <code class="language-plaintext highlighter-rouge">mapN</code> over constants with nothing
+arrow-shaped to gain.</li>
+  <li><strong>No identity reshape.</strong> At arity one or two the arms already produce the
+arrow’s output directly, so a <code class="language-plaintext highlighter-rouge">yield</code> naming them in arm order emits no
+trailing <code class="language-plaintext highlighter-rouge">.map</code>. Arity three and up keeps the destructuring <code class="language-plaintext highlighter-rouge">.map</code>, since
+<code class="language-plaintext highlighter-rouge">&amp;&amp;&amp;</code> nests as <code class="language-plaintext highlighter-rouge">((a, b), c)</code>.</li>
+  <li><strong>Discard generators — <code class="language-plaintext highlighter-rouge">*&gt;</code> and <code class="language-plaintext highlighter-rouge">flatTap</code>.</strong> A <code class="language-plaintext highlighter-rouge">_ &lt;- log(...)</code> is not a
+fan-out arm: its result is thrown away, so tupling it and projecting it back
+out is pure waste. Two positions are recognised:
+    <ul>
+      <li><strong>Leading</strong> (<code class="language-plaintext highlighter-rouge">_ &lt;- ...</code> before the named generators) renders as
+<code class="language-plaintext highlighter-rouge">Kleisli { (x: T) =&gt; log(...) } *&gt; &lt;rest&gt;</code>. <code class="language-plaintext highlighter-rouge">*&gt;</code> needs only <code class="language-plaintext highlighter-rouge">Apply[F]</code> —
+strictly weaker than the <code class="language-plaintext highlighter-rouge">Monad[F]</code> an <code class="language-plaintext highlighter-rouge">&amp;&amp;&amp;</code> costs — feeds both sides the
+same input, and preserves the <code class="language-plaintext highlighter-rouge">for</code>’s order and short-circuiting.</li>
+      <li><strong>Trailing</strong> (<code class="language-plaintext highlighter-rouge">_ &lt;- ...</code> after them, reading their results) renders as
+<code class="language-plaintext highlighter-rouge">&lt;arms&gt;.flatTap { case (a, b) =&gt; Kleisli.liftF(record(a)) }</code>. <code class="language-plaintext highlighter-rouge">flatTap</code>
+discards the <em>value</em>, not the effect, so a failure in the tap still fails
+the arrow. The tap uses <code class="language-plaintext highlighter-rouge">Kleisli.liftF</code> rather than a typed lambda because
+the receiver has already fixed the expected type there; a leading discard
+cannot, since as the left operand of <code class="language-plaintext highlighter-rouge">*&gt;</code> it is what the input type is
+inferred <em>from</em>.</li>
+    </ul>
+
+    <p>A discard counts towards the “at least two effects” floor, so a single named
+generator behind a <code class="language-plaintext highlighter-rouge">_ &lt;- log(...)</code> is enough to fire.</p>
+  </li>
+</ul>
+
+<p>Only independent-generator <code class="language-plaintext highlighter-rouge">for</code>s qualify: no <code class="language-plaintext highlighter-rouge">val</code> binder, no guard, and no
+generator that reads another’s binding (that genuinely needs <code class="language-plaintext highlighter-rouge">flatMap</code>, which
+this path never fakes). Two discard shapes are refused outright:</p>
+
+<ul>
+  <li>a discard <em>between</em> two named generators — <code class="language-plaintext highlighter-rouge">&amp;&amp;&amp;</code> feeds both arms the same
+input and has no position to run an effect in between, so emitting anything
+would mean re-ordering it against a neighbour;</li>
+  <li>a trailing discard that reads the <em>arrow input</em> — it is rendered inside
+<code class="language-plaintext highlighter-rouge">.flatTap</code>, where only the arms’ results are bound, and threading the input in
+as well costs more plumbing than the <code class="language-plaintext highlighter-rouge">for</code> it replaces.</li>
+</ul>
+
+<p>Correctness is unchanged — independent generators commute under the same input
+and <code class="language-plaintext highlighter-rouge">&amp;&amp;&amp;</code> on <code class="language-plaintext highlighter-rouge">Kleisli</code> sequences left-to-right exactly as the <code class="language-plaintext highlighter-rouge">for</code> did (proved
+in <code class="language-plaintext highlighter-rouge">KleisliLawSuite</code>, including the two discard shapes). The output is simply
+busier, which is why it is behind a flag. Fixtures: <code class="language-plaintext highlighter-rouge">ArrowBodyAggressiveLift</code>
+(fires, arity 3 with <code class="language-plaintext highlighter-rouge">ask</code>), <code class="language-plaintext highlighter-rouge">ArrowBodyAggressiveConstArm</code> (arity 2, one arm
+ignores the input, no reshape), <code class="language-plaintext highlighter-rouge">ArrowBodyDiscardLeading</code> (<code class="language-plaintext highlighter-rouge">*&gt;</code>, one named
+generator), <code class="language-plaintext highlighter-rouge">ArrowBodyDiscardTrailing</code> (<code class="language-plaintext highlighter-rouge">&amp;&amp;&amp;</code> then <code class="language-plaintext highlighter-rouge">flatTap</code>),
+<code class="language-plaintext highlighter-rouge">ArrowBodyDiscardDeclined</code> (both refused shapes, no output file) and
+<code class="language-plaintext highlighter-rouge">ArrowBodyPlainForDeclined</code> (identical body, no flag, declined).</p>
+
+<h2 id="cross-file-callees">Cross-file callees</h2>
+
+<p>A callee declared in another file used to be invisible, and the failure was
+silent: the body stayed wrapped and looked exactly like a body the rule had
+correctly declined.</p>
+
+<p>The cause is structural, not configuration. <code class="language-plaintext highlighter-rouge">SemanticDocument.info(symbol)</code>
+answers from scalafix’s symbol table, which resolves anything outside the
+current file out of <em>classfiles</em> — and a Scala 3 classfile carries its signature
+as TASTy, which the classfile-to-SemanticDB converter cannot decode. So <code class="language-plaintext highlighter-rouge">info</code>
+came back empty, <code class="language-plaintext highlighter-rouge">KleisliType</code> read that as “not a Kleisli”, and every
+composition that crossed a file boundary was declined. Passing scalafix
+<code class="language-plaintext highlighter-rouge">--classpath</code> does not help, in any combination of classes directory and
+semanticdb targetroot.</p>
+
+<p><code class="language-plaintext highlighter-rouge">fix.arrow.KleisliScope</code> closes it by reading the compiler’s own <code class="language-plaintext highlighter-rouge">.semanticdb</code>
+payloads — which <em>do</em> carry full Scala 3 signatures — and folding them into a
+project-wide map of <code class="language-plaintext highlighter-rouge">symbol -&gt; (returns a Kleisli?, explicit parameter clauses)</code>.
+<code class="language-plaintext highlighter-rouge">KleisliType</code> consults it only when <code class="language-plaintext highlighter-rouge">info</code> is empty, so a signature scalafix did
+resolve stays authoritative. This is the same move <code class="language-plaintext highlighter-rouge">PreferKleisli</code> already makes
+for its cross-file lift scope (<code class="language-plaintext highlighter-rouge">fix.KleisliLiftScope</code>).</p>
+
+<p>The payload roots arrive via <code class="language-plaintext highlighter-rouge">Configuration.scalacClasspath</code>, which the CLI
+populates from <code class="language-plaintext highlighter-rouge">--semanticdb-targetroots</code>; no extra configuration key exists and
+none is needed. Aliases are followed through the payload’s own type
+representation, with the same alias-versus-abstract-type discriminator
+<code class="language-plaintext highlighter-rouge">KleisliType</code> uses — an alias records its right-hand side as both bounds — so the
+corpus’s <code class="language-plaintext highlighter-rouge">ProgramArrows[--&gt;[_, _]]</code> type parameter is still not confused with the
+<code class="language-plaintext highlighter-rouge">--&gt;</code> Kleisli alias that shares its spelling.</p>
+
+<p>Fixtures: <code class="language-plaintext highlighter-rouge">crossfile/ArrowCrossFileStore.scala</code> declares the callee and is left
+untouched; <code class="language-plaintext highlighter-rouge">crossfile/ArrowCrossFileCaller.scala</code> holds a body byte-identical in
+shape to one in <code class="language-plaintext highlighter-rouge">ArrowBodyLocalProjection.scala</code>, and is what proves the two now
+rewrite alike.</p>
+
+
+      <footer class="site-footer">
+        
+        <span class="site-footer-credits">This page was generated by <a href="https://pages.github.com">GitHub Pages</a>.</span>
+      </footer>
+    </main>
+  </body>
+</html>

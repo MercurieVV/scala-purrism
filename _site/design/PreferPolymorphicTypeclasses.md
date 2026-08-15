@@ -1,4 +1,4 @@
-# PreferHKTTypeclasses — design
+# PreferPolymorphicTypeclasses — design
 
 Design of record for [#33](https://github.com/MercurieVV/scala-purrism/issues/33)
 ("Prefer HKT typeclasses over concrete containers"), produced by
@@ -512,9 +512,9 @@ at `scalafix/src/fix/arrow/`):
 | `scalafix/src/fix/hkt/UsageAnalyzer.scala` | `RequiredOp`, `DeclineReason`, `UsageResult`, `UsageAnalyzer` |
 | `scalafix/src/fix/hkt/CapabilitySolver.scala` | candidate enumeration, ranking, `solve` |
 | `scalafix/src/fix/hkt/HktRewriter.scala` | signature/body/import rendering |
-| `scalafix/src/fix/PreferHKTTypeclasses.scala` | rule shell, config, diagnostic |
+| `scalafix/src/fix/PreferPolymorphicTypeclasses.scala` | rule shell, config, diagnostic |
 | `scalafix/indexgen/src/fix/hkt/gen/CatsIndexGen.scala` | TASTy generator (not published) |
-| `scalafix/resources/META-INF/services/scalafix.v1.Rule` | add `fix.PreferHKTTypeclasses` |
+| `scalafix/resources/META-INF/services/scalafix.v1.Rule` | add `fix.PreferPolymorphicTypeclasses` |
 
 Six seams, deliberately wide. Every signature below **compiles** against
 `scalafix-rules_3.8.4:0.14.7` + `cats-core:2.13.0` on Scala 3.8.4 — verified before
@@ -776,7 +776,7 @@ object HktRewriter {
 `DeclineReason.NameConflict`. Every `Patch` is anchored on a `doc.tree` node; the
 rewriter never re-parses `doc.input.text` (`docs/RULES.md`).
 
-### `scalafix/src/fix/PreferHKTTypeclasses.scala`
+### `scalafix/src/fix/PreferPolymorphicTypeclasses.scala`
 
 ```scala
 package fix
@@ -788,19 +788,19 @@ import scalafix.v1._
 import fix.hkt.CatsIndex
 import fix.hkt.DeclineReason
 
-final case class PreferHKTTypeclassesConfig(
+final case class PreferPolymorphicTypeclassesConfig(
     widenPublic: Boolean = false,
     maxConstraints: Int = 2
 )
 
-object PreferHKTTypeclassesConfig {
-  val default: PreferHKTTypeclassesConfig = PreferHKTTypeclassesConfig()
-  implicit val decoder: ConfDecoder[PreferHKTTypeclassesConfig] =
+object PreferPolymorphicTypeclassesConfig {
+  val default: PreferPolymorphicTypeclassesConfig = PreferPolymorphicTypeclassesConfig()
+  implicit val decoder: ConfDecoder[PreferPolymorphicTypeclassesConfig] =
     ConfDecoder.from { conf =>
       conf
         .getOrElse("widenPublic")(default.widenPublic)
         .product(conf.getOrElse("maxConstraints")(default.maxConstraints))
-        .map(PreferHKTTypeclassesConfig.apply.tupled)
+        .map(PreferPolymorphicTypeclassesConfig.apply.tupled)
     }
 }
 
@@ -813,17 +813,17 @@ final case class HKTDeclineDiagnostic(
     scalafix.lint.LintSeverity.Warning
 }
 
-final class PreferHKTTypeclasses(config: PreferHKTTypeclassesConfig)
-    extends SemanticRule("PreferHKTTypeclasses") {
+final class PreferPolymorphicTypeclasses(config: PreferPolymorphicTypeclassesConfig)
+    extends SemanticRule("PreferPolymorphicTypeclasses") {
 
-  def this() = this(PreferHKTTypeclassesConfig.default)
+  def this() = this(PreferPolymorphicTypeclassesConfig.default)
 
   private lazy val index: CatsIndex = CatsIndex.load()
 
   override def withConfiguration(configuration: Configuration): Configured[Rule] =
     configuration.conf
-      .getOrElse("PreferHKTTypeclasses")(PreferHKTTypeclassesConfig.default)
-      .map(new PreferHKTTypeclasses(_))
+      .getOrElse("PreferPolymorphicTypeclasses")(PreferPolymorphicTypeclassesConfig.default)
+      .map(new PreferPolymorphicTypeclasses(_))
 
   override def fix(implicit doc: SemanticDocument): Patch = ???
 }
@@ -1033,7 +1033,7 @@ line, while its expected output omits that testkit-only assertion comment.
 
 ```scala
 /*
-rules = [PreferHKTTypeclasses]
+rules = [PreferPolymorphicTypeclasses]
  */
 package golden
 
@@ -1049,7 +1049,7 @@ object AbstractFunctorListMap {
 
 ```scala
 /*
-rules = [PreferHKTTypeclasses]
+rules = [PreferPolymorphicTypeclasses]
  */
 package golden
 
@@ -1068,16 +1068,16 @@ object AbstractFunctorListMap {
 
 ```scala
 /*
-rules = [PreferHKTTypeclasses]
+rules = [PreferPolymorphicTypeclasses]
 
-PreferHKTTypeclasses.widenPublic = false
+PreferPolymorphicTypeclasses.widenPublic = false
  */
 package golden
 
 final case class PublicBoundaryUser(name: String)
 
 object AbstractPublicBoundaryDecline {
-  def names(users: List[PublicBoundaryUser]): List[String] = // assert: PreferHKTTypeclasses
+  def names(users: List[PublicBoundaryUser]): List[String] = // assert: PreferPolymorphicTypeclasses
     users.map(_.name)
 }
 ```
@@ -1086,9 +1086,9 @@ object AbstractPublicBoundaryDecline {
 
 ```scala
 /*
-rules = [PreferHKTTypeclasses]
+rules = [PreferPolymorphicTypeclasses]
 
-PreferHKTTypeclasses.widenPublic = false
+PreferPolymorphicTypeclasses.widenPublic = false
  */
 package golden
 
@@ -1164,7 +1164,7 @@ consistent with `docs/GOLDEN_FIXTURES.md`. Nothing is added under
 
 ```scala
 /*
-rules = [PreferHKTTypeclasses]
+rules = [PreferPolymorphicTypeclasses]
  */
 package golden
 ```
@@ -1174,9 +1174,9 @@ is the behaviour under test:
 
 ```scala
 /*
-rules = [PreferHKTTypeclasses]
+rules = [PreferPolymorphicTypeclasses]
 
-PreferHKTTypeclasses.widenPublic = false
+PreferPolymorphicTypeclasses.widenPublic = false
  */
 package golden
 ```
@@ -1185,7 +1185,7 @@ Negative fixtures assert their warning inline, in the style of
 `ArrowFlowFanOutNegativeShadow.scala`:
 
 ```scala
-  private def head(xs: List[Int]): Int = xs.head // assert: PreferHKTTypeclasses
+  private def head(xs: List[Int]): Int = xs.head // assert: PreferPolymorphicTypeclasses
 ```
 
 and their `testOutput` file is byte-identical to the input except that the
@@ -1297,10 +1297,10 @@ the sections above stay as the record of what was intended.
 
 | Decision | As built | Why |
 | --- | --- | --- |
-| Config type | `PreferHKTTypeclassesConfig(rewrite, widenPublic = false, maxConstraints = 2)`; the old `PreferHKTConfig` and a `PreferHKTTypeclasses(PreferHKTConfig)` constructor are retained | item 7's shape, plus `rewrite` for parity with the container rule. The old names stay because MiMa checks this module against the last release |
-| Kind shapes | `Unary` only | `Star` widening is `PreferElementTypeclasses`' subject (`A: Monoid`), and nothing in this rule renders a `Star` target. `Binary` is declined as item 6 says |
+| Config type | `PreferPolymorphicTypeclassesConfig(rewrite, widenPublic = false, maxConstraints = 2)`; the old `PreferHKTConfig` and a `PreferPolymorphicTypeclasses(PreferHKTConfig)` constructor are retained | item 7's shape, plus `rewrite` for parity with the container rule. The old names stay because MiMa checks this module against the last release |
+| Kind shapes | `Unary` only | `Star` widening is `PreferPolymorphicCollectionOps`' subject (`A: Monoid`), and nothing in this rule renders a `Star` target. `Binary` is declined as item 6 says |
 | Type-parameter names | `G`, `H`, `K` | as in negative fixture 7, which needs all three taken to reach `NameConflict` |
-| `DeclineReason.NoCapability` | never reported | the analyzer declines on the *first* unresolvable call anywhere in the body, usually an element-level one (`String#toInt`). Reporting it would warn on most definitions. Same rationale as `PreferContainerTypeclasses.mentionsContainer` |
+| `DeclineReason.NoCapability` | never reported | the analyzer declines on the *first* unresolvable call anywhere in the body, usually an element-level one (`String#toInt`). Reporting it would warn on most definitions. Same rationale as `PreferPolymorphicCollections.mentionsContainer` |
 | Body rewriting | none, as item 7a's rendering contract requires | which makes fixtures 8, 12, 13, 14 and 18 (`Reducible[NonEmptyList]`, `Try(...)`, `FunctorFilter[Option]`, `TraverseFilter[List]`, `Eval.defer`) **no-ops** rather than the rewrites their rows describe: each body names the concrete constructor, and only a body rewrite could carry it over. They are kept as fixtures asserting exactly that, and the shapes are listed under `docs/RULES.md` "Candidate Rules" |
 | Fixture 9 (`AbstractMonoidEmptyAndCombine`) | widens the *container* to `[A: Monoid, G[_]: Foldable]` rather than the element | the input's `foldLeft` is a `Foldable` capability on `xs`; element abstraction is the other rule |
 | `MissingEvidence` | not produced | no element-evidence check exists; the fixture supplies `Monoid[B]` locally so the widened form compiles |
@@ -1319,5 +1319,5 @@ a widened signature:
 | Decision | As built | Why |
 | --- | --- | --- |
 | Chain exit | `capabilities.tsv` gained an `exits` column, generated from TASTy: whether a capability's result mentions the abstracted constructor. `UsageAnalyzer` stops growing a call chain at an exit, and `ContainerFlow` stops accounting there | `xs.toList.zipWithIndex.map(f)` is a `Foldable` use of `xs` and then a `List` expression. Read as one chain it declines as order-specific; read with the exit it widens, which is what `SinesGenerator.fromRatios` needed |
-| Rule overlap | `PreferHKTTypeclasses.containers` defaults to the collections, which it leaves to `PreferContainerTypeclasses` | run together on one signature the two rules produced `names[S[_]: Functor][G[_]: Functor](users: SG[String])` |
+| Rule overlap | `PreferPolymorphicTypeclasses.containers` defaults to the collections, which it leaves to `PreferPolymorphicCollections` | run together on one signature the two rules produced `names[S[_]: Functor][G[_]: Functor](users: SG[String])` |
 | Call sites | `fix.container.WidenScope` (see `docs/RULES.md`), opt-in per rule as `crossFile` | widening `fromRatios[T]` to `fromRatios[T, S[_]]` compiled `signals` and broke `score`, whose `fromRatios[V](...)` names one type argument too few |

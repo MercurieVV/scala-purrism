@@ -18,7 +18,7 @@ final class IdiomCrossRule[F[_]: Sync] {
   def announce(name: Option[String], log: String => F[Unit]): F[Unit] =
     name.fold(Sync[F].unit)(log)
 
-  /** `PreferIndexedMap` rewrites the body while `PreferContainerTypeclasses`
+  /** `PreferIndexedMap` rewrites the body while `PreferPolymorphicCollections`
     * rewrites the signature of the same definition.
     */
   private def total(rows: List[Int]): Int =

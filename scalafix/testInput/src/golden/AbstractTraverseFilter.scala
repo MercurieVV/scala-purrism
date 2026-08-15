@@ -1,5 +1,5 @@
 /*
-rules = [PreferHKTTypeclasses]
+rules = [PreferPolymorphicTypeclasses]
  */
 package golden
 

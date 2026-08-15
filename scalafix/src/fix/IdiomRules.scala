@@ -13,7 +13,6 @@ import fix.idioms.IdiomFinding
 import fix.idioms.IdiomRewrite
 import fix.idioms.IndexedMapRules
 import fix.idioms.OptionIdiomRules
-import fix.idioms.StateThreadingRules
 
 /** A shape one of the idiom rules recognised but declined to rewrite. */
 final case class IdiomDiagnostic(
@@ -59,25 +58,6 @@ object PreferOptionIdiomsConfig {
         .product(conf.getOrElse("mouse")(default.mouse))
         .map { case (rewrite, mouse) =>
           PreferOptionIdiomsConfig(rewrite, mouse)
-        }
-    }
-}
-
-final case class PreferStateThreadingConfig(
-    rewrite: Boolean = true,
-    stateT: Boolean = false
-)
-
-object PreferStateThreadingConfig {
-  val default: PreferStateThreadingConfig = PreferStateThreadingConfig()
-
-  implicit val decoder: ConfDecoder[PreferStateThreadingConfig] =
-    ConfDecoder.from { conf =>
-      conf
-        .getOrElse("rewrite")(default.rewrite)
-        .product(conf.getOrElse("stateT")(default.stateT))
-        .map { case (rewrite, stateT) =>
-          PreferStateThreadingConfig(rewrite, stateT)
         }
     }
 }
@@ -188,33 +168,6 @@ final class PreferOptionIdioms(config: PreferOptionIdiomsConfig)
       if (config.rewrite) OptionIdiomRules.rewrites(doc.tree, config.mouse)
       else Nil,
       OptionIdiomRules.findings(doc.tree)
-    )
-}
-
-/** Hand-threaded state as `State`.
-  *
-  * The pair-threading `foldLeft` rewrites when its seed says what the state
-  * type is. The two signature-shaped findings -- a `(S, A) => (S, B)` method
-  * and a self-recursive effect -- report instead, because naming them `State`
-  * or `iterateUntilM` changes a signature, and that is a decision for every
-  * call site at once rather than for the file scalafix was handed.
-  */
-final class PreferStateThreading(config: PreferStateThreadingConfig)
-    extends SemanticRule("PreferStateThreading") {
-
-  def this() = this(PreferStateThreadingConfig.default)
-
-  override def withConfiguration(
-      configuration: Configuration
-  ): Configured[Rule] =
-    configuration.conf
-      .getOrElse("PreferStateThreading")(PreferStateThreadingConfig.default)
-      .map(new PreferStateThreading(_))
-
-  override def fix(implicit doc: SemanticDocument): Patch =
-    IdiomPatches(
-      if (config.rewrite) StateThreadingRules.rewrites(doc.tree) else Nil,
-      StateThreadingRules.findings(doc.tree, config.stateT)
     )
 }
 

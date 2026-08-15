@@ -9,7 +9,7 @@ import metaconfig.Configured
 final class WidenSubjectConfigSuite extends munit.FunSuite {
 
   private def decodeElements(conf: Conf): ElementTypesConfig =
-    conf.getOrElse("PreferElementTypeclasses")(
+    conf.getOrElse("PreferPolymorphicCollectionOps")(
       ElementTypesConfig.default
     ) match {
       case Configured.Ok(c)    => c
@@ -26,31 +26,31 @@ final class WidenSubjectConfigSuite extends munit.FunSuite {
 
   test("the element list is configurable, and reads from the rule's block") {
     val conf = Conf.Obj(
-      "PreferElementTypeclasses" -> Conf.Obj(
+      "PreferPolymorphicCollectionOps" -> Conf.Obj(
         "elements" -> Conf.Lst(Conf.Str("Money"), Conf.Str("VarId"))
       )
     )
     assertEquals(decodeElements(conf).elements, List("Money", "VarId"))
   }
 
-  /** The key shares a block with `PreferElementTypeclassesConfig`, so reading
-    * one must not disturb the other.
+  /** The key shares a block with `PreferPolymorphicCollectionOpsConfig`, so
+    * reading one must not disturb the other.
     */
   test("elements and the rest of the block decode independently") {
     val conf = Conf.Obj(
-      "PreferElementTypeclasses" -> Conf.Obj(
+      "PreferPolymorphicCollectionOps" -> Conf.Obj(
         "elements" -> Conf.Lst(Conf.Str("Money")),
         "widenPublic" -> Conf.Bool(true)
       )
     )
     assertEquals(decodeElements(conf).elements, List("Money"))
-    val rule = conf.getOrElse("PreferElementTypeclasses")(
-      PreferElementTypeclassesConfig.default
+    val rule = conf.getOrElse("PreferPolymorphicCollectionOps")(
+      PreferPolymorphicCollectionOpsConfig.default
     )
     assertEquals(rule.get.widenPublic, true)
     assertEquals(
       rule.get.containers,
-      PreferElementTypeclassesConfig.default.containers
+      PreferPolymorphicCollectionOpsConfig.default.containers
     )
   }
 

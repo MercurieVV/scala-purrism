@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en-US">
+  <head>
+    <meta charset="UTF-8">
+
+<!-- Begin Jekyll SEO tag v2.9.0 -->
+<title>scala-purrism | Scalafix semantic rules for refactoring Typelevel Scala toward pure, polymorphic Cats style.</title>
+<meta name="generator" content="Jekyll v4.4.1" />
+<meta property="og:title" content="scala-purrism" />
+<meta property="og:locale" content="en_US" />
+<meta name="description" content="Scalafix semantic rules for refactoring Typelevel Scala toward pure, polymorphic Cats style." />
+<meta name="twitter:description" property="og:description" content="Scalafix semantic rules for refactoring Typelevel Scala toward pure, polymorphic Cats style." />
+<link rel="canonical" href="http://localhost:4000/scala-purrism/" />
+<meta property="og:url" content="http://localhost:4000/scala-purrism/" />
+<meta property="og:site_name" content="scala-purrism" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:title" content="scala-purrism" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebSite","description":"Scalafix semantic rules for refactoring Typelevel Scala toward pure, polymorphic Cats style.","headline":"scala-purrism","name":"scala-purrism","url":"http://localhost:4000/scala-purrism/"}</script>
+<!-- End Jekyll SEO tag -->
+
+    <link rel="preconnect" href="https://fonts.gstatic.com">
+    <link rel="preload" href="https://fonts.googleapis.com/css?family=Open+Sans:400,700&display=swap" as="style" type="text/css" crossorigin>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#157878">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="stylesheet" href="/scala-purrism/assets/css/style.css?v=">
+    <!-- start custom head snippets, customize with your own _includes/head-custom.html file -->
+
+<!-- Setup Google Analytics -->
+
+
+
+<!-- You can set your favicon here -->
+<!-- link rel="shortcut icon" type="image/x-icon" href="/scala-purrism/favicon.ico" -->
+
+<!-- end custom head snippets -->
+
+  </head>
+  <body>
+    <a id="skip-to-content" href="#content">Skip to the content.</a>
+
+    <header class="page-header" role="banner">
+      <h1 class="project-name">scala-purrism</h1>
+      <h2 class="project-tagline">Scalafix semantic rules for refactoring Typelevel Scala toward pure, polymorphic Cats style.</h2>
+      
+      
+    </header>
+
+    <main id="content" class="main-content" role="main">
+      <h1 id="scala-purrism-rules">scala-purrism Rules</h1>
+
+<p>This page is compiled with <strong>mdoc</strong>. The examples below are intentionally small:
+the diff blocks show what each Scalafix rule rewrites, and the mdoc blocks keep
+the after-shapes type-checked against Cats and Cats Effect.</p>
+
+<div class="language-scala highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">import</span> <span class="nn">cats.</span><span class="o">*</span>
+<span class="k">import</span> <span class="nn">cats.data.Kleisli</span>
+<span class="k">import</span> <span class="nn">cats.effect.</span><span class="o">{</span><span class="nc">IO</span><span class="o">,</span> <span class="nc">Sync</span><span class="o">}</span>
+<span class="k">import</span> <span class="nn">cats.syntax.all.</span><span class="o">*</span>
+</code></pre></div></div>
+
+<div class="language-scala highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">val</span> <span class="nv">docsBuild</span> <span class="k">=</span> <span class="s">"mdoc compiles and runs the docs examples"</span>
+<span class="c1">// docsBuild: String = "mdoc compiles and runs the docs examples"</span>
+<span class="nf">println</span><span class="o">(</span><span class="n">docsBuild</span><span class="o">)</span>
+<span class="c1">// mdoc compiles and runs the docs examples</span>
+</code></pre></div></div>
+
+<h2 id="setup">Setup</h2>
+
+<p>Add the published rule artifact:</p>
+
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>io.github.mercurievv:scala-purrism-scalafix_3:0.8.0
+</code></pre></div></div>
+
+<p>Enable SemanticDB in the target project:</p>
+
+<div class="language-scala highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">scalacOptions</span> <span class="o">+=</span> <span class="s">"-Ysemanticdb"</span>
+</code></pre></div></div>
+
+<p>Choose rules in <code class="language-plaintext highlighter-rouge">.scalafix.conf</code>:</p>
+
+<div class="language-hocon highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nl">rules</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="w">
+  </span><span class="l">TypelevelPurrism</span><span class="w">
+</span><span class="p">]</span><span class="w">
+</span></code></pre></div></div>
+
+<p>For whole-project rewrites, run Scalafix over every relevant source file and
+pass every SemanticDB target root. Recompile between stages when one rule
+changes signatures that another rule reads semantically.</p>
+
+<h2 id="rules-by-functionality">Rules By Functionality</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>group</th>
+      <th>rules</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><a href="#rule-sets">Rule sets</a></td>
+      <td><code class="language-plaintext highlighter-rouge">TypelevelPurrism</code>, <code class="language-plaintext highlighter-rouge">PreferTypeParameters</code></td>
+    </tr>
+    <tr>
+      <td><a href="#effect-boundaries">Effect boundaries</a></td>
+      <td><code class="language-plaintext highlighter-rouge">TypeclassWeakening</code>, <code class="language-plaintext highlighter-rouge">SuspendSideEffects</code>, <code class="language-plaintext highlighter-rouge">PreferEffectIdioms</code></td>
+    </tr>
+    <tr>
+      <td><a href="#cats-expressions">Cats expressions</a></td>
+      <td><code class="language-plaintext highlighter-rouge">PreferCatsSyntax</code>, <code class="language-plaintext highlighter-rouge">SimplifyCatsExpressions</code>, <code class="language-plaintext highlighter-rouge">PreferCatsFunctions</code></td>
+    </tr>
+    <tr>
+      <td><a href="#kleisli-and-arrow">Kleisli and Arrow</a></td>
+      <td><code class="language-plaintext highlighter-rouge">PreferKleisli</code>, <code class="language-plaintext highlighter-rouge">PreferArrow</code></td>
+    </tr>
+    <tr>
+      <td><a href="#polymorphic-signatures">Polymorphic signatures</a></td>
+      <td><code class="language-plaintext highlighter-rouge">PreferPolymorphicTypeclasses</code>, <code class="language-plaintext highlighter-rouge">PreferPolymorphicCollections</code>, <code class="language-plaintext highlighter-rouge">PreferPolymorphicCollectionOps</code></td>
+    </tr>
+    <tr>
+      <td><a href="#data-and-collection-flow">Data and collection flow</a></td>
+      <td><code class="language-plaintext highlighter-rouge">PropagateOpaqueType</code>, <code class="language-plaintext highlighter-rouge">PreferOptionIdioms</code>, <code class="language-plaintext highlighter-rouge">PreferIndexedMap</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="rule-sets">Rule Sets</h3>
+
+<h4 id="typelevelpurrism">TypelevelPurrism</h4>
+
+<p>Runs <code class="language-plaintext highlighter-rouge">TypeclassWeakening</code>, <code class="language-plaintext highlighter-rouge">PreferKleisli</code>, <code class="language-plaintext highlighter-rouge">PreferArrow</code>,
+<code class="language-plaintext highlighter-rouge">PreferCatsFunctions</code>, <code class="language-plaintext highlighter-rouge">PreferTypeParameters</code>, <code class="language-plaintext highlighter-rouge">PreferCatsSyntax</code>, and
+<code class="language-plaintext highlighter-rouge">SimplifyCatsExpressions</code>.</p>
+
+<pre class="purrism-word-diff"><code><span class="purrism-word-diff-line">rules = [ <span style="color:#8250df">Type</span><span style="background:rgba(207,34,46,.18);color:#82071e;text-decoration:line-through;border-radius:3px;padding:0 2px">classWeakening, <span style="color:#8250df">PreferKleisli</span>, <span style="color:#8250df">PreferArrow</span>, <span style="color:#8250df">PreferCatsSyntax</span></span><span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px">levelPurrism</span> ]</span></code></pre>
+<pre class="purrism-word-diff"><code><span class="purrism-word-diff-line">rules = [ <span style="color:#8250df">Type</span><span style="background:rgba(207,34,46,.18);color:#82071e;text-decoration:line-through;border-radius:3px;padding:0 2px">classWeakening, <span style="color:#8250df">PreferCatsSyntax</span>, <span style="color:#8250df">SimplifyCatsExpressions</span></span><span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px">levelPurrism</span> ]</span>
+<span class="purrism-word-diff-line"><span style="color:#8250df">PreferArrow</span>.aggressive = <span style="color:#cf222e;font-weight:600">true</span></span></code></pre>
+<p>Since 0.8.0 the widening member is <code class="language-plaintext highlighter-rouge">PreferTypeParameters</code> — all three of
+<code class="language-plaintext highlighter-rouge">PreferPolymorphicCollectionOps</code>, <code class="language-plaintext highlighter-rouge">PreferPolymorphicCollections</code> and
+<code class="language-plaintext highlighter-rouge">PreferPolymorphicTypeclasses</code> — where it was <code class="language-plaintext highlighter-rouge">PreferPolymorphicTypeclasses</code> alone. Every
+member key reaches them through the umbrella:</p>
+
+<div class="language-hocon highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nl">PreferArrow.aggressive</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">true</span><span class="w">
+</span><span class="nl">PreferPolymorphicTypeclasses.widenPublic</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">true</span><span class="w">
+</span><span class="nl">PreferPolymorphicCollections.crossFile</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">true</span><span class="w">
+</span><span class="nl">PreferPolymorphicCollectionOps.rewrite</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">false</span><span class="w">   </span><span class="c1"># opt out: see below</span><span class="w">
+</span></code></pre></div></div>
+
+<p><code class="language-plaintext highlighter-rouge">PreferPolymorphicCollectionOps</code> is the one member that rewrites a <em>body</em>:
+<code class="language-plaintext highlighter-rouge">mkString</code> becomes <code class="language-plaintext highlighter-rouge">mkString_</code>, which renders elements with <code class="language-plaintext highlighter-rouge">Show</code> rather than
+<code class="language-plaintext highlighter-rouge">toString</code>. Where the two disagree the program prints something different. Set
+<code class="language-plaintext highlighter-rouge">PreferPolymorphicCollectionOps.rewrite = false</code> to keep the umbrella’s widenings
+purely at the signature.</p>
+
+<h4 id="prefertypeparameters">PreferTypeParameters</h4>
+
+<p>Runs the three signature-widening rules together:
+<code class="language-plaintext highlighter-rouge">PreferPolymorphicCollectionOps</code>, <code class="language-plaintext highlighter-rouge">PreferPolymorphicCollections</code>, and
+<code class="language-plaintext highlighter-rouge">PreferPolymorphicTypeclasses</code>.</p>
+
+<pre class="purrism-word-diff"><code><span class="purrism-word-diff-line">rules = [ <span style="color:#8250df">Prefer</span><span style="background:rgba(207,34,46,.18);color:#82071e;text-decoration:line-through;border-radius:3px;padding:0 2px"><span style="color:#8250df">PolymorphicCollections</span>, <span style="color:#8250df">PreferPolymorphicCollectionOps</span>, <span style="color:#8250df">PreferPolymorphicTypeclasse</span></span><span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px"><span style="color:#8250df">TypeParameter</span></span>s ]</span></code></pre>
+<pre class="purrism-word-diff"><code><span class="purrism-word-diff-line">rules = [ <span style="color:#8250df">Prefer</span><span style="background:rgba(207,34,46,.18);color:#82071e;text-decoration:line-through;border-radius:3px;padding:0 2px"><span style="color:#8250df">PolymorphicTypeclasses</span>, <span style="color:#8250df">PreferPolymorphicCollection</span></span><span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px"><span style="color:#8250df">TypeParameter</span></span>s ]</span>
+<span class="purrism-word-diff-line"><span style="color:#8250df">PreferPolymorphicCollections</span>.containers = [ <span style="color:#0a3069">&quot;List&quot;</span>, <span style="color:#0a3069">&quot;Vector&quot;</span> ]</span>
+<span class="purrism-word-diff-line"><span style="color:#8250df">PreferPolymorphicTypeclasses</span>.containers = [ <span style="color:#0a3069">&quot;*&quot;</span> ]</span></code></pre>
+<pre class="purrism-word-diff"><code><span class="purrism-word-diff-line"><span style="color:#cf222e;font-weight:600">def</span> labels[<span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px"><span style="color:#8250df">S</span>[_]: <span style="color:#8250df">Functor</span>, </span><span style="color:#8250df">A</span>](values: <span style="background:rgba(207,34,46,.18);color:#82071e;text-decoration:line-through;border-radius:3px;padding:0 2px"><span style="color:#8250df">List</span></span><span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px"><span style="color:#8250df">S</span></span>[<span style="color:#8250df">A</span>]): <span style="background:rgba(207,34,46,.18);color:#82071e;text-decoration:line-through;border-radius:3px;padding:0 2px"><span style="color:#8250df">List</span></span><span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px"><span style="color:#8250df">S</span></span>[<span style="color:#8250df">String</span>] =</span>
+<span class="purrism-word-diff-line">  values.map(_.toString)</span>
+<span class="purrism-word-diff-line"></span>
+<span class="purrism-word-diff-line"><span style="color:#cf222e;font-weight:600">val</span> out = labels<span style="background:rgba(207,34,46,.18);color:#82071e;text-decoration:line-through;border-radius:3px;padding:0 2px">[<span style="color:#8250df">Int</span>]</span>(<span style="color:#8250df">List</span>(<span style="color:#0550ae">1</span>, <span style="color:#0550ae">2</span>))</span></code></pre>
+<h3 id="effect-boundaries">Effect Boundaries</h3>
+
+<h4 id="typeclassweakening">TypeclassWeakening</h4>
+
+<p>Weakens over-strong effect bounds when the body only needs weaker Cats
+capabilities.</p>
+
+<pre class="purrism-word-diff"><code><span class="purrism-word-diff-line"><span style="color:#cf222e;font-weight:600">def</span> bump[<span style="color:#8250df">F</span>[_]: <span style="background:rgba(207,34,46,.18);color:#82071e;text-decoration:line-through;border-radius:3px;padding:0 2px"><span style="color:#8250df">Sync</span></span><span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px"><span style="color:#8250df">Monad</span></span>](fa: <span style="color:#8250df">F</span>[<span style="color:#8250df">Int</span>]): <span style="color:#8250df">F</span>[<span style="color:#8250df">Int</span>] =</span>
+<span class="purrism-word-diff-line">    fa.map(_ + <span style="color:#0550ae">1</span>)</span></code></pre>
+<pre class="purrism-word-diff"><code><span class="purrism-word-diff-line"><span style="color:#cf222e;font-weight:600">def</span> choose[<span style="color:#8250df">F</span>[_]: <span style="background:rgba(207,34,46,.18);color:#82071e;text-decoration:line-through;border-radius:3px;padding:0 2px"><span style="color:#8250df">Concurrent</span></span><span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px"><span style="color:#8250df">MonadError</span>[*[_], <span style="color:#8250df">Throwable</span>]</span>, <span style="color:#8250df">A</span>](left: <span style="color:#8250df">F</span>[<span style="color:#8250df">A</span>], right: <span style="color:#8250df">F</span>[<span style="color:#8250df">A</span>]): <span style="color:#8250df">F</span>[<span style="color:#8250df">A</span>] =</span>
+<span class="purrism-word-diff-line">  left.handleErrorWith(_ =&gt; right)</span></code></pre>
+<p>Config: none.</p>
+
+<h4 id="suspendsideeffects">SuspendSideEffects</h4>
+
+<p>Reports side effects that a signature does not mention and rewrites eager
+<code class="language-plaintext highlighter-rouge">pure(effect)</code> into suspended <code class="language-plaintext highlighter-rouge">delay(effect)</code> where an effect type supports it.</p>
+
+<pre class="purrism-word-diff"><code><span class="purrism-word-diff-line"><span style="color:#8250df">Sync</span>[<span style="color:#8250df">F</span>].<span style="background:rgba(207,34,46,.18);color:#82071e;text-decoration:line-through;border-radius:3px;padding:0 2px">pure</span><span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px">delay</span>(<span style="color:#8250df">System</span>.nanoTime())</span></code></pre>
+<pre class="purrism-word-diff"><code><span class="purrism-word-diff-line"><span style="color:#cf222e;font-weight:600">def</span> read[<span style="color:#8250df">F</span>[_]: <span style="color:#8250df">Sync</span>](path: <span style="color:#8250df">Path</span>): <span style="color:#8250df">F</span>[<span style="color:#8250df">String</span>] =</span>
+<span class="purrism-word-diff-line">  <span style="color:#8250df">Sync</span>[<span style="color:#8250df">F</span>].<span style="background:rgba(207,34,46,.18);color:#82071e;text-decoration:line-through;border-radius:3px;padding:0 2px">pure</span><span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px">delay</span>(<span style="color:#8250df">Files</span>.readString(path))</span></code></pre>
+<div class="language-hocon highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nl">SuspendSideEffects.rewrite</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">true</span><span class="w">
+</span><span class="nl">SuspendSideEffects.report</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">true</span><span class="w">
+</span><span class="nl">SuspendSideEffects.effects</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s2">"IO"</span><span class="p">,</span><span class="w"> </span><span class="s2">"SyncIO"</span><span class="p">,</span><span class="w"> </span><span class="s2">"Resource"</span><span class="p">,</span><span class="w"> </span><span class="s2">"Stream"</span><span class="p">,</span><span class="w"> </span><span class="s2">"Task"</span><span class="p">,</span><span class="w"> </span><span class="s2">"EitherT"</span><span class="p">,</span><span class="w"> </span><span class="s2">"OptionT"</span><span class="p">,</span><span class="w"> </span><span class="s2">"Kleisli"</span><span class="w"> </span><span class="p">]</span><span class="w">
+</span></code></pre></div></div>
+
+<h4 id="prefereffectidioms">PreferEffectIdioms</h4>
+
+<p>Rewrites decidable effect idioms and reports shapes that need a wider program
+decision.</p>
+
+<pre class="purrism-word-diff"><code><span class="purrism-word-diff-line"><span style="color:#cf222e;font-weight:600">try</span> work()</span>
+<span class="purrism-word-diff-line"><span style="color:#cf222e;font-weight:600">catch</span> { <span style="color:#cf222e;font-weight:600">case</span> <span style="background:rgba(207,34,46,.18);color:#82071e;text-decoration:line-through;border-radius:3px;padding:0 2px">_: <span style="color:#8250df">Throwable</span></span><span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px"><span style="color:#8250df">NonFatal</span>(_)</span> =&gt; fallback() }</span></code></pre>
+<pre class="purrism-word-diff"><code><span class="purrism-word-diff-line"><span style="background:rgba(207,34,46,.18);color:#82071e;text-decoration:line-through;border-radius:3px;padding:0 2px"><span style="color:#cf222e;font-weight:600">try</span> open()</span></span>
+<span class="purrism-word-diff-line"><span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px"><span style="color:#8250df">Resource</span>.make(open())(_ =&gt; close()).use(identity)</span></span>
+<span class="purrism-word-diff-line"><span style="background:rgba(207,34,46,.18);color:#82071e;text-decoration:line-through;border-radius:3px;padding:0 2px">finally close()</span></span></code></pre>
+<div class="language-hocon highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nl">PreferEffectIdioms.rewrite</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">true</span><span class="w">
+</span><span class="nl">PreferEffectIdioms.resources</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">true</span><span class="w">
+</span><span class="nl">PreferEffectIdioms.refs</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">true</span><span class="w">
+</span></code></pre></div></div>
+
+<h3 id="cats-expressions">Cats Expressions</h3>
+
+<h4 id="prefercatssyntax">PreferCatsSyntax</h4>
+
+<p>Replaces direct Cats typeclass calls with Cats syntax.</p>
+
+<pre class="purrism-word-diff"><code><span class="purrism-word-diff-line"><span style="background:rgba(207,34,46,.18);color:#82071e;text-decoration:line-through;border-radius:3px;padding:0 2px"><span style="color:#8250df">Applicative</span>[<span style="color:#8250df">F</span>].pure(a)</span></span>
+<span class="purrism-word-diff-line"><span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px">a.pure[<span style="color:#8250df">F</span>]</span></span></code></pre>
+<pre class="purrism-word-diff"><code><span class="purrism-word-diff-line"><span style="background:rgba(207,34,46,.18);color:#82071e;text-decoration:line-through;border-radius:3px;padding:0 2px"><span style="color:#8250df">MonadThrow</span>[<span style="color:#8250df">F</span>].raiseError[<span style="color:#8250df">A</span>](error)</span></span>
+<span class="purrism-word-diff-line"><span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px">error.raiseError[<span style="color:#8250df">F</span>, <span style="color:#8250df">A</span>]</span></span></code></pre>
+<p>Config: none.</p>
+
+<h4 id="simplifycatsexpressions">SimplifyCatsExpressions</h4>
+
+<p>Collapses common Cats expression patterns into existing combinators.</p>
+
+<pre class="purrism-word-diff"><code><span class="purrism-word-diff-line"><span style="background:rgba(207,34,46,.18);color:#82071e;text-decoration:line-through;border-radius:3px;padding:0 2px">fa.map(_ =&gt; ())</span></span>
+<span class="purrism-word-diff-line"><span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px">fa.void</span></span></code></pre>
+<pre class="purrism-word-diff"><code><span class="purrism-word-diff-line"><span style="background:rgba(207,34,46,.18);color:#82071e;text-decoration:line-through;border-radius:3px;padding:0 2px">fa.flatMap(a =&gt; a.pure[<span style="color:#8250df">F</span>])</span></span>
+<span class="purrism-word-diff-line"><span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px">fa</span></span></code></pre>
+<p>Config: none.</p>
+
+<h4 id="prefercatsfunctions">PreferCatsFunctions</h4>
+
+<p>Matches a project body against indexed Cats source functions and rewrites to
+the winning public Cats function when evidence and evaluation order are safe.</p>
+
+<pre class="purrism-word-diff"><code><span class="purrism-word-diff-line"><span style="color:#cf222e;font-weight:600">def</span> lifted[<span style="color:#8250df">F</span>[_]: <span style="color:#8250df">Applicative</span>, <span style="color:#8250df">A</span>](a: <span style="color:#8250df">A</span>): <span style="color:#8250df">F</span>[<span style="color:#8250df">A</span>] =</span>
+<span class="purrism-word-diff-line"><span style="background:rgba(207,34,46,.18);color:#82071e;text-decoration:line-through;border-radius:3px;padding:0 2px">  <span style="color:#8250df">Applicative</span>[<span style="color:#8250df">F</span>].pure(a)</span></span>
+<span class="purrism-word-diff-line"><span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px">  a.pure[<span style="color:#8250df">F</span>]</span></span></code></pre>
+<pre class="purrism-word-diff"><code><span class="purrism-word-diff-line"><span style="color:#cf222e;font-weight:600">def</span> both[<span style="color:#8250df">F</span>[_]: <span style="color:#8250df">Apply</span>, <span style="color:#8250df">A</span>, <span style="color:#8250df">B</span>](fa: <span style="color:#8250df">F</span>[<span style="color:#8250df">A</span>], fb: <span style="color:#8250df">F</span>[<span style="color:#8250df">B</span>]): <span style="color:#8250df">F</span>[(<span style="color:#8250df">A</span>, <span style="color:#8250df">B</span>)] =</span>
+<span class="purrism-word-diff-line"><span style="background:rgba(207,34,46,.18);color:#82071e;text-decoration:line-through;border-radius:3px;padding:0 2px">  <span style="color:#8250df">Apply</span>[<span style="color:#8250df">F</span>].map2(fa, fb)((a, b) =&gt; (a, b))</span></span>
+<span class="purrism-word-diff-line"><span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px">  fa.product(fb)</span></span></code></pre>
+<p>Config: none.</p>
+
+<h3 id="kleisli-and-arrow">Kleisli And Arrow</h3>
+
+<h4 id="preferkleisli">PreferKleisli</h4>
+
+<p>Turns effectful data-in/data-out methods into <code class="language-plaintext highlighter-rouge">Kleisli</code> values and re-splits
+direct call sites.</p>
+
+<pre class="purrism-word-diff"><code><span class="purrism-word-diff-line"><span style="color:#cf222e;font-weight:600">def</span> load[<span style="color:#8250df">F</span>[_]: <span style="color:#8250df">Monad</span>]<span style="background:rgba(207,34,46,.18);color:#82071e;text-decoration:line-through;border-radius:3px;padding:0 2px">(id: <span style="color:#8250df">Long</span>): <span style="color:#8250df">F</span>[</span><span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px">: <span style="color:#8250df">Kleisli</span>[<span style="color:#8250df">F</span>, <span style="color:#8250df">Long</span>, </span><span style="color:#8250df">String</span>] =</span>
+<span class="purrism-word-diff-line"><span style="background:rgba(207,34,46,.18);color:#82071e;text-decoration:line-through;border-radius:3px;padding:0 2px">  id.toString.pure[<span style="color:#8250df">F</span>]</span></span>
+<span class="purrism-word-diff-line"><span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px">  <span style="color:#8250df">Kleisli</span>(id =&gt; id.toString.pure[<span style="color:#8250df">F</span>])</span></span>
+<span class="purrism-word-diff-line"></span>
+<span class="purrism-word-diff-line"><span style="color:#cf222e;font-weight:600">val</span> loaded: <span style="color:#8250df">IO</span>[<span style="color:#8250df">String</span>] = load[<span style="color:#8250df">IO</span>]<span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px">.run</span>(<span style="color:#0550ae">42</span>)</span></code></pre>
+<pre class="purrism-word-diff"><code><span class="purrism-word-diff-line"><span style="color:#cf222e;font-weight:600">def</span> save[<span style="color:#8250df">F</span>[_]: <span style="color:#8250df">Monad</span>]<span style="background:rgba(207,34,46,.18);color:#82071e;text-decoration:line-through;border-radius:3px;padding:0 2px">(name: <span style="color:#8250df">String</span>): <span style="color:#8250df">F</span>[</span><span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px">: <span style="color:#8250df">Kleisli</span>[<span style="color:#8250df">F</span>, <span style="color:#8250df">String</span>, </span><span style="color:#8250df">Unit</span>] =</span>
+<span class="purrism-word-diff-line"><span style="background:rgba(207,34,46,.18);color:#82071e;text-decoration:line-through;border-radius:3px;padding:0 2px">  name.trim.pure[<span style="color:#8250df">F</span>].void</span></span>
+<span class="purrism-word-diff-line"><span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px">  <span style="color:#8250df">Kleisli</span>(name =&gt; name.trim.pure[<span style="color:#8250df">F</span>].void)</span></span>
+<span class="purrism-word-diff-line"></span>
+<span class="purrism-word-diff-line"><span style="color:#cf222e;font-weight:600">val</span> saved: <span style="color:#8250df">IO</span>[<span style="color:#8250df">Unit</span>] = save[<span style="color:#8250df">IO</span>]<span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px">.run</span>(<span style="color:#0a3069">&quot;  Ada  &quot;</span>)</span></code></pre>
+<div class="language-hocon highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nl">PreferKleisli.fileLocalOnly</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">false</span><span class="w">
+</span><span class="nl">PreferKleisli.crossFile</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">true</span><span class="w">
+</span><span class="nl">PreferKleisli.crossFileRoot</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">"."</span><span class="w">
+</span></code></pre></div></div>
+
+<h4 id="preferarrow">PreferArrow</h4>
+
+<p>Rewrites hand-threaded <code class="language-plaintext highlighter-rouge">Kleisli</code> bodies into Arrow composition such as <code class="language-plaintext highlighter-rouge">&gt;&gt;&gt;</code>,
+<code class="language-plaintext highlighter-rouge">.map</code>, and <code class="language-plaintext highlighter-rouge">&amp;&amp;&amp;</code>.</p>
+
+<pre class="purrism-word-diff"><code><span class="purrism-word-diff-line"><span style="background:rgba(207,34,46,.18);color:#82071e;text-decoration:line-through;border-radius:3px;padding:0 2px"><span style="color:#8250df">Kleisli</span> { id =&gt; load.run(id).map(_.trim) }</span></span>
+<span class="purrism-word-diff-line"><span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px">load.map(_.trim)</span></span></code></pre>
+<pre class="purrism-word-diff"><code><span class="purrism-word-diff-line"><span style="background:rgba(207,34,46,.18);color:#82071e;text-decoration:line-through;border-radius:3px;padding:0 2px"><span style="color:#8250df">Kleisli</span> { id =&gt; load.run(id).flatMap(validate.run) }</span></span>
+<span class="purrism-word-diff-line"><span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px">load &gt;&gt;&gt; validate</span></span></code></pre>
+<div class="language-hocon highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nl">PreferArrow.aggressive</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">false</span><span class="w">
+</span><span class="nl">PreferArrow.reportSkips</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">false</span><span class="w">
+</span></code></pre></div></div>
+
+<h3 id="polymorphic-signatures">Polymorphic Signatures</h3>
+
+<p>Three rules widen one concrete type constructor in a signature to a type
+parameter, each over a different subject — never the same parameter twice:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>rule</th>
+      <th>subject</th>
+      <th>touches the body?</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">PreferPolymorphicTypeclasses</code></td>
+      <td>any unary constructor Cats has — <code class="language-plaintext highlighter-rouge">Eval</code>, <code class="language-plaintext highlighter-rouge">Show</code>, <code class="language-plaintext highlighter-rouge">Option</code>, domain types — except collections</td>
+      <td>no</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">PreferPolymorphicCollections</code></td>
+      <td><code class="language-plaintext highlighter-rouge">List</code>/<code class="language-plaintext highlighter-rouge">Seq</code>/<code class="language-plaintext highlighter-rouge">Vector</code>/… (<code class="language-plaintext highlighter-rouge">containers</code>)</td>
+      <td>no</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">PreferPolymorphicCollectionOps</code></td>
+      <td>same collections, only bodies calling <code class="language-plaintext highlighter-rouge">mkString</code>/<code class="language-plaintext highlighter-rouge">sum</code>-like ops</td>
+      <td><strong>yes</strong> — renames the call too, e.g. <code class="language-plaintext highlighter-rouge">mkString</code> → <code class="language-plaintext highlighter-rouge">mkString_</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<p>One file, one method per rule, run through the umbrella <code class="language-plaintext highlighter-rouge">PreferTypeParameters</code>:</p>
+
+<pre class="purrism-word-diff"><code><span class="purrism-word-diff-line"><span style="color:#cf222e;font-weight:600">final</span> <span style="color:#cf222e;font-weight:600">class</span> <span style="color:#8250df">Summary</span> {</span>
+<span class="purrism-word-diff-line">  <span style="color:#cf222e;font-weight:600">private</span> <span style="color:#cf222e;font-weight:600">def</span> names<span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px">[<span style="color:#8250df">S</span>[_]: <span style="color:#8250df">Functor</span>]</span>(users: <span style="background:rgba(207,34,46,.18);color:#82071e;text-decoration:line-through;border-radius:3px;padding:0 2px"><span style="color:#8250df">List</span></span><span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px"><span style="color:#8250df">S</span></span>[<span style="color:#8250df">String</span>]): <span style="background:rgba(207,34,46,.18);color:#82071e;text-decoration:line-through;border-radius:3px;padding:0 2px"><span style="color:#8250df">List</span></span><span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px"><span style="color:#8250df">S</span></span>[<span style="color:#8250df">String</span>] =</span>
+<span class="purrism-word-diff-line">    users.map(user =&gt; user.toUpperCase)</span>
+<span class="purrism-word-diff-line"></span>
+<span class="purrism-word-diff-line">  <span style="color:#cf222e;font-weight:600">private</span> <span style="color:#cf222e;font-weight:600">def</span> rendered<span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px">[<span style="color:#8250df">S</span>[_]: <span style="color:#8250df">Foldable</span>]</span>(rows: <span style="background:rgba(207,34,46,.18);color:#82071e;text-decoration:line-through;border-radius:3px;padding:0 2px"><span style="color:#8250df">List</span></span><span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px"><span style="color:#8250df">S</span></span>[<span style="color:#8250df">String</span>]): <span style="color:#8250df">String</span> =</span>
+<span class="purrism-word-diff-line">    rows.mkString<span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px">_</span>(<span style="color:#0a3069">&quot;[&quot;</span>, <span style="color:#0a3069">&quot;,&quot;</span>, <span style="color:#0a3069">&quot;]&quot;</span>)</span>
+<span class="purrism-word-diff-line"></span>
+<span class="purrism-word-diff-line">  <span style="color:#cf222e;font-weight:600">private</span> <span style="color:#cf222e;font-weight:600">def</span> duplicate<span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px">[<span style="color:#8250df">G</span>[_]: <span style="color:#8250df">Comonad</span>]</span>(e: <span style="background:rgba(207,34,46,.18);color:#82071e;text-decoration:line-through;border-radius:3px;padding:0 2px"><span style="color:#8250df">Eval</span></span><span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px"><span style="color:#8250df">G</span></span>[<span style="color:#8250df">Int</span>]): <span style="background:rgba(207,34,46,.18);color:#82071e;text-decoration:line-through;border-radius:3px;padding:0 2px"><span style="color:#8250df">Eval</span></span><span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px"><span style="color:#8250df">G</span></span>[<span style="color:#8250df">Int</span>] =</span>
+<span class="purrism-word-diff-line">    e.coflatMap(w =&gt; w.extract + <span style="color:#0550ae">1</span>)</span>
+<span class="purrism-word-diff-line">}</span></code></pre>
+<p><code class="language-plaintext highlighter-rouge">names</code> → <code class="language-plaintext highlighter-rouge">PreferPolymorphicCollections</code>. <code class="language-plaintext highlighter-rouge">rendered</code> → <code class="language-plaintext highlighter-rouge">PreferPolymorphicCollectionOps</code>
+(signature <em>and</em> the call). <code class="language-plaintext highlighter-rouge">duplicate</code> → <code class="language-plaintext highlighter-rouge">PreferPolymorphicTypeclasses</code> (not a collection).</p>
+
+<div class="language-hocon highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nl">PreferPolymorphicTypeclasses.containers</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s2">"List"</span><span class="p">,</span><span class="w"> </span><span class="s2">"Seq"</span><span class="p">,</span><span class="w"> </span><span class="s2">"Vector"</span><span class="p">,</span><span class="w"> </span><span class="s2">"IndexedSeq"</span><span class="p">,</span><span class="w"> </span><span class="s2">"LazyList"</span><span class="w"> </span><span class="p">]</span><span class="w">
+</span><span class="nl">PreferPolymorphicTypeclasses.widenPublic</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">false</span><span class="w">
+</span><span class="nl">PreferPolymorphicTypeclasses.maxConstraints</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mi">2</span><span class="w">
+
+</span><span class="nl">PreferPolymorphicCollections.containers</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s2">"List"</span><span class="p">,</span><span class="w"> </span><span class="s2">"Seq"</span><span class="p">,</span><span class="w"> </span><span class="s2">"Vector"</span><span class="p">,</span><span class="w"> </span><span class="s2">"IndexedSeq"</span><span class="p">,</span><span class="w"> </span><span class="s2">"LazyList"</span><span class="w"> </span><span class="p">]</span><span class="w">
+</span><span class="nl">PreferPolymorphicCollections.widenPublic</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">false</span><span class="w">
+</span><span class="nl">PreferPolymorphicCollections.maxConstraints</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mi">2</span><span class="w">
+
+</span><span class="nl">PreferPolymorphicCollectionOps.containers</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s2">"List"</span><span class="p">,</span><span class="w"> </span><span class="s2">"Seq"</span><span class="p">,</span><span class="w"> </span><span class="s2">"Vector"</span><span class="p">,</span><span class="w"> </span><span class="s2">"IndexedSeq"</span><span class="p">,</span><span class="w"> </span><span class="s2">"LazyList"</span><span class="w"> </span><span class="p">]</span><span class="w">
+</span><span class="nl">PreferPolymorphicCollectionOps.elements</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s2">"String"</span><span class="p">,</span><span class="w"> </span><span class="s2">"Int"</span><span class="p">,</span><span class="w"> </span><span class="s2">"Long"</span><span class="p">,</span><span class="w"> </span><span class="s2">"Double"</span><span class="p">,</span><span class="w"> </span><span class="s2">"Boolean"</span><span class="p">,</span><span class="w"> </span><span class="s2">"..."</span><span class="w"> </span><span class="p">]</span><span class="w">
+</span><span class="nl">PreferPolymorphicCollectionOps.rewrite</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">true</span><span class="w">  </span><span class="c1"># false keeps the other two widenings, drops the body rewrite</span><span class="w">
+</span></code></pre></div></div>
+
+<p>All three also take <code class="language-plaintext highlighter-rouge">rewrite</code>, <code class="language-plaintext highlighter-rouge">crossFile</code>, and <code class="language-plaintext highlighter-rouge">crossFileTargetroots</code>.</p>
+
+<h3 id="data-and-collection-flow">Data And Collection Flow</h3>
+
+<h4 id="propagateopaquetype">PropagateOpaqueType</h4>
+
+<p>Introduces an opaque type and follows selected SemanticDB seed symbols through
+value flow.</p>
+
+<pre class="purrism-word-diff"><code><span class="purrism-word-diff-line"><span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px"><span style="color:#cf222e;font-weight:600">opaque</span> <span style="color:#cf222e;font-weight:600">type</span> <span style="color:#8250df">BranchName</span> = <span style="color:#8250df">String</span></span></span>
+<span class="purrism-word-diff-line"><span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px"><span style="color:#cf222e;font-weight:600">object</span> <span style="color:#8250df">BranchName</span>:</span></span>
+<span class="purrism-word-diff-line"><span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px">  <span style="color:#cf222e;font-weight:600">def</span> apply(value: <span style="color:#8250df">String</span>): <span style="color:#8250df">BranchName</span> = value</span></span>
+<span class="purrism-word-diff-line"><span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px">  <span style="color:#cf222e;font-weight:600">extension</span> (value: <span style="color:#8250df">BranchName</span>) <span style="color:#cf222e;font-weight:600">def</span> value: <span style="color:#8250df">String</span> = value</span></span>
+<span class="purrism-word-diff-line"><span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px"></span></span>
+<span class="purrism-word-diff-line"><span style="color:#cf222e;font-weight:600">final</span> <span style="color:#cf222e;font-weight:600">case</span> <span style="color:#cf222e;font-weight:600">class</span> <span style="color:#8250df">Task</span>(branchName: <span style="background:rgba(207,34,46,.18);color:#82071e;text-decoration:line-through;border-radius:3px;padding:0 2px"><span style="color:#8250df">String</span></span><span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px"><span style="color:#8250df">BranchName</span></span>)</span></code></pre>
+<pre class="purrism-word-diff"><code><span class="purrism-word-diff-line"><span style="color:#cf222e;font-weight:600">def</span> checkout(branchName: <span style="background:rgba(207,34,46,.18);color:#82071e;text-decoration:line-through;border-radius:3px;padding:0 2px"><span style="color:#8250df">String</span></span><span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px"><span style="color:#8250df">BranchName</span></span>): <span style="color:#8250df">IO</span>[<span style="color:#8250df">Unit</span>] =</span>
+<span class="purrism-word-diff-line">  <span style="color:#8250df">IO</span>.println(branchName<span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px">.value</span>)</span></code></pre>
+<div class="language-hocon highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nl">PropagateOpaqueType.types</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="w">
+  </span><span class="p">{</span><span class="w">
+    </span><span class="nl">name</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">"BranchName"</span><span class="w">
+    </span><span class="nl">underlying</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">"scala/Predef.String#"</span><span class="w">
+    </span><span class="nl">definitionFile</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">"Task.scala"</span><span class="w">
+    </span><span class="nl">seeds</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s2">"_empty_/Task#branchName."</span><span class="w"> </span><span class="p">]</span><span class="w">
+    </span><span class="nl">widen</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[]</span><span class="w">
+  </span><span class="p">}</span><span class="w">
+</span><span class="p">]</span><span class="w">
+</span><span class="nl">PropagateOpaqueType.debug</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">false</span><span class="w">
+</span><span class="nl">PropagateOpaqueType.autoDiscover.enabled</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">false</span><span class="w">
+</span></code></pre></div></div>
+
+<h4 id="preferoptionidioms">PreferOptionIdioms</h4>
+
+<p>Rewrites nullable lookup and <code class="language-plaintext highlighter-rouge">Option.map(...).getOrElse(...)</code> shapes.</p>
+
+<pre class="purrism-word-diff"><code><span class="purrism-word-diff-line"><span style="background:rgba(207,34,46,.18);color:#82071e;text-decoration:line-through;border-radius:3px;padding:0 2px">option.map(render).getOrElse(default)</span></span>
+<span class="purrism-word-diff-line"><span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px">option.fold(default)(render)</span></span></code></pre>
+<pre class="purrism-word-diff"><code><span class="purrism-word-diff-line"><span style="background:rgba(207,34,46,.18);color:#82071e;text-decoration:line-through;border-radius:3px;padding:0 2px"><span style="color:#cf222e;font-weight:600">if</span> value == null <span style="color:#cf222e;font-weight:600">then</span> <span style="color:#8250df">None</span> <span style="color:#cf222e;font-weight:600">else</span> <span style="color:#8250df">Some</span></span><span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px"><span style="color:#8250df">Option</span></span>(value)</span></code></pre>
+<div class="language-hocon highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nl">PreferOptionIdioms.rewrite</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">true</span><span class="w">
+</span><span class="nl">PreferOptionIdioms.mouse</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">false</span><span class="w">
+</span></code></pre></div></div>
+
+<h4 id="preferindexedmap">PreferIndexedMap</h4>
+
+<p>Rewrites index loops to direct collection operations, and effectful left folds
+to <code class="language-plaintext highlighter-rouge">foldM</code>.</p>
+
+<pre class="purrism-word-diff"><code><span class="purrism-word-diff-line">xs.<span style="background:rgba(207,34,46,.18);color:#82071e;text-decoration:line-through;border-radius:3px;padding:0 2px">indices.map(i =&gt; xs(i)</span><span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px">map(x =&gt; x</span>.toString)</span></code></pre>
+<pre class="purrism-word-diff"><code><span class="purrism-word-diff-line">xs.<span style="background:rgba(207,34,46,.18);color:#82071e;text-decoration:line-through;border-radius:3px;padding:0 2px">zipWithIndex.map</span><span style="background:rgba(46,160,67,.22);color:#116329;border-radius:3px;padding:0 2px">mapWithIndex</span> { <span style="color:#cf222e;font-weight:600">case</span> (x, i) =&gt; s<span style="color:#0a3069">&quot;$i:$x&quot;</span> }</span></code></pre>
+<div class="language-hocon highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nl">PreferIndexedMap.rewrite</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">true</span><span class="w">
+</span></code></pre></div></div>
+
+<h2 id="cross-file-keys">Cross-File Keys</h2>
+
+<p>The signature-widening rules read these keys from their own config block:</p>
+
+<div class="language-hocon highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nl">PreferPolymorphicCollections.crossFile</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">true</span><span class="w">
+</span><span class="nl">PreferPolymorphicCollections.crossFileRoot</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">"."</span><span class="w">
+</span><span class="nl">PreferPolymorphicCollections.crossFileTargetroots</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s2">"out"</span><span class="w"> </span><span class="p">]</span><span class="w">
+</span></code></pre></div></div>
+
+<p>Use <code class="language-plaintext highlighter-rouge">crossFileTargetroots = [ "target" ]</code> for sbt-style output, or <code class="language-plaintext highlighter-rouge">["out"]</code>
+for Mill-style output. Compile first; stale SemanticDB means stale decisions.</p>
+
+<h2 id="more">More</h2>
+
+<ul>
+  <li><a href="/scala-purrism/RULES.html">Engineering rules</a></li>
+  <li><a href="/scala-purrism/GOLDEN_FIXTURES.html">Golden fixtures</a></li>
+  <li><a href="/scala-purrism/PREFER_CATS_FUNCTIONS.html">Prefer Cats Functions contract</a></li>
+  <li><a href="/scala-purrism/ARROW_PATTERNS.html">Kleisli to Arrow catalogue</a></li>
+  <li><a href="/scala-purrism/PUBLISHING.html">Publishing</a></li>
+</ul>
+
+
+      <footer class="site-footer">
+        
+        <span class="site-footer-credits">This page was generated by <a href="https://pages.github.com">GitHub Pages</a>.</span>
+      </footer>
+    </main>
+  </body>
+</html>

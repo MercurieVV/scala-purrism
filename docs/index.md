@@ -6,7 +6,7 @@ the after-shapes type-checked against Cats and Cats Effect.
 
 ```scala mdoc
 import cats.*
-import cats.data.{Kleisli, State}
+import cats.data.Kleisli
 import cats.effect.{IO, Sync}
 import cats.syntax.all.*
 ```
@@ -32,9 +32,11 @@ scalacOptions += "-Ysemanticdb"
 
 Choose rules in `.scalafix.conf`:
 
+Configs:
+
 ```hocon
 rules = [
-  TypelevelPurrism
+  TypelevelPurrism // [required] umbrella rule set
 ]
 ```
 
@@ -42,90 +44,52 @@ For whole-project rewrites, run Scalafix over every relevant source file and
 pass every SemanticDB target root. Recompile between stages when one rule
 changes signatures that another rule reads semantically.
 
-## Rules By Functionality
+## Rule Sets
 
-| group | rules |
-| --- | --- |
-| [Rule sets](#rule-sets) | `TypelevelPurrism`, `PreferTypeParameters` |
-| [Effect boundaries](#effect-boundaries) | `TypeclassWeakening`, `SuspendSideEffects`, `PreferEffectIdioms` |
-| [Cats expressions](#cats-expressions) | `PreferCatsSyntax`, `SimplifyCatsExpressions`, `PreferCatsFunctions` |
-| [Kleisli and Arrow](#kleisli-and-arrow) | `PreferKleisli`, `PreferArrow` |
-| [Polymorphic signatures](#polymorphic-signatures) | `PreferHKTTypeclasses`, `PreferContainerTypeclasses`, `PreferElementTypeclasses` |
-| [Data and collection flow](#data-and-collection-flow) | `PropagateOpaqueType`, `PreferOptionIdioms`, `PreferIndexedMap`, `PreferStateThreading` |
-
-### Rule Sets
-
-#### TypelevelPurrism
+### TypelevelPurrism
 
 Runs `TypeclassWeakening`, `PreferKleisli`, `PreferArrow`,
-`PreferCatsFunctions`, `PreferTypeParameters`, `PreferCatsSyntax`, and
-`SimplifyCatsExpressions`.
+`PreferTypeParameters`, and `PreferCatsExpressions`.
 
-```scala mdoc:passthrough
-print(docs.DocDiff.render(
-  before = "rules = [ TypeclassWeakening, PreferKleisli, PreferArrow, PreferCatsSyntax ]",
-  after = "rules = [ TypelevelPurrism ]"
-))
-```
+Configs:
 
-```scala mdoc:passthrough
-print(docs.DocDiff.render(
-  before = """
-rules = [ TypeclassWeakening, PreferCatsSyntax, SimplifyCatsExpressions ]
-PreferArrow.aggressive = true
-""",
-  after = """
-rules = [ TypelevelPurrism ]
-PreferArrow.aggressive = true
-"""
-))
+```hocon
+rules = [ TypelevelPurrism ] // [required] run the full recommended rule set
 ```
 
 Since 0.8.0 the widening member is `PreferTypeParameters` — all three of
-`PreferElementTypeclasses`, `PreferContainerTypeclasses` and
-`PreferHKTTypeclasses` — where it was `PreferHKTTypeclasses` alone. Every
+`PreferPolymorphicCollectionOps`, `PreferPolymorphicCollections` and
+`PreferPolymorphicTypeclasses` — where it was `PreferPolymorphicTypeclasses` alone. Every
 member key reaches them through the umbrella:
 
+Configs:
+
 ```hocon
-PreferArrow.aggressive = true
-PreferHKTTypeclasses.widenPublic = true
-PreferContainerTypeclasses.crossFile = true
-PreferElementTypeclasses.rewrite = false   # opt out: see below
+PreferArrow.aggressive = true // [optional] enable broader Arrow rewrites
+PreferPolymorphicTypeclasses.widenPublic = true // [optional] allow public signature changes
+PreferPolymorphicCollections.crossFile = true // [optional] inspect references across files
+PreferPolymorphicCollectionOps.rewrite = false // [optional] keep signature widening, skip body rewrites
 ```
 
-`PreferElementTypeclasses` is the one member that rewrites a *body*:
+`PreferPolymorphicCollectionOps` is the one member that rewrites a *body*:
 `mkString` becomes `mkString_`, which renders elements with `Show` rather than
 `toString`. Where the two disagree the program prints something different. Set
-`PreferElementTypeclasses.rewrite = false` to keep the umbrella's widenings
+`PreferPolymorphicCollectionOps.rewrite = false` to keep the umbrella's widenings
 purely at the signature.
 
-#### PreferTypeParameters
+### PreferTypeParameters
 
 Runs the three signature-widening rules together:
-`PreferElementTypeclasses`, `PreferContainerTypeclasses`, and
-`PreferHKTTypeclasses`.
+`PreferPolymorphicCollectionOps`, `PreferPolymorphicCollections`, and
+`PreferPolymorphicTypeclasses`.
 
-```scala mdoc:passthrough
-print(docs.DocDiff.render(
-  before = "rules = [ PreferContainerTypeclasses, PreferElementTypeclasses, PreferHKTTypeclasses ]",
-  after = "rules = [ PreferTypeParameters ]"
-))
+Configs:
+
+```hocon
+rules = [ PreferTypeParameters ] // [required] run all signature-widening rules
 ```
 
-```scala mdoc:passthrough
-print(docs.DocDiff.render(
-  before = """
-rules = [ PreferHKTTypeclasses, PreferContainerTypeclasses ]
-PreferContainerTypeclasses.containers = [ "List", "Vector" ]
-PreferHKTTypeclasses.containers = [ "*" ]
-""",
-  after = """
-rules = [ PreferTypeParameters ]
-PreferContainerTypeclasses.containers = [ "List", "Vector" ]
-PreferHKTTypeclasses.containers = [ "*" ]
-"""
-))
-```
+Examples:
 
 ```scala mdoc:passthrough
 print(docs.DocDiff.render(
@@ -144,12 +108,190 @@ val out = labels(List(1, 2))
 ))
 ```
 
+### PreferCatsExpressions
+
+Runs `PreferCatsFunctions`, `PreferCatsSyntax`, and `SimplifyCatsExpressions`
+together — see [Cats Expressions](#cats-expressions) below for how they
+differ.
+
+Configs:
+
+```hocon
+rules = [ PreferCatsExpressions ] // [required] run all three expression rules
+```
+
+## Expression And Data Idioms
+
+Local rewrites inside method bodies. These rules improve Cats usage, remove
+manual collection plumbing, or make data flow more explicit without changing
+the broad program architecture.
+
+### Cats Expressions
+
+`PreferCatsExpressions` runs three rules that all move an expression toward
+the Cats API, each on a different tree shape:
+
+| rule | shape it matches |
+| --- | --- |
+| `PreferCatsFunctions` | a whole method body, against an index of known Cats source functions |
+| `PreferCatsSyntax` | a summoner call — `Typeclass[F].method(fa)` |
+| `SimplifyCatsExpressions` | a dot-syntax sub-expression already in that shape, e.g. `fa.map(_ => ())` |
+
+```scala mdoc:passthrough
+print(docs.DocDiff.render(
+  before = """
+def lifted[F[_]: Applicative, A](a: A): F[A] =
+  Applicative[F].pure(a)
+
+val cleared = lifted[Option, Unit](()).map(_ => ())
+""",
+  after = """
+def lifted[F[_]: Applicative, A](a: A): F[A] =
+  a.pure[F]
+
+val cleared = lifted[Option, Unit](()).void
+"""
+))
+```
+
+`lifted`'s body → `PreferCatsFunctions` (whole-body match against the index,
+which happens to render as the same call `PreferCatsSyntax` would produce
+here). `cleared` → `SimplifyCatsExpressions` (`.map(_ => ())` → `.void`).
+
+Configs: none.
+
+### Data And Collection Flow
+
+#### PropagateOpaqueType
+
+Introduces an opaque type and follows selected SemanticDB seed symbols through
+value flow.
+
+Examples:
+
+```scala mdoc:passthrough
+print(docs.DocDiff.render(
+  before = """
+final case class Task(branchName: String)
+""",
+  after = """
+opaque type BranchName = String
+object BranchName:
+  def apply(value: String): BranchName = value
+  extension (value: BranchName) def value: String = value
+
+final case class Task(branchName: BranchName)
+"""
+))
+```
+
+Examples:
+
+```scala mdoc:passthrough
+print(docs.DocDiff.render(
+  before = """
+def checkout(branchName: String): IO[Unit] =
+  IO.println(branchName)
+""",
+  after = """
+def checkout(branchName: BranchName): IO[Unit] =
+  IO.println(branchName.value)
+"""
+))
+```
+
+Configs:
+
+```hocon
+PropagateOpaqueType.types = [ // [required for explicit propagation] opaque types to introduce
+  {
+    name = "BranchName" // [required] new opaque type name
+    underlying = "scala/Predef.String#" // [optional] SemanticDB symbol for the representation
+    definitionFile = "Task.scala" // [required] file where the opaque type is generated
+    seeds = [ "_empty_/Task#branchName." ] // [required] starting symbols for value-flow propagation
+    widen = [] // [optional] symbols allowed to keep the underlying type
+  }
+]
+PropagateOpaqueType.debug = false // [optional] disable diagnostic output
+PropagateOpaqueType.autoDiscover.enabled = false // [optional] require explicit seed config
+```
+
+#### PreferOptionIdioms
+
+Rewrites nullable lookup and `Option.map(...).getOrElse(...)` shapes.
+
+Examples:
+
+```scala mdoc:passthrough
+print(docs.DocDiff.render(
+  before = "option.map(render).getOrElse(default)",
+  after = "option.fold(default)(render)"
+))
+```
+
+Examples:
+
+```scala mdoc:passthrough
+print(docs.DocDiff.render(
+  before = "if value == null then None else Some(value)",
+  after = "Option(value)"
+))
+```
+
+Configs:
+
+```hocon
+PreferOptionIdioms.rewrite = true // [optional] apply Option idiom rewrites
+PreferOptionIdioms.mouse = false // [optional] do not use mouse syntax helpers
+```
+
+#### PreferIndexedMap
+
+Rewrites index loops to direct collection operations, and effectful left folds
+to `foldM`.
+
+Examples:
+
+```scala mdoc:passthrough
+print(docs.DocDiff.render(
+  before = "xs.indices.map(i => xs(i).toString)",
+  after = "xs.map(x => x.toString)"
+))
+```
+
+Examples:
+
+```scala mdoc:passthrough
+print(docs.DocDiff.render(
+  before = """
+xs.zipWithIndex.map { case (x, i) => s"$i:$x" }
+""",
+  after = """
+xs.mapWithIndex { case (x, i) => s"$i:$x" }
+"""
+))
+```
+
+Configs:
+
+```hocon
+PreferIndexedMap.rewrite = true // [optional] rewrite index-based loops when safe
+```
+
+## Effectful Program Shape
+
+Rules that alter how effects, side effects, and effectful data-in/data-out
+flows are represented. These rewrites usually affect control-flow shape more
+than individual expressions.
+
 ### Effect Boundaries
 
 #### TypeclassWeakening
 
 Weakens over-strong effect bounds when the body only needs weaker Cats
 capabilities.
+
+Examples:
 
 ```scala mdoc:passthrough
 print(docs.DocDiff.render(
@@ -164,6 +306,8 @@ def bump[F[_]: Monad](fa: F[Int]): F[Int] =
 ))
 ```
 
+Examples:
+
 ```scala mdoc:passthrough
 print(docs.DocDiff.render(
   before = """
@@ -177,12 +321,14 @@ def choose[F[_]: MonadError[*[_], Throwable], A](left: F[A], right: F[A]): F[A] 
 ))
 ```
 
-Config: none.
+Configs: none.
 
 #### SuspendSideEffects
 
 Reports side effects that a signature does not mention and rewrites eager
 `pure(effect)` into suspended `delay(effect)` where an effect type supports it.
+
+Examples:
 
 ```scala mdoc:passthrough
 print(docs.DocDiff.render(
@@ -191,29 +337,35 @@ print(docs.DocDiff.render(
 ))
 ```
 
+Examples:
+
 ```scala mdoc:passthrough
 print(docs.DocDiff.render(
   before = """
-def read[F[_]: Sync](path: java.nio.file.Path): F[String] =
-  Sync[F].pure(java.nio.file.Files.readString(path))
+def read[F[_]: Sync](path: Path): F[String] =
+  Sync[F].pure(Files.readString(path))
 """,
   after = """
-def read[F[_]: Sync](path: java.nio.file.Path): F[String] =
-  Sync[F].delay(java.nio.file.Files.readString(path))
+def read[F[_]: Sync](path: Path): F[String] =
+  Sync[F].delay(Files.readString(path))
 """
 ))
 ```
 
+Configs:
+
 ```hocon
-SuspendSideEffects.rewrite = true
-SuspendSideEffects.report = true
-SuspendSideEffects.effects = [ "IO", "SyncIO", "Resource", "Stream", "Task", "EitherT", "OptionT", "Kleisli" ]
+SuspendSideEffects.rewrite = true // [optional] rewrite eager pure(effect) into delay(effect)
+SuspendSideEffects.report = true // [optional] report side effects that cannot be rewritten
+SuspendSideEffects.effects = [ "IO", "SyncIO", "Resource", "Stream", "Task", "EitherT", "OptionT", "Kleisli" ] // [optional] effect types to inspect
 ```
 
 #### PreferEffectIdioms
 
 Rewrites decidable effect idioms and reports shapes that need a wider program
 decision.
+
+Examples:
 
 ```scala mdoc:passthrough
 print(docs.DocDiff.render(
@@ -223,10 +375,12 @@ catch { case _: Throwable => fallback() }
 """,
   after = """
 try work()
-catch { case scala.util.control.NonFatal(_) => fallback() }
+catch { case NonFatal(_) => fallback() }
 """
 ))
 ```
+
+Examples:
 
 ```scala mdoc:passthrough
 print(docs.DocDiff.render(
@@ -240,86 +394,13 @@ Resource.make(open())(_ => close()).use(identity)
 ))
 ```
 
+Configs:
+
 ```hocon
-PreferEffectIdioms.rewrite = true
-PreferEffectIdioms.resources = true
-PreferEffectIdioms.refs = true
+PreferEffectIdioms.rewrite = true // [optional] apply decidable rewrites
+PreferEffectIdioms.resources = true // [optional] suggest Resource for acquire/release shapes
+PreferEffectIdioms.refs = true // [optional] inspect mutable reference idioms
 ```
-
-### Cats Expressions
-
-#### PreferCatsSyntax
-
-Replaces direct Cats typeclass calls with Cats syntax.
-
-```scala mdoc:passthrough
-print(docs.DocDiff.render(
-  before = "Applicative[F].pure(a)",
-  after = "a.pure[F]"
-))
-```
-
-```scala mdoc:passthrough
-print(docs.DocDiff.render(
-  before = "MonadThrow[F].raiseError[A](error)",
-  after = "error.raiseError[F, A]"
-))
-```
-
-Config: none.
-
-#### SimplifyCatsExpressions
-
-Collapses common Cats expression patterns into existing combinators.
-
-```scala mdoc:passthrough
-print(docs.DocDiff.render(
-  before = "fa.map(_ => ())",
-  after = "fa.void"
-))
-```
-
-```scala mdoc:passthrough
-print(docs.DocDiff.render(
-  before = "fa.flatMap(a => a.pure[F])",
-  after = "fa"
-))
-```
-
-Config: none.
-
-#### PreferCatsFunctions
-
-Matches a project body against indexed Cats source functions and rewrites to
-the winning public Cats function when evidence and evaluation order are safe.
-
-```scala mdoc:passthrough
-print(docs.DocDiff.render(
-  before = """
-def lifted[F[_]: Applicative, A](a: A): F[A] =
-  Applicative[F].pure(a)
-""",
-  after = """
-def lifted[F[_]: Applicative, A](a: A): F[A] =
-  a.pure[F]
-"""
-))
-```
-
-```scala mdoc:passthrough
-print(docs.DocDiff.render(
-  before = """
-def both[F[_]: Apply, A, B](fa: F[A], fb: F[B]): F[(A, B)] =
-  Apply[F].map2(fa, fb)((a, b) => (a, b))
-""",
-  after = """
-def both[F[_]: Apply, A, B](fa: F[A], fb: F[B]): F[(A, B)] =
-  fa.product(fb)
-"""
-))
-```
-
-Config: none.
 
 ### Kleisli And Arrow
 
@@ -327,6 +408,8 @@ Config: none.
 
 Turns effectful data-in/data-out methods into `Kleisli` values and re-splits
 direct call sites.
+
+Examples:
 
 ```scala mdoc:passthrough
 print(docs.DocDiff.render(
@@ -345,6 +428,8 @@ val loaded: IO[String] = load[IO].run(42)
 ))
 ```
 
+Examples:
+
 ```scala mdoc:passthrough
 print(docs.DocDiff.render(
   before = """
@@ -362,16 +447,20 @@ val saved: IO[Unit] = save[IO].run("  Ada  ")
 ))
 ```
 
+Configs:
+
 ```hocon
-PreferKleisli.fileLocalOnly = false
-PreferKleisli.crossFile = true
-PreferKleisli.crossFileRoot = "."
+PreferKleisli.fileLocalOnly = false // [optional] update call sites outside the defining file
+PreferKleisli.crossFile = true // [optional] inspect references across files
+PreferKleisli.crossFileRoot = "." // [optional] project root for cross-file lookup
 ```
 
 #### PreferArrow
 
 Rewrites hand-threaded `Kleisli` bodies into Arrow composition such as `>>>`,
 `.map`, and `&&&`.
+
+Examples:
 
 ```scala mdoc:passthrough
 print(docs.DocDiff.render(
@@ -380,6 +469,8 @@ print(docs.DocDiff.render(
 ))
 ```
 
+Examples:
+
 ```scala mdoc:passthrough
 print(docs.DocDiff.render(
   before = "Kleisli { id => load.run(id).flatMap(validate.run) }",
@@ -387,302 +478,94 @@ print(docs.DocDiff.render(
 ))
 ```
 
+Configs:
+
 ```hocon
-PreferArrow.aggressive = false
-PreferArrow.reportSkips = false
+PreferArrow.aggressive = false // [optional] keep rewrites conservative
+PreferArrow.reportSkips = false // [optional] omit diagnostics for declined rewrites
 ```
+
+## Polymorphic API Shape
+
+Signature-level rules that generalize concrete APIs to type parameters. They
+need broader semantic confidence because they can change method boundaries and
+call sites, not only local expressions.
 
 ### Polymorphic Signatures
 
-#### PreferHKTTypeclasses
+Three rules widen one concrete type constructor in a signature to a type
+parameter, each over a different subject — never the same parameter twice:
 
-Widens a concrete unary constructor in a signature to `G[_]` with the weakest
-Cats constraint used by the body.
+| rule | subject | touches the body? |
+| --- | --- | --- |
+| `PreferPolymorphicTypeclasses` | any unary constructor Cats has — `Eval`, `Show`, `Option`, domain types — except collections | no |
+| `PreferPolymorphicCollections` | `List`/`Seq`/`Vector`/... (`containers`) | no |
+| `PreferPolymorphicCollectionOps` | same collections, only bodies calling `mkString`/`sum`-like ops | **yes** — renames the call too, e.g. `mkString` → `mkString_` |
 
-```scala mdoc:passthrough
-print(docs.DocDiff.render(
-  before = """
-private def inspect(xs: Option[Int]): Option[Int] =
-  xs.map(_ + 1)
+One file, one method per rule, run through the umbrella `PreferTypeParameters`:
 
-val inspected = inspect(Some(1))
-""",
-  after = """
-private def inspect[G[_]: Functor](xs: G[Int]): G[Int] =
-  xs.map(_ + 1)
-
-val inspected = inspect(Some(1))
-"""
-))
-```
+Examples:
 
 ```scala mdoc:passthrough
 print(docs.DocDiff.render(
   before = """
-private def handle(result: Either[String, Int]): Either[String, Int] =
-  result.leftMap(_.trim)
+final class Summary {
+  private def names(users: List[String]): List[String] =
+    users.map(user => user.toUpperCase)
 
-val handled = handle(Left(" bad "))
-""",
-  after = """
-private def handle[G[_, _]: Bifunctor](result: G[String, Int]): G[String, Int] =
-  result.leftMap(_.trim)
+  private def rendered(rows: List[String]): String =
+    rows.mkString("[", ",", "]")
 
-val handled = handle(Left(" bad "))
-"""
-))
-```
-
-```hocon
-PreferHKTTypeclasses.rewrite = true
-PreferHKTTypeclasses.widenPublic = false
-PreferHKTTypeclasses.maxConstraints = 2
-PreferHKTTypeclasses.containers = [ "List", "Seq", "Vector", "IndexedSeq", "LazyList" ]
-PreferHKTTypeclasses.crossFile = true
-PreferHKTTypeclasses.crossFileTargetroots = [ "out" ]
-```
-
-#### PreferContainerTypeclasses
-
-Widens concrete collection parameters to `S[_]` with the weakest Cats
-collection constraint used by the body.
-
-```scala mdoc:passthrough
-print(docs.DocDiff.render(
-  before = """
-private def names(users: List[String]): List[String] =
-  users.map(_.toUpperCase)
-
-val upper = names(List("ada"))
-""",
-  after = """
-private def names[S[_]: Functor](users: S[String]): S[String] =
-  users.map(_.toUpperCase)
-
-val upper = names(List("ada"))
-"""
-))
-```
-
-```scala mdoc:passthrough
-print(docs.DocDiff.render(
-  before = """
-private def count(values: Vector[Int]): Int =
-  values.foldLeft(0)(_ + _)
-
-val total = count(Vector(1, 2, 3))
-""",
-  after = """
-private def count[S[_]: Foldable](values: S[Int]): Int =
-  values.foldLeft(0)(_ + _)
-
-val total = count(Vector(1, 2, 3))
-"""
-))
-```
-
-```hocon
-PreferContainerTypeclasses.rewrite = true
-PreferContainerTypeclasses.widenPublic = false
-PreferContainerTypeclasses.maxConstraints = 2
-PreferContainerTypeclasses.containers = [ "List", "Seq", "Vector", "IndexedSeq", "LazyList" ]
-PreferContainerTypeclasses.crossFile = true
-PreferContainerTypeclasses.crossFileTargetroots = [ "out" ]
-```
-
-#### PreferElementTypeclasses
-
-Handles collection operations whose Cats spelling depends on evidence for the
-element, such as `mkString` to `mkString_`.
-
-```scala mdoc:passthrough
-print(docs.DocDiff.render(
-  before = """
-private def rendered(rows: List[String]): String =
-  rows.mkString("[", ",", "]")
-
-val page = rendered(List("a", "b"))
-""",
-  after = """
-private def rendered[S[_]: Foldable](rows: S[String]): String =
-  rows.mkString_("[", ",", "]")
-
-val page = rendered(List("a", "b"))
-"""
-))
-```
-
-```scala mdoc:passthrough
-print(docs.DocDiff.render(
-  before = """
-private def rendered(rows: Vector[Int]): String =
-  rows.mkString(",")
-
-val page = rendered(Vector(1, 2))
-""",
-  after = """
-private def rendered[S[_]: Foldable](rows: S[Int]): String =
-  rows.mkString_(",")
-
-val page = rendered(Vector(1, 2))
-"""
-))
-```
-
-```hocon
-PreferElementTypeclasses.rewrite = true
-PreferElementTypeclasses.widenPublic = false
-PreferElementTypeclasses.maxConstraints = 2
-PreferElementTypeclasses.containers = [ "List", "Seq", "Vector", "IndexedSeq", "LazyList" ]
-PreferElementTypeclasses.elements = [ "String", "Int", "Long", "Double", "Boolean" ]
-PreferElementTypeclasses.crossFile = true
-PreferElementTypeclasses.crossFileTargetroots = [ "out" ]
-```
-
-### Data And Collection Flow
-
-#### PropagateOpaqueType
-
-Introduces an opaque type and follows selected SemanticDB seed symbols through
-value flow.
-
-```scala mdoc:passthrough
-print(docs.DocDiff.render(
-  before = """
-final case class Task(branchName: String)
-""",
-  after = """
-opaque type BranchName = String
-object BranchName:
-  def apply(value: String): BranchName = value
-  extension (value: BranchName) def value: String = value
-
-final case class Task(branchName: BranchName)
-"""
-))
-```
-
-```scala mdoc:passthrough
-print(docs.DocDiff.render(
-  before = """
-def checkout(branchName: String): IO[Unit] =
-  IO.println(branchName)
-""",
-  after = """
-def checkout(branchName: BranchName): IO[Unit] =
-  IO.println(branchName.value)
-"""
-))
-```
-
-```hocon
-PropagateOpaqueType.types = [
-  {
-    name = "BranchName"
-    underlying = "scala/Predef.String#"
-    definitionFile = "Task.scala"
-    seeds = [ "_empty_/Task#branchName." ]
-    widen = []
-  }
-]
-PropagateOpaqueType.debug = false
-PropagateOpaqueType.autoDiscover.enabled = false
-```
-
-#### PreferOptionIdioms
-
-Rewrites nullable lookup and `Option.map(...).getOrElse(...)` shapes.
-
-```scala mdoc:passthrough
-print(docs.DocDiff.render(
-  before = "option.map(render).getOrElse(default)",
-  after = "option.fold(default)(render)"
-))
-```
-
-```scala mdoc:passthrough
-print(docs.DocDiff.render(
-  before = "if value == null then None else Some(value)",
-  after = "Option(value)"
-))
-```
-
-```hocon
-PreferOptionIdioms.rewrite = true
-PreferOptionIdioms.mouse = false
-```
-
-#### PreferIndexedMap
-
-Rewrites index loops to direct collection operations, and effectful left folds
-to `foldM`.
-
-```scala mdoc:passthrough
-print(docs.DocDiff.render(
-  before = "xs.indices.map(i => xs(i).toString)",
-  after = "xs.map(x => x.toString)"
-))
-```
-
-```scala mdoc:passthrough
-print(docs.DocDiff.render(
-  before = """
-xs.zipWithIndex.map { case (x, i) => s"$i:$x" }
-""",
-  after = """
-xs.mapWithIndex { case (x, i) => s"$i:$x" }
-"""
-))
-```
-
-```hocon
-PreferIndexedMap.rewrite = true
-```
-
-#### PreferStateThreading
-
-Rewrites pair-threaded state folds into Cats `State` where the fold only passes
-state forward and collects output.
-
-```scala mdoc:passthrough
-print(docs.DocDiff.render(
-  before = """
-xs.foldLeft((0, Vector.empty[String])) { case ((s, out), x) =>
-  (s + x, out :+ s"$x")
+  private def duplicate(e: Eval[Int]): Eval[Int] =
+    e.coflatMap(w => w.extract + 1)
 }
 """,
   after = """
-xs.traverse(x => State((s: Int) => (s + x, s"$x"))).run(0).value
+final class Summary {
+  private def names[S[_]: Functor](users: S[String]): S[String] =
+    users.map(user => user.toUpperCase)
+
+  private def rendered[S[_]: Foldable](rows: S[String]): String =
+    rows.mkString_("[", ",", "]")
+
+  private def duplicate[G[_]: Comonad](e: G[Int]): G[Int] =
+    e.coflatMap(w => w.extract + 1)
+}
 """
 ))
 ```
 
-```scala mdoc:passthrough
-print(docs.DocDiff.render(
-  before = """
-steps.foldLeft(seed) { case (state, step) =>
-  step(state)
-}
-""",
-  after = """
-steps.traverse(step => State((state: Seed) => (step(state), ()))).runS(seed).value
-"""
-))
-```
+`names` → `PreferPolymorphicCollections`. `rendered` → `PreferPolymorphicCollectionOps`
+(signature *and* the call). `duplicate` → `PreferPolymorphicTypeclasses` (not a collection).
+
+Configs:
 
 ```hocon
-PreferStateThreading.rewrite = true
-PreferStateThreading.stateT = false
+PreferPolymorphicTypeclasses.containers = [ "List", "Seq", "Vector", "IndexedSeq", "LazyList" ] // [optional] exclude collection constructors from this rule
+PreferPolymorphicTypeclasses.widenPublic = false // [optional] keep public APIs unchanged
+PreferPolymorphicTypeclasses.maxConstraints = 2 // [optional] cap added typeclass constraints
+
+PreferPolymorphicCollections.containers = [ "List", "Seq", "Vector", "IndexedSeq", "LazyList" ] // [optional] collection constructors eligible for widening
+PreferPolymorphicCollections.widenPublic = false // [optional] keep public APIs unchanged
+PreferPolymorphicCollections.maxConstraints = 2 // [optional] cap added typeclass constraints
+
+PreferPolymorphicCollectionOps.containers = [ "List", "Seq", "Vector", "IndexedSeq", "LazyList" ] // [optional] collection constructors eligible for body-aware widening
+PreferPolymorphicCollectionOps.elements = [ "String", "Int", "Long", "Double", "Boolean", "..." ] // [optional] element types with supported ops
+PreferPolymorphicCollectionOps.rewrite = true // [optional] also rewrite affected body calls
 ```
+
+All three also take `rewrite`, `crossFile`, and `crossFileTargetroots`.
 
 ## Cross-File Keys
 
 The signature-widening rules read these keys from their own config block:
 
+Configs:
+
 ```hocon
-PreferContainerTypeclasses.crossFile = true
-PreferContainerTypeclasses.crossFileRoot = "."
-PreferContainerTypeclasses.crossFileTargetroots = [ "out" ]
+PreferPolymorphicCollections.crossFile = true // [optional] inspect references across files
+PreferPolymorphicCollections.crossFileRoot = "." // [optional] project root for cross-file lookup
+PreferPolymorphicCollections.crossFileTargetroots = [ "out" ] // [optional] SemanticDB target roots
 ```
 
 Use `crossFileTargetroots = [ "target" ]` for sbt-style output, or `["out"]`
@@ -690,8 +573,8 @@ for Mill-style output. Compile first; stale SemanticDB means stale decisions.
 
 ## More
 
-- [Engineering rules](RULES.md)
-- [Golden fixtures](GOLDEN_FIXTURES.md)
-- [Prefer Cats Functions contract](PREFER_CATS_FUNCTIONS.md)
-- [Kleisli to Arrow catalogue](ARROW_PATTERNS.md)
-- [Publishing](PUBLISHING.md)
+- [Engineering rules](https://github.com/MercurieVV/scala-purrism/blob/master/docs/RULES.md)
+- [Golden fixtures](https://github.com/MercurieVV/scala-purrism/blob/master/docs/GOLDEN_FIXTURES.md)
+- [Prefer Cats Functions contract](https://github.com/MercurieVV/scala-purrism/blob/master/docs/PREFER_CATS_FUNCTIONS.md)
+- [Kleisli to Arrow catalogue](https://github.com/MercurieVV/scala-purrism/blob/master/docs/ARROW_PATTERNS.md)
+- [Publishing](https://github.com/MercurieVV/scala-purrism/blob/master/docs/PUBLISHING.md)

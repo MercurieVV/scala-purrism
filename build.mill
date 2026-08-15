@@ -12,6 +12,7 @@ object Versions {
   def scala3 = "3.8.4"
   def catsCore = "2.13.0"
   def catsEffect = "3.7.0"
+  def laika = "1.3.2"
   def mdoc = "2.9.1"
   def munit = "1.3.4"
   def munitScalaCheck = "1.3.0"
@@ -51,6 +52,22 @@ object scalafix
   // coordinates that default would -- verified by pinning 0.6.2 through it and
   // getting the identical 68 problems.
   def mimaPreviousVersions = Seq("0.8.0")
+
+  // `PreferHKTTypeclasses`/`PreferContainerTypeclasses`/`PreferElementTypeclasses`
+  // were renamed to `PreferPolymorphicTypeclasses`/`PreferPolymorphicCollections`/
+  // `PreferPolymorphicCollectionOps`; the old names stay resolvable as deprecated
+  // forwarders (`DeprecatedPolymorphicAliases.scala`), so most call sites keep
+  // compiling. `PreferTypeParameters`'s own constructor is the one place that
+  // cannot be shimmed the same way -- it legitimately takes the renamed config
+  // types as parameters -- and nobody constructs the umbrella positionally by
+  // hand (it is loaded by rule name), so the break is accepted rather than kept
+  // alive with a config-type alias that would defeat the rename.
+  def mimaBinaryIssueFilters = Seq(
+    ProblemFilter.exclude[IncompatibleMethTypeProblem](
+      "fix.PreferTypeParameters.this"
+    )
+  )
+
   def mimaPreviousArtifacts = Task {
     mimaPreviousVersions().map(previous =>
       mvn"${pomSettings().organization}::${artifactName()}:$previous"
@@ -290,6 +307,7 @@ object docs extends ScalaModule {
     mill.api.BuildCtx.workspaceRoot / "mdoc-docs" / "src" / "main" / "scala"
   )
   def mvnDeps = Seq(
+    mvn"org.typelevel::laika-io:${Versions.laika}",
     mvn"org.scalameta::mdoc:${Versions.mdoc}",
     mvn"org.typelevel::cats-core:${Versions.catsCore}",
     mvn"org.typelevel::cats-effect:${Versions.catsEffect}"

@@ -18,35 +18,36 @@ import scalafix.v1._
   * }}}
   *
   * They compose because their subjects are disjoint by construction:
-  * `PreferHKTTypeclasses.containers` hands the collections to
-  * `PreferContainerTypeclasses`, and an operation with an element rule --
+  * `PreferPolymorphicTypeclasses.containers` hands the collections to
+  * `PreferPolymorphicCollections`, and an operation with an element rule --
   * `mkString`, `sum` -- is unresolvable to the plain container rule, which
-  * therefore declines exactly the bodies `PreferElementTypeclasses` claims.
+  * therefore declines exactly the bodies `PreferPolymorphicCollectionOps`
+  * claims.
   *
   * Configuration is each sub-rule's own key, honoured here as it is when the
-  * rule runs alone: `PreferContainerTypeclasses.widenPublic`,
-  * `PreferContainerTypeclasses.crossFile`, `PreferHKTTypeclasses.containers`,
-  * and so on.
+  * rule runs alone: `PreferPolymorphicCollections.widenPublic`,
+  * `PreferPolymorphicCollections.crossFile`,
+  * `PreferPolymorphicTypeclasses.containers`, and so on.
   */
 final class PreferTypeParameters(
-    container: PreferContainerTypeclassesConfig,
+    container: PreferPolymorphicCollectionsConfig,
     containerCrossFile: CrossFileConfig,
-    element: PreferElementTypeclassesConfig,
+    element: PreferPolymorphicCollectionOpsConfig,
     elementCrossFile: CrossFileConfig,
     elementTypes: ElementTypesConfig,
-    hkt: PreferHKTTypeclassesConfig,
+    hkt: PreferPolymorphicTypeclassesConfig,
     hktCrossFile: CrossFileConfig,
     classpath: List[java.nio.file.Path]
 ) extends SemanticRule("PreferTypeParameters") {
 
   def this() =
     this(
-      PreferContainerTypeclassesConfig.default,
+      PreferPolymorphicCollectionsConfig.default,
       CrossFileConfig.default,
-      PreferElementTypeclassesConfig.default,
+      PreferPolymorphicCollectionOpsConfig.default,
       CrossFileConfig.default,
       ElementTypesConfig.default,
-      PreferHKTTypeclassesConfig.default,
+      PreferPolymorphicTypeclassesConfig.default,
       CrossFileConfig.default,
       Nil
     )
@@ -60,14 +61,18 @@ final class PreferTypeParameters(
     */
   private val rules: List[SemanticRule] =
     List(
-      new PreferContainerTypeclasses(container, containerCrossFile, classpath),
-      new PreferElementTypeclasses(
+      new PreferPolymorphicCollections(
+        container,
+        containerCrossFile,
+        classpath
+      ),
+      new PreferPolymorphicCollectionOps(
         element,
         elementCrossFile,
         elementTypes,
         classpath
       ),
-      new PreferHKTTypeclasses(hkt, hktCrossFile, classpath)
+      new PreferPolymorphicTypeclasses(hkt, hktCrossFile, classpath)
     )
 
   override def fix(implicit doc: SemanticDocument): Patch =
@@ -90,25 +95,27 @@ object PreferTypeParameters {
     // key, and the pattern match that unpicks seven of them is unreadable.
     val conf = configuration.conf
     val container =
-      conf.getOrElse("PreferContainerTypeclasses")(
-        PreferContainerTypeclassesConfig.default
+      conf.getOrElse("PreferPolymorphicCollections")(
+        PreferPolymorphicCollectionsConfig.default
       )
     val containerCrossFile =
-      conf.getOrElse("PreferContainerTypeclasses")(CrossFileConfig.default)
+      conf.getOrElse("PreferPolymorphicCollections")(CrossFileConfig.default)
     val element =
-      conf.getOrElse("PreferElementTypeclasses")(
-        PreferElementTypeclassesConfig.default
+      conf.getOrElse("PreferPolymorphicCollectionOps")(
+        PreferPolymorphicCollectionOpsConfig.default
       )
     val elementCrossFile =
-      conf.getOrElse("PreferElementTypeclasses")(CrossFileConfig.default)
+      conf.getOrElse("PreferPolymorphicCollectionOps")(CrossFileConfig.default)
     val elementTypes =
-      conf.getOrElse("PreferElementTypeclasses")(ElementTypesConfig.default)
+      conf.getOrElse("PreferPolymorphicCollectionOps")(
+        ElementTypesConfig.default
+      )
     val hkt =
-      conf.getOrElse("PreferHKTTypeclasses")(
-        PreferHKTTypeclassesConfig.default
+      conf.getOrElse("PreferPolymorphicTypeclasses")(
+        PreferPolymorphicTypeclassesConfig.default
       )
     val hktCrossFile =
-      conf.getOrElse("PreferHKTTypeclasses")(CrossFileConfig.default)
+      conf.getOrElse("PreferPolymorphicTypeclasses")(CrossFileConfig.default)
 
     container
       .product(containerCrossFile)

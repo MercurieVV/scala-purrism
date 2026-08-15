@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en-US">
+  <head>
+    <meta charset="UTF-8">
+
+<!-- Begin Jekyll SEO tag v2.9.0 -->
+<title>scala-purrism | Scalafix semantic rules for refactoring Typelevel Scala toward pure, polymorphic Cats style.</title>
+<meta name="generator" content="Jekyll v4.4.1" />
+<meta property="og:title" content="scala-purrism" />
+<meta property="og:locale" content="en_US" />
+<meta name="description" content="Scalafix semantic rules for refactoring Typelevel Scala toward pure, polymorphic Cats style." />
+<meta name="twitter:description" property="og:description" content="Scalafix semantic rules for refactoring Typelevel Scala toward pure, polymorphic Cats style." />
+<link rel="canonical" href="http://localhost:4000/scala-purrism/PREFER_CATS_FUNCTIONS.html" />
+<meta property="og:url" content="http://localhost:4000/scala-purrism/PREFER_CATS_FUNCTIONS.html" />
+<meta property="og:site_name" content="scala-purrism" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:title" content="scala-purrism" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebPage","description":"Scalafix semantic rules for refactoring Typelevel Scala toward pure, polymorphic Cats style.","headline":"scala-purrism","url":"http://localhost:4000/scala-purrism/PREFER_CATS_FUNCTIONS.html"}</script>
+<!-- End Jekyll SEO tag -->
+
+    <link rel="preconnect" href="https://fonts.gstatic.com">
+    <link rel="preload" href="https://fonts.googleapis.com/css?family=Open+Sans:400,700&display=swap" as="style" type="text/css" crossorigin>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#157878">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="stylesheet" href="/scala-purrism/assets/css/style.css?v=">
+    <!-- start custom head snippets, customize with your own _includes/head-custom.html file -->
+
+<!-- Setup Google Analytics -->
+
+
+
+<!-- You can set your favicon here -->
+<!-- link rel="shortcut icon" type="image/x-icon" href="/scala-purrism/favicon.ico" -->
+
+<!-- end custom head snippets -->
+
+  </head>
+  <body>
+    <a id="skip-to-content" href="#content">Skip to the content.</a>
+
+    <header class="page-header" role="banner">
+      <h1 class="project-name">scala-purrism</h1>
+      <h2 class="project-tagline">Scalafix semantic rules for refactoring Typelevel Scala toward pure, polymorphic Cats style.</h2>
+      
+      
+    </header>
+
+    <main id="content" class="main-content" role="main">
+      <h1 id="prefercatsfunctions--normalization-contract--fixture-oracle">PreferCatsFunctions — Normalization Contract &amp; Fixture Oracle</h1>
+
+<p>Single source of truth for <code class="language-plaintext highlighter-rouge">PreferCatsFunctions</code> semantics. Every later
+implementation phase (Cats source index, project candidate extraction,
+equivalence engine, renderer/ranking, fixtures) must conform to this doc
+without further judgment calls. If code and this doc disagree, this doc wins
+and the code is the bug — file an issue against this doc if the contract
+itself needs to change.</p>
+
+<p>The rule’s contract, restated from #34:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>abstract(originalFunctionBody) == abstract(catsFunctionBody)
+</code></pre></div></div>
+
+<p><code class="language-plaintext highlighter-rouge">abstract</code> is the normalizer defined in §1–2. Equality is IR equality after
+normalization, not tree shape and not name/text resemblance.</p>
+
+<h2 id="1-erasure-list">1. Erasure list</h2>
+
+<p>Differences the normalizer MUST erase (i.e. two bodies differing only in
+these ways are still considered equal):</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>Erased difference</th>
+      <th>Justification</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>E1</td>
+      <td>Local/param names, via alpha-renaming keyed on SemanticDB local-symbol identity (not textual name)</td>
+      <td>Two locals with the same name in unrelated scopes are not the same binding, and two differently-named locals with the same de Bruijn-style position are; only symbol identity tells them apart, text does not.</td>
+    </tr>
+    <tr>
+      <td>E2</td>
+      <td><code class="language-plaintext highlighter-rouge">for</code> comprehension vs explicit <code class="language-plaintext highlighter-rouge">flatMap</code>/<code class="language-plaintext highlighter-rouge">map</code> desugaring</td>
+      <td>The compiler desugars <code class="language-plaintext highlighter-rouge">for</code> to the same <code class="language-plaintext highlighter-rouge">flatMap</code>/<code class="language-plaintext highlighter-rouge">map</code>/<code class="language-plaintext highlighter-rouge">withFilter</code> calls; the two are one program, not two.</td>
+    </tr>
+    <tr>
+      <td>E3</td>
+      <td>Eta-expansion vs direct application (<code class="language-plaintext highlighter-rouge">f</code> vs <code class="language-plaintext highlighter-rouge">x =&gt; f(x)</code> at matching arity/type)</td>
+      <td>Eta-expansion is a syntactic wrapper the compiler inserts/removes; it never changes what runs.</td>
+    </tr>
+    <tr>
+      <td>E4</td>
+      <td>Explicit vs inferred type arguments, only when SemanticDB proves the inferred argument equals the explicit one</td>
+      <td>Once the compiler’s own inference is consulted, the explicit annotation is redundant surface syntax, not a semantic choice.</td>
+    </tr>
+    <tr>
+      <td>E5</td>
+      <td>Import spelling and qualification (<code class="language-plaintext highlighter-rouge">cats.syntax.all.*</code> vs <code class="language-plaintext highlighter-rouge">cats.syntax.functor.*</code> vs fully-qualified call)</td>
+      <td>Same resolved symbol via SemanticDB regardless of how the import was written or whether the call is qualified.</td>
+    </tr>
+    <tr>
+      <td>E6</td>
+      <td>Placeholder literal identity (e.g. which literal constant stands in for “any value of this type” in a generalized body)</td>
+      <td>The normalizer must treat concrete sample literals in Cats source (e.g. <code class="language-plaintext highlighter-rouge">Nil</code>, <code class="language-plaintext highlighter-rouge">0</code>) as position placeholders when the surrounding code is generic over the value, otherwise no user code would ever match.</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Only E1–E6 are erasure axes. Anything not listed here is preserved by
+default (§2 is illustrative of the highest-risk cases, not exhaustive).</p>
+
+<h2 id="2-preservation-list">2. Preservation list</h2>
+
+<p>Differences the normalizer MUST preserve. If any of these differ between
+the user body and the Cats body, the two are NOT equal — no patch, and no
+inference “papers over” the difference:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>Preserved difference</th>
+      <th>Justification</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>P1</td>
+      <td>Evaluation order</td>
+      <td>Reordering can change observable effects (<code class="language-plaintext highlighter-rouge">F</code> with side effects, <code class="language-plaintext highlighter-rouge">Eval</code>, mutable receivers).</td>
+    </tr>
+    <tr>
+      <td>P2</td>
+      <td>Evaluation count (once vs N times)</td>
+      <td>A body that evaluates an effectful subexpression twice is not interchangeable with one that evaluates it once, even if both “return the same value” abstractly.</td>
+    </tr>
+    <tr>
+      <td>P3</td>
+      <td>By-name vs strict parameter passing</td>
+      <td>By-name changes when/if/how-often the argument expression runs; substituting strict for by-name (or vice versa) is a behavior change, not a syntax change.</td>
+    </tr>
+    <tr>
+      <td>P4</td>
+      <td><code class="language-plaintext highlighter-rouge">throw</code> / <code class="language-plaintext highlighter-rouge">return</code></td>
+      <td>Both are non-local control transfer; erasing them would silently change exception/control-flow semantics, which is exactly what the non-goals in #34 forbid.</td>
+    </tr>
+    <tr>
+      <td>P5</td>
+      <td>Mutation / local <code class="language-plaintext highlighter-rouge">var</code></td>
+      <td>Presence of mutable state is an effect the normalizer cannot abstract away without changing what the program does under aliasing/reentry.</td>
+    </tr>
+    <tr>
+      <td>P6</td>
+      <td>Short-circuiting behavior</td>
+      <td><code class="language-plaintext highlighter-rouge">&amp;&amp;</code>/<code class="language-plaintext highlighter-rouge">||</code>/<code class="language-plaintext highlighter-rouge">orElse</code>-style short-circuit changes which subexpressions run at all; equating it with a non-short-circuiting form changes P1/P2 too.</td>
+    </tr>
+    <tr>
+      <td>P7</td>
+      <td>Left vs right side of bifunctor-like values (<code class="language-plaintext highlighter-rouge">Either</code>, <code class="language-plaintext highlighter-rouge">Ior</code>, validated types)</td>
+      <td>Swapping sides silently flips success/failure semantics even when the shapes look symmetric.</td>
+    </tr>
+    <tr>
+      <td>P8</td>
+      <td>Required typeclass constraints</td>
+      <td>A Cats function requiring a weaker or different constraint than the user’s context provides is not a like-for-like replacement; the rule must not introduce new constraint requirements unsafely (ties into decline rule D4).</td>
+    </tr>
+    <tr>
+      <td>P9</td>
+      <td>Collection ordering / strictness contracts</td>
+      <td>A Cats function that does not promise the same ordering or evaluation strictness as the concrete collection in user code cannot be substituted losslessly.</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Erasure (§1) and preservation (§2) are exhaustive and mutually exclusive for
+axes considered in this contract: an axis not in §1 defaults to preserved.</p>
+
+<h2 id="3-decline-rules">3. Decline rules</h2>
+
+<p>Each condition below produces <strong>at most one <code class="language-plaintext highlighter-rouge">LintSeverity.Warning</code></strong> and
+<strong>zero patches</strong>. Decline rules never partially rewrite.</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>Condition</th>
+      <th>Behavior</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>D1</td>
+      <td>Ambiguous ranking — §4’s total order does not resolve to a unique winner</td>
+      <td>Warn once, no patch.</td>
+    </tr>
+    <tr>
+      <td>D2</td>
+      <td>The only normalized match is a private/internal-only Cats implementation detail, with no public API of identical normalized body</td>
+      <td>Warn once, no patch. Never rewrite to a non-public symbol.</td>
+    </tr>
+    <tr>
+      <td>D3</td>
+      <td>Missing typeclass evidence — the matched Cats function requires a constraint (§2 P8) not derivable in the enclosing scope</td>
+      <td>Warn once, no patch.</td>
+    </tr>
+    <tr>
+      <td>D4</td>
+      <td>The rewrite would require strengthening the enclosing signature’s constraints in a way that cannot be proven safe project-wide (see <code class="language-plaintext highlighter-rouge">KleisliLiftScope</code> precedent in <code class="language-plaintext highlighter-rouge">docs/RULES.md</code>: signature changes are a whole-project decision, never a per-file guess)</td>
+      <td>Warn once, no patch.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="4-ranking-rule-deterministic-total-order">4. Ranking rule (deterministic total order)</h2>
+
+<p>When normalized user IR matches more than one Cats candidate body, rank
+candidates using this ordered comparator, applied lexicographically until
+one candidate strictly precedes all others:</p>
+
+<ol>
+  <li><strong>Public syntax/typeclass method over internal helper.</strong> Public API is
+the whole point of the rewrite (#34 non-goals forbid rewriting to
+private internals).</li>
+  <li><strong>Already in scope (imported/resolvable without a new import) over
+requiring a new import.</strong> Minimizes blast radius of the patch.</li>
+  <li><strong>Shorter rendered call form, only as the final tiebreak</strong> (strictly
+fewer rendered tokens in the call-site replacement). This is the <em>last</em>
+criterion, never the first, per #34’s ranking spec.</li>
+  <li><strong>Otherwise: decline</strong> (rule D1). If two candidates remain tied after
+criteria 1–3, ranking is ambiguous by definition — there is no further
+tiebreak, and inventing one (e.g. alphabetical order) would produce
+nondeterministic-feeling output as the Cats index grows. Decline instead.</li>
+</ol>
+
+<p>This is a total order up to the point where criteria 1–3 exhaust
+themselves; beyond that point the rule is defined to decline, so the
+overall function (candidates → outcome) is still deterministic — it simply
+maps remaining ties to “no patch” rather than picking one arbitrarily.</p>
+
+<h2 id="5-fixture-oracle">5. Fixture oracle</h2>
+
+<p>Fixture names are authoritative and come from #34. Each fixture below
+states: input intent, expected output, and which rule (§1–4) it pins.
+Downstream phases implement exactly these fixtures — do not rename, add, or
+drop fixtures without updating this doc first.</p>
+
+<h3 id="positive-fixtures-patch-expected--8">Positive fixtures (patch expected) — 8</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Fixture</th>
+      <th>Input intent</th>
+      <th>Expected output</th>
+      <th>Pins</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CatsEquivalentMapIdentity</code></td>
+      <td>Hand-written code that maps a functor with an identity-shaped function (e.g. <code class="language-plaintext highlighter-rouge">fa.map(a =&gt; a)</code>)</td>
+      <td>Rewritten to drop the redundant map / use the Cats identity-preserving form (e.g. bare <code class="language-plaintext highlighter-rouge">fa</code>, or <code class="language-plaintext highlighter-rouge">Functor[F].map(fa)(identity)</code> normalized away)</td>
+      <td>E1 (param name <code class="language-plaintext highlighter-rouge">a</code> erased), ranking §4 crit. 1 (public syntax over internal)</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CatsEquivalentVoid</code></td>
+      <td>Hand-written <code class="language-plaintext highlighter-rouge">fa.map(_ =&gt; ())</code> or equivalent discard-result pattern</td>
+      <td>Rewritten to <code class="language-plaintext highlighter-rouge">fa.void</code> (<code class="language-plaintext highlighter-rouge">cats.syntax.functor.void</code>)</td>
+      <td>E1, E3 (eta/direct application equivalence for the discarded function), §4 crit. 3 (shorter, final tiebreak only)</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CatsEquivalentAs</code></td>
+      <td>Hand-written <code class="language-plaintext highlighter-rouge">fa.map(_ =&gt; b)</code> for a fixed value <code class="language-plaintext highlighter-rouge">b</code></td>
+      <td>Rewritten to <code class="language-plaintext highlighter-rouge">fa.as(b)</code></td>
+      <td>E1, E6 (placeholder erasure for <code class="language-plaintext highlighter-rouge">b</code>)</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CatsEquivalentProduct</code></td>
+      <td>Hand-written pair construction via nested <code class="language-plaintext highlighter-rouge">flatMap</code>/<code class="language-plaintext highlighter-rouge">map</code> producing a tuple of two independent effects</td>
+      <td>Rewritten to <code class="language-plaintext highlighter-rouge">fa.product(fb)</code> or <code class="language-plaintext highlighter-rouge">(fa, fb).tupled</code> per ranking</td>
+      <td>E2 (for/flatMap desugaring erased), P1 (must confirm evaluation order of <code class="language-plaintext highlighter-rouge">fa</code> then <code class="language-plaintext highlighter-rouge">fb</code> is preserved by the chosen replacement — if order can’t be proven preserved, this fixture must not match)</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CatsEquivalentFoldMap</code></td>
+      <td>Hand-written fold accumulating via a <code class="language-plaintext highlighter-rouge">Monoid</code>-shaped combine over a mapped collection</td>
+      <td>Rewritten to <code class="language-plaintext highlighter-rouge">xs.foldMap(f)</code></td>
+      <td>E1, E2, P8 (requires <code class="language-plaintext highlighter-rouge">Monoid</code> evidence already derivable — this fixture assumes it is; see <code class="language-plaintext highlighter-rouge">CatsEquivalentMissingTypeclassEvidence</code> for the negative counterpart)</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CatsEquivalentTraverse</code></td>
+      <td>Hand-written manual accumulation of independent <code class="language-plaintext highlighter-rouge">F[_]</code> effects across a collection into <code class="language-plaintext highlighter-rouge">F[List[B]]</code></td>
+      <td>Rewritten to <code class="language-plaintext highlighter-rouge">xs.traverse(f)</code></td>
+      <td>E1, E2, P1/P2 (traverse’s evaluation order/count must match the hand-written loop exactly, else decline)</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CatsEquivalentForComprehension</code></td>
+      <td>A <code class="language-plaintext highlighter-rouge">for</code>-comprehension whose desugared body matches a Cats combinator’s normalized body</td>
+      <td>Rewritten to the matched combinator call</td>
+      <td>E2 (this is the fixture that specifically pins for/flatMap desugaring equivalence)</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CatsEquivalentLocalHelperMethod</code></td>
+      <td>A locally-defined helper <code class="language-plaintext highlighter-rouge">def</code> whose body normalizes identically to a public Cats function’s body</td>
+      <td>Rewritten to call the Cats function directly (helper call site rewritten; unused helper def left for a separate dead-code concern, out of scope here)</td>
+      <td>E1, ranking §4 crit. 1 (public Cats method preferred over the user’s own private helper, which is the internal-helper case from the <em>user’s</em> side)</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="negative--safety-fixtures-no-patch--9">Negative / safety fixtures (no patch) — 9</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Fixture</th>
+      <th>Input intent</th>
+      <th>Expected behavior</th>
+      <th>Pins</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CatsEquivalentAlmostSameButOrderDiffers</code></td>
+      <td>Body looks like a Cats match except two subexpressions are evaluated in swapped order vs the Cats reference</td>
+      <td>Unchanged, no patch. Emits <code class="language-plaintext highlighter-rouge">LintSeverity.Warning</code> only if the near-miss is confidently detected (else silent)</td>
+      <td>P1</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CatsEquivalentAlmostSameButEvaluatesTwice</code></td>
+      <td>Body looks like a Cats match except one subexpression is evaluated twice where the Cats reference evaluates it once (or vice versa)</td>
+      <td>Unchanged, no patch; warning if confidently detected</td>
+      <td>P2</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CatsEquivalentAlmostSameButByNameDiffers</code></td>
+      <td>Body looks like a Cats match except a by-name parameter in one side is strict in the other</td>
+      <td>Unchanged, no patch; warning if confidently detected</td>
+      <td>P3</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CatsEquivalentUsesMutation</code></td>
+      <td>Body uses a local <code class="language-plaintext highlighter-rouge">var</code> or mutable state where the Cats reference is pure</td>
+      <td>Unchanged, no patch; warning if confidently detected</td>
+      <td>P5</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CatsEquivalentThrows</code></td>
+      <td>Body contains <code class="language-plaintext highlighter-rouge">throw</code> (or relies on exception control flow) where the Cats reference models the error functionally</td>
+      <td>Unchanged, no patch; warning if confidently detected</td>
+      <td>P4</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CatsEquivalentAmbiguousCatsMatches</code></td>
+      <td>Normalized body matches ≥2 Cats candidates that remain tied after all of §4’s ranking criteria</td>
+      <td>Unchanged, no patch, exactly one <code class="language-plaintext highlighter-rouge">LintSeverity.Warning</code></td>
+      <td>D1, §4 (documents the “decline” branch of the ranking function)</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CatsEquivalentPrivateCatsImplOnly</code></td>
+      <td>Normalized body matches only a private/internal Cats implementation detail, no public API with the same normalized body</td>
+      <td>Unchanged, no patch, one <code class="language-plaintext highlighter-rouge">LintSeverity.Warning</code></td>
+      <td>D2</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CatsEquivalentMissingTypeclassEvidence</code></td>
+      <td>Normalized body matches a Cats function requiring a constraint (e.g. <code class="language-plaintext highlighter-rouge">Monoid</code>) not derivable in the enclosing scope</td>
+      <td>Unchanged, no patch, one <code class="language-plaintext highlighter-rouge">LintSeverity.Warning</code></td>
+      <td>D3, P8</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CatsEquivalentRequiresUnsafeSignatureChange</code></td>
+      <td>Match only holds if the enclosing method’s signature is strengthened with a new/stronger constraint that cannot be safely propagated project-wide</td>
+      <td>Unchanged, no patch, one <code class="language-plaintext highlighter-rouge">LintSeverity.Warning</code></td>
+      <td>D4</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Note on “warning if confidently detected” (the five near-miss fixtures):
+these fixtures pin a <em>preservation</em> axis, not a detection guarantee. If the
+equivalence engine’s confidence in the near-match is below its own
+threshold, “unchanged, no diagnostic” is also an acceptable outcome for
+that specific fixture — but “patch produced” is never acceptable. The
+fixture asserts the negative (no patch), and a warning is bonus signal, not
+a hard requirement, since forcing a warning on every near-miss the engine
+happens to notice would tie the contract to implementation-specific
+detection thresholds rather than to the safety property that matters (no
+false-positive rewrite).</p>
+
+<h2 id="spec-summary-for-issue-97">Spec summary (for issue #97)</h2>
+
+<p>This section is copied verbatim into the GitHub issue body under
+“## Spec summary” per the acceptance criteria.</p>
+
+<ul>
+  <li>Erasure axes (§1): local/param alpha-renaming by SemanticDB symbol
+identity, for/flatMap desugaring, eta-expansion, explicit-vs-inferred
+type args (only when SemanticDB proves equality), import
+spelling/qualification, placeholder-literal identity.</li>
+  <li>Preservation axes (§2): evaluation order, evaluation count, by-name vs
+strict, throw/return, mutation/var, short-circuiting, bifunctor
+left/right side, required typeclass constraints, collection
+ordering/strictness.</li>
+  <li>Decline rules (§3): ambiguous ranking, private-only Cats match, missing
+typeclass evidence, unsafe signature strengthening — each yields ≤1
+<code class="language-plaintext highlighter-rouge">LintSeverity.Warning</code> and zero patches.</li>
+  <li>Ranking (§4): public API &gt; internal helper; in-scope &gt; new import;
+shorter only as final tiebreak; unresolved ties decline (deterministic
+by construction — ties always map to “no patch”).</li>
+  <li>Fixture oracle (§5): all 8 positive and 9 negative fixture names from #34
+are enumerated with input intent, expected outcome, and the erasure/
+preservation/decline/ranking rule each one pins.</li>
+</ul>
+
+<h2 id="corpus-run">Corpus run</h2>
+
+<h2 id="deferred-fixtures">Deferred fixtures</h2>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">CatsEquivalentMapIdentity</code>: deferred because the checked-in Cats index has no public <code class="language-plaintext highlighter-rouge">map</code> identity entry.</li>
+  <li><code class="language-plaintext highlighter-rouge">CatsEquivalentVoid</code>: deferred because the landed normalizer does not yet erase the Cats index’s unqualified self-call versus syntax spelling (unsupported normalizer axis E5).</li>
+  <li><code class="language-plaintext highlighter-rouge">CatsEquivalentAs</code>: deferred because the landed normalizer does not yet erase the Cats index’s unqualified self-call versus syntax spelling (unsupported normalizer axis E5).</li>
+  <li><code class="language-plaintext highlighter-rouge">CatsEquivalentFoldMap</code>: deferred because the landed normalizer does not yet erase the Cats index’s unqualified self-call versus syntax spelling (unsupported normalizer axis E5).</li>
+  <li><code class="language-plaintext highlighter-rouge">CatsEquivalentProduct</code>: deferred because the checked-in index exposes only <code class="language-plaintext highlighter-rouge">productL</code>/<code class="language-plaintext highlighter-rouge">productR</code>, while the requested independent pair shape requires the unsupported product normalizer axis.</li>
+  <li><code class="language-plaintext highlighter-rouge">CatsEquivalentTraverse</code>: deferred because the checked-in index has <code class="language-plaintext highlighter-rouge">Traverse.sequence</code> but no <code class="language-plaintext highlighter-rouge">traverse</code> entry, and the manual accumulation shape is not a supported normalizer axis (E2 does not erase collection accumulation).</li>
+  <li><code class="language-plaintext highlighter-rouge">CatsEquivalentForComprehension</code>: deferred because the landed normalizer does not support the requested for-comprehension combinator axis (E2 only equates a for-comprehension with its direct flatMap/map desugaring).</li>
+  <li><code class="language-plaintext highlighter-rouge">CatsEquivalentLocalHelperMethod</code>: deferred by decline rule D2: a user-local helper is not a public Cats candidate, and the index has no public candidate with the required normalized body.</li>
+</ul>
+
+<p>The corpus run was attempted on 2026-07-27, but could not execute: this checkout
+does not contain a <code class="language-plaintext highlighter-rouge">PreferCatsFunctions</code> rule (no implementation or Scalafix
+service registration), so there is no runnable rule to apply and no proposed
+rewrite to audit. The local rule build was also blocked before compilation by
+Coursier’s cache lock permission error at
+<code class="language-plaintext highlighter-rouge">/Users/viktorskalinins/Library/Caches/Coursier/v1/.structure.lock</code>.</p>
+
+<p>All four repositories were attempted and skipped for the same reason:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Repository</th>
+      <th style="text-align: right">Proposed rewrites</th>
+      <th>Declines</th>
+      <th>Audit</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">gh-tasks-llm-executor</code></td>
+      <td style="text-align: right">n/a</td>
+      <td>n/a — rule unavailable</td>
+      <td>no proposed rewrites</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">arrowstep</code></td>
+      <td style="text-align: right">n/a</td>
+      <td>n/a — rule unavailable</td>
+      <td>no proposed rewrites</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">cctv-analyzer-scala</code></td>
+      <td style="text-align: right">n/a</td>
+      <td>n/a — rule unavailable</td>
+      <td>no proposed rewrites</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">ScalaSemanticMCP</code></td>
+      <td style="text-align: right">n/a</td>
+      <td>n/a — rule unavailable</td>
+      <td>no proposed rewrites</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>No false-positive follow-up can be filed from this run because no rewrite was
+proposed. Once the rule is available, rerun this audit and file any false
+positive as a follow-up to #34.</p>
+
+<p>No source files were changed in the corpus repositories. They contained
+pre-existing working-tree changes, which were left untouched.</p>
+
+<p>ScalaSemantic MCP was unavailable for this audit: the required
+<code class="language-plaintext highlighter-rouge">set_workspace_root</code> call was rejected as <code class="language-plaintext highlighter-rouge">user cancelled MCP tool call</code>.</p>
+
+
+      <footer class="site-footer">
+        
+        <span class="site-footer-credits">This page was generated by <a href="https://pages.github.com">GitHub Pages</a>.</span>
+      </footer>
+    </main>
+  </body>
+</html>

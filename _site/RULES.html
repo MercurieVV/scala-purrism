@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en-US">
+  <head>
+    <meta charset="UTF-8">
+
+<!-- Begin Jekyll SEO tag v2.9.0 -->
+<title>scala-purrism | Scalafix semantic rules for refactoring Typelevel Scala toward pure, polymorphic Cats style.</title>
+<meta name="generator" content="Jekyll v4.4.1" />
+<meta property="og:title" content="scala-purrism" />
+<meta property="og:locale" content="en_US" />
+<meta name="description" content="Scalafix semantic rules for refactoring Typelevel Scala toward pure, polymorphic Cats style." />
+<meta name="twitter:description" property="og:description" content="Scalafix semantic rules for refactoring Typelevel Scala toward pure, polymorphic Cats style." />
+<link rel="canonical" href="http://localhost:4000/scala-purrism/RULES.html" />
+<meta property="og:url" content="http://localhost:4000/scala-purrism/RULES.html" />
+<meta property="og:site_name" content="scala-purrism" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:title" content="scala-purrism" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebPage","description":"Scalafix semantic rules for refactoring Typelevel Scala toward pure, polymorphic Cats style.","headline":"scala-purrism","url":"http://localhost:4000/scala-purrism/RULES.html"}</script>
+<!-- End Jekyll SEO tag -->
+
+    <link rel="preconnect" href="https://fonts.gstatic.com">
+    <link rel="preload" href="https://fonts.googleapis.com/css?family=Open+Sans:400,700&display=swap" as="style" type="text/css" crossorigin>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#157878">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="stylesheet" href="/scala-purrism/assets/css/style.css?v=">
+    <!-- start custom head snippets, customize with your own _includes/head-custom.html file -->
+
+<!-- Setup Google Analytics -->
+
+
+
+<!-- You can set your favicon here -->
+<!-- link rel="shortcut icon" type="image/x-icon" href="/scala-purrism/favicon.ico" -->
+
+<!-- end custom head snippets -->
+
+  </head>
+  <body>
+    <a id="skip-to-content" href="#content">Skip to the content.</a>
+
+    <header class="page-header" role="banner">
+      <h1 class="project-name">scala-purrism</h1>
+      <h2 class="project-tagline">Scalafix semantic rules for refactoring Typelevel Scala toward pure, polymorphic Cats style.</h2>
+      
+      
+    </header>
+
+    <main id="content" class="main-content" role="main">
+      <h1 id="engineering-rules">Engineering Rules</h1>
+
+<h2 id="scalafix-rules">Scalafix Rules</h2>
+
+<ul>
+  <li>Implement rules as Scalafix semantic rules under <code class="language-plaintext highlighter-rouge">scalafix/src/fix</code>.</li>
+  <li>Prefer semantic information over syntax-only matching when a rewrite depends on symbols or inferred types. Identifier names are not identity: two unrelated fields can share one.</li>
+  <li>Rules must be deterministic, idempotent, and safe to run repeatedly.</li>
+  <li>Every automatic rewrite must have an executed fixture under <code class="language-plaintext highlighter-rouge">scalafix/testInput</code> and <code class="language-plaintext highlighter-rouge">scalafix/testOutput</code>. See <a href="/scala-purrism/GOLDEN_FIXTURES.html">Golden Fixtures</a>.</li>
+  <li><code class="language-plaintext highlighter-rouge">PreferCatsFunctions</code> normalization/preservation/ranking/decline semantics are specified in <a href="/scala-purrism/PREFER_CATS_FUNCTIONS.html">Prefer Cats Functions</a>; conform to that contract rather than re-deriving equivalence rules ad hoc.</li>
+  <li>Checks that cannot be safely rewritten should report diagnostics instead of producing partial edits.</li>
+  <li>Report at the granularity of the decision, not of the evidence. A method that calls <code class="language-plaintext highlighter-rouge">out.write</code> twenty times poses one question — should it be <code class="language-plaintext highlighter-rouge">F[Unit]</code> — so it gets one diagnostic, anchored on the signature that would change. Twenty diagnostics bury the question under its evidence.</li>
+  <li>A rewrite must preserve the expression’s type. <code class="language-plaintext highlighter-rouge">try e catch { case _: Throwable =&gt; () }</code> has type <code class="language-plaintext highlighter-rouge">Unit</code>; <code class="language-plaintext highlighter-rouge">Either.catchNonFatal(e).void</code> has type <code class="language-plaintext highlighter-rouge">Either[Throwable, Unit]</code>, so the tidier form is a different program. Narrow the pattern instead. Where the type-preserving form needs a fact the expression does not carry — that a body is already in <code class="language-plaintext highlighter-rouge">F</code>, that every use of a reference is — report it.</li>
+  <li>Rewriting rules should honour the <code class="language-plaintext highlighter-rouge">// purrism:keep &lt;reason&gt;</code> marker (<code class="language-plaintext highlighter-rouge">fix.Suppression</code>). Realtime and measured paths are deliberately un-idiomatic, and no amount of semantic information says so; only the author does.</li>
+  <li>Prefer splicing a replacement into the original source text over rendering a transformed tree. Scalameta re-prints a transformed tree from its structure, so a substitution inside a string interpolation comes back reflowed across several lines.</li>
+  <li>Anchor every <code class="language-plaintext highlighter-rouge">Patch</code> on a node from <code class="language-plaintext highlighter-rouge">doc.tree</code>. A tree parsed from any other <code class="language-plaintext highlighter-rouge">Input</code> — including a re-parse of <code class="language-plaintext highlighter-rouge">doc.input.text</code> — carries positions that only coincide by luck, and writing at those offsets corrupts the file.</li>
+  <li>Emit diagnostics as <code class="language-plaintext highlighter-rouge">LintSeverity.Warning</code> unless they should genuinely block. Scalafix withholds a rule’s patches when it reports lint <em>errors</em>, so an over-severe diagnostic silently turns the rewrite into a no-op.</li>
+  <li>A rewrite that changes a <em>signature</em> must re-shape every call site, and scalafix can only patch the document it is handed. So either restrict the rewrite to definitions whose callers are provably in that file, or decide once for the whole project — never per file. A filter applied per file can decline a definition after another file has already re-split its calls, and the project stops compiling. <code class="language-plaintext highlighter-rouge">KleisliLiftScope</code> is the project-wide form: it reads the SemanticDB payload up front and every document then acts on that shared verdict, applying no judgement of its own.</li>
+  <li>The idiom rules are individually idempotent but not confluent in a single pass, so run them to a fixpoint. One rule’s output is another’s input: <code class="language-plaintext highlighter-rouge">PreferOptionIdioms</code> turns <code class="language-plaintext highlighter-rouge">opt.map(f).getOrElse(F.unit)</code> into a <code class="language-plaintext highlighter-rouge">fold</code>, and that <code class="language-plaintext highlighter-rouge">fold</code> is what <code class="language-plaintext highlighter-rouge">PreferEffectIdioms</code> recognises as <code class="language-plaintext highlighter-rouge">traverse_</code>. Neither sees the other’s work within a pass, because both match the text scalafix handed them. <code class="language-plaintext highlighter-rouge">IdiomCrossRule</code> and <code class="language-plaintext highlighter-rouge">IdiomCrossRuleSecondPass</code> pin both halves.</li>
+  <li>A rule that consumes another rule’s output needs a recompile between them. SemanticDB describes the code as it was compiled; after a signature rewrite the payload is stale, and a rule reading types from it is reasoning about code that no longer exists. <code class="language-plaintext highlighter-rouge">PreferKleisli</code> → recompile → <code class="language-plaintext highlighter-rouge">PreferArrow</code> is the pipeline, not one invocation listing both.</li>
+  <li><code class="language-plaintext highlighter-rouge">PreferCatsFunctions</code> normalization/preservation/ranking/decline semantics are specified in <a href="/scala-purrism/PREFER_CATS_FUNCTIONS.html">Prefer Cats Functions</a>; conform to that contract rather than re-deriving equivalence rules ad hoc.</li>
+  <li>Since 0.9.0 the three signature-widening rules are <code class="language-plaintext highlighter-rouge">PreferPolymorphicTypeclasses</code>, <code class="language-plaintext highlighter-rouge">PreferPolymorphicCollections</code>, and <code class="language-plaintext highlighter-rouge">PreferPolymorphicCollectionOps</code> (formerly <code class="language-plaintext highlighter-rouge">PreferHKTTypeclasses</code>, <code class="language-plaintext highlighter-rouge">PreferContainerTypeclasses</code>, and <code class="language-plaintext highlighter-rouge">PreferElementTypeclasses</code>). The old names, old config case classes, and old <code class="language-plaintext highlighter-rouge">rules = [...]</code> entries stay resolvable as deprecated forwarders (<code class="language-plaintext highlighter-rouge">scalafix/src/fix/DeprecatedPolymorphicAliases.scala</code>) for one deprecation cycle before removal.</li>
+</ul>
+
+<h2 id="change-closures">Change Closures</h2>
+
+<p>A rewrite that changes a type has to follow that type wherever the value goes.
+<code class="language-plaintext highlighter-rouge">fix.flow</code> holds the shared half of that — <code class="language-plaintext highlighter-rouge">Node</code>, <code class="language-plaintext highlighter-rouge">Edge</code>, <code class="language-plaintext highlighter-rouge">Facts</code>,
+<code class="language-plaintext highlighter-rouge">Reachability</code> — and says nothing about what following the value <em>means</em>.</p>
+
+<p>The meaning is not shared, and the difference is not a detail:</p>
+
+<ul>
+  <li><strong>Opaque propagation is monomorphic.</strong> The type genuinely spreads. Every
+signature the value reaches must change too, and where it meets something
+outside the closure the value can still cross by being wrapped or unwrapped.
+That is what <code class="language-plaintext highlighter-rouge">fix.opaque.Closure</code> computes: <code class="language-plaintext highlighter-rouge">genesis</code>, <code class="language-plaintext highlighter-rouge">leaves</code>, <code class="language-plaintext highlighter-rouge">mergePoints</code>,
+and <code class="language-plaintext highlighter-rouge">widen</code> to pull an intruder in.</li>
+  <li><strong>Container widening is polymorphic.</strong> <code class="language-plaintext highlighter-rouge">def f(xs: List[A])</code> becoming
+<code class="language-plaintext highlighter-rouge">def f[S[_]: Foldable](xs: S[A])</code> generalises at <em>one</em> site; every call site
+then re-instantiates <code class="language-plaintext highlighter-rouge">S</code>, and inference does that silently. So the value
+flowing out of the definition into a concrete <code class="language-plaintext highlighter-rouge">Seq</code>-typed signature is
+harmless — <code class="language-plaintext highlighter-rouge">f(myList)</code> still infers <code class="language-plaintext highlighter-rouge">S = List</code>. Only an escape <em>inside</em> the
+widened body is fatal, because there <code class="language-plaintext highlighter-rouge">S</code> is universally quantified and cannot
+be instantiated: <code class="language-plaintext highlighter-rouge">Phrase(pitches.map(f), d)</code> is the failing shape.</li>
+</ul>
+
+<p>Seating <code class="language-plaintext highlighter-rouge">PreferPolymorphicCollections</code> on the opaque closure was tried and
+reverted: forward reachability leaves the definition through its own return,
+which the closure calls an escape and inference calls ordinary. <code class="language-plaintext highlighter-rouge">ContainerFlow</code>
+stays syntactic and in-body for that reason, not for want of a graph.</p>
+
+<h2 id="widening-and-its-call-sites">Widening and its call sites</h2>
+
+<p><code class="language-plaintext highlighter-rouge">PreferPolymorphicCollectionOps</code>, <code class="language-plaintext highlighter-rouge">PreferPolymorphicCollections</code> and
+<code class="language-plaintext highlighter-rouge">PreferPolymorphicTypeclasses</code> each name what they abstract — the element, the
+collection, any other unary constructor — and <code class="language-plaintext highlighter-rouge">PreferTypeParameters</code> runs all
+three, named for the mechanism they share. Keep new members named after their
+subject: the umbrella is the only place the mechanism is the identity.</p>
+
+<p>Adding a type parameter is not the source-compatible half of a widening. <code class="language-plaintext highlighter-rouge">f(xs)</code>
+re-infers, but <code class="language-plaintext highlighter-rouge">f[A](xs)</code> names one type argument and a def that has grown a
+second no longer accepts it — and the call usually lives in another file, often
+another module, so no per-file decision can see it. <code class="language-plaintext highlighter-rouge">fix.container.WidenScope</code>
+is the project-wide answer, built the way <code class="language-plaintext highlighter-rouge">KleisliLiftScope</code> is: it reads the
+SemanticDB signatures for the type parameters and the parameter types, and the
+parsed sources for the one question the payload does not record — was this call
+<em>written</em> with type arguments?</p>
+
+<p><strong>Propagate first, protect last.</strong> Three verdicts, and every file in the run
+computes the same one:</p>
+
+<ul>
+  <li><strong>repairable</strong> — widen, and <em>drop</em> the type-argument list at each call site.
+Open only when every type parameter of that def occurs in a value parameter,
+so inference recovers all of them, the new one included.</li>
+  <li><strong>appendable</strong> — widen, and <em>tell</em> each call site the new argument:
+<code class="language-plaintext highlighter-rouge">describe[Int](rows)</code> becomes <code class="language-plaintext highlighter-rouge">describe[Int, List](rows)</code>, reading <code class="language-plaintext highlighter-rouge">List</code> off
+the argument the call already passes. This is what keeps a def whose type
+parameter arrives through evidence (<code class="language-plaintext highlighter-rouge">[A: Show]</code>) from being refused: the
+answer is available, so it is supplied rather than inferred.</li>
+  <li><strong>vetoed</strong> — only when neither repair reaches every call site, because some
+argument names no container this can read: <code class="language-plaintext highlighter-rouge">summarise[Int](if (flag) List(1, 2)
+else Nil)</code>. Report, widen nothing, patch nothing. A call site left behind is a
+build that does not compile, so one unreachable site vetoes the whole
+widening.</li>
+</ul>
+
+<p>Both repairs read the argument from the payload rather than its spelling: a
+<code class="language-plaintext highlighter-rouge">val</code> through the type of the symbol it refers to, a <code class="language-plaintext highlighter-rouge">List(1, 2)</code> through the
+companion it applies.</p>
+
+<p><strong>What gets widened is configuration, and the default is a list.</strong> Each rule’s
+<code class="language-plaintext highlighter-rouge">containers</code> names the constructors it claims, and <code class="language-plaintext highlighter-rouge">PreferPolymorphicCollectionOps</code>
+additionally names the concrete element types it will assume an instance for.
+<code class="language-plaintext highlighter-rouge">fix.ContainerNames</code> gives that list one wildcard, <code class="language-plaintext highlighter-rouge">"*"</code>, meaning every
+candidate: every constructor the Cats index has a theory of. <code class="language-plaintext highlighter-rouge">WidenScope</code> has no
+such index, so the rule hands it that test as a predicate rather than letting it
+take a unary application at face value — <strong>a scope that predicts more widenings
+than the rules perform rewrites call sites of definitions nothing changed.</strong> A
+first wildcard run over a real project appended a type argument to
+<code class="language-plaintext highlighter-rouge">Measurements.functions[F, FiniteDuration](pr)</code> — a def no rule widened, whose
+<code class="language-plaintext highlighter-rouge">PrometheusRegistry[F]</code> parameter only <em>looked</em> like a container — and stopped
+that module compiling. The wildcard is also restricted to names a type argument
+can be written with: the last segment of a symbol is not always a type, and
+<code class="language-plaintext highlighter-rouge">IndexedSeq.empty</code> and a type lambda’s parameter arrived as <code class="language-plaintext highlighter-rouge">Delegate#empty()</code>
+and <code class="language-plaintext highlighter-rouge">[F]</code>, both duly appended. And the scope descends into a parameter type’s
+arguments only through an <em>abstract</em> head, mirroring
+<code class="language-plaintext highlighter-rouge">UsageAnalyzer.outerConcreteTargets</code>: in <code class="language-plaintext highlighter-rouge">Ref[F, Option[Mixed]]</code> the target is
+<code class="language-plaintext highlighter-rouge">Ref</code>, declined for being binary, and no rule ever widens the <code class="language-plaintext highlighter-rouge">Option</code> inside
+it — descending anyway made every such def a candidate and stripped the type
+arguments off its call sites for nothing. The wildcard is a value rather than the empty list because empty already
+means “widen nothing” here and “cede nothing” in <code class="language-plaintext highlighter-rouge">PreferPolymorphicTypeclasses</code>, and
+inverting it would change what existing configurations do. The two lists are one
+setting in practice: a wildcard on the container rule wants the same wildcard on
+the HKT rule’s cede-list, or both widen one signature.</p>
+
+<p>Evidence is not an argument. <code class="language-plaintext highlighter-rouge">def recording[F[_]: Sync](dir: Path)</code> desugars to
+a <code class="language-plaintext highlighter-rouge">(using Sync[F])</code> parameter whose type mentions <code class="language-plaintext highlighter-rouge">F</code>, but nothing in the
+argument list does, so <code class="language-plaintext highlighter-rouge">recording[IO](dir)</code> cannot simply drop its type
+argument and expect inference to find <code class="language-plaintext highlighter-rouge">F</code> again. Implicit and given parameters
+are therefore excluded when deciding whether a type parameter is inferable –
+without that exclusion a whole-project run rewrites call sites of definitions it
+never widened, which is how this was found.</p>
+
+<p>Two things this deliberately does not do. It does not re-derive the verdict from
+the definition after the fact (“declares more type parameters than the call
+passes”): SemanticDB lists an extension method’s own type parameters together
+with its extension’s, and that test rewrites <code class="language-plaintext highlighter-rouge">xs.at[Store[V]](id)</code> for nothing.
+And it does not survive the two halves landing in different runs — see the
+ordering rule in <code class="language-plaintext highlighter-rouge">README.md</code>: one invocation over the whole project, or module
+by module with dependents first.</p>
+
+<h2 id="candidate-rules">Candidate Rules</h2>
+
+<p>Shapes surveyed and specified, not yet implemented:</p>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">PreferNonEmpty</code> — <code class="language-plaintext highlighter-rouge">require(xs.nonEmpty)</code> on a collection parameter is <code class="language-plaintext highlighter-rouge">NonEmptyList</code>/<code class="language-plaintext highlighter-rouge">NonEmptyVector</code>, and a <code class="language-plaintext highlighter-rouge">f(xs: A*)</code> that reduces its argument is <code class="language-plaintext highlighter-rouge">f(head: A, tail: A*)</code>. Deletes the runtime check rather than validating it. Signature-changing, so it needs the project-wide call-site verdict.</li>
+  <li>Summon-style bodies. <code class="language-plaintext highlighter-rouge">UsageAnalyzer</code> attributes a capability to the <em>receiver</em> of a call, so <code class="language-plaintext highlighter-rouge">Reducible[NonEmptyList].reduce(xs)</code> states nothing about <code class="language-plaintext highlighter-rouge">xs</code> — the container is only an argument — and <code class="language-plaintext highlighter-rouge">PreferPolymorphicTypeclasses</code> leaves it alone. Reading it would also mean rewriting <code class="language-plaintext highlighter-rouge">Reducible[NonEmptyList]</code> to <code class="language-plaintext highlighter-rouge">Reducible[G]</code> in the body, which no rule in <code class="language-plaintext highlighter-rouge">fix.hkt</code> does today.</li>
+  <li>Result-position containers. <code class="language-plaintext highlighter-rouge">def square[T](count: Int, from: Int): Seq[(T, T)] = Range(...).map(...)</code> names a container the caller never supplies, so <code class="language-plaintext highlighter-rouge">PreferPolymorphicCollections.isParameter</code> refuses it: widening the signature alone gives <code class="language-plaintext highlighter-rouge">square[S[_]]: S[(T, T)]</code> over a body that still returns a <code class="language-plaintext highlighter-rouge">Seq</code>, which is not a program. Reaching <code class="language-plaintext highlighter-rouge">S</code> here means <em>building</em> it — <code class="language-plaintext highlighter-rouge">Range(...).foldMap(k =&gt; (...).pure[S])</code> under <code class="language-plaintext highlighter-rouge">Applicative</code> and <code class="language-plaintext highlighter-rouge">MonoidK</code> — and that is a body rewrite, the same wall as the entry below. Cats has no <code class="language-plaintext highlighter-rouge">Range ~&gt; S</code>.</li>
+  <li>Lifting a concrete constructor into <code class="language-plaintext highlighter-rouge">F</code>. <code class="language-plaintext highlighter-rouge">private def parse(s: String): Try[Int] = Try(s.toInt)</code> is a <code class="language-plaintext highlighter-rouge">MonadError</code> in disguise, but reaching <code class="language-plaintext highlighter-rouge">parse[F[_]: MonadError[*, Throwable]]</code> means rewriting the body to <code class="language-plaintext highlighter-rouge">F.fromTry(Try(...))</code>. The engine widens signatures; a body rewrite is a second rule.</li>
+  <li>Element-level evidence. Widening <code class="language-plaintext highlighter-rouge">xs: List[B]</code> to <code class="language-plaintext highlighter-rouge">G[B]</code> under <code class="language-plaintext highlighter-rouge">Foldable</code> says nothing about the <code class="language-plaintext highlighter-rouge">Monoid[B]</code> that <code class="language-plaintext highlighter-rouge">xs.foldMap(identity)</code> also needs. Today the compiler is the check: if the evidence is absent the widened file does not compile. <code class="language-plaintext highlighter-rouge">DeclineReason.MissingEvidence</code> exists for the rule that would decline instead.</li>
+</ul>
+
+<h2 id="typelevel-style">Typelevel Style</h2>
+
+<ul>
+  <li>Prefer abstract effect APIs such as <code class="language-plaintext highlighter-rouge">F[_]: MonadThrow</code>, <code class="language-plaintext highlighter-rouge">Sync</code>, <code class="language-plaintext highlighter-rouge">Temporal</code>, or <code class="language-plaintext highlighter-rouge">Concurrent</code> over concrete <code class="language-plaintext highlighter-rouge">IO</code> in library code.</li>
+  <li>Keep concrete <code class="language-plaintext highlighter-rouge">IO</code> at application boundaries such as <code class="language-plaintext highlighter-rouge">IOApp</code>.</li>
+  <li>Use <code class="language-plaintext highlighter-rouge">cats.syntax.all.*</code> for standard Cats syntax.</li>
+  <li>Avoid <code class="language-plaintext highlighter-rouge">null</code>, <code class="language-plaintext highlighter-rouge">throw</code>, <code class="language-plaintext highlighter-rouge">return</code>, mutable <code class="language-plaintext highlighter-rouge">var</code>, unsafe casts, and unsafe effect execution.</li>
+  <li>Model errors explicitly with effect errors, <code class="language-plaintext highlighter-rouge">Either</code>, validated data, or domain ADTs.</li>
+</ul>
+
+<h2 id="testing">Testing</h2>
+
+<ul>
+  <li>Executed fixtures are mandatory for refactoring behavior.</li>
+  <li>Keep one matching relative path in <code class="language-plaintext highlighter-rouge">testInput/src</code> and <code class="language-plaintext highlighter-rouge">testOutput/src</code> for each scenario.</li>
+  <li>Add focused tests for helper logic when a rewrite algorithm becomes non-trivial. Keep the analysis behind a plain interface (as <code class="language-plaintext highlighter-rouge">Closure</code> sits behind <code class="language-plaintext highlighter-rouge">Facts</code>) so it can be driven by a fake, with no compiler in the loop.</li>
+  <li>Prefer small fixtures that isolate one transformation at a time.</li>
+  <li>Assert a rewriter’s expected output from a file under <code class="language-plaintext highlighter-rouge">scalafix/testOutput/src</code>, read with <code class="language-plaintext highlighter-rouge">scalafix.testkit.ExpectedSources</code>, not from a string in the test source. A string is never compiled, so such a test asserts that the renderer is <em>stable</em> rather than <em>correct</em>: <code class="language-plaintext highlighter-rouge">(using G: Functor)</code> – which names a type that does not exist – sat in <code class="language-plaintext highlighter-rouge">HktRewriterSuite</code>’s expectations until a real codebase hit it, because every executed fixture goes through <code class="language-plaintext highlighter-rouge">testOutput.compile</code> and these did not.</li>
+  <li>Never guard a test with <code class="language-plaintext highlighter-rouge">assume</code> on a path resolved relative to the working directory. The forked test JVM has a different one, so the test skips and reports green forever. Locate build outputs through generated properties and <code class="language-plaintext highlighter-rouge">require</code> that they exist.</li>
+  <li>Run mutation testing with Stryker4s for behavior-heavy logic when the rule implementation matures.</li>
+</ul>
+
+<h2 id="maintenance">Maintenance</h2>
+
+<ul>
+  <li>Keep dependencies current with Scala Steward.</li>
+  <li>Run Scala Steward against the hosted repository slug once a git remote exists.</li>
+  <li>Keep generated IDE/build output out of version control.</li>
+  <li>Keep agent-specific instructions as pointers to these shared docs.</li>
+</ul>
+
+
+      <footer class="site-footer">
+        
+        <span class="site-footer-credits">This page was generated by <a href="https://pages.github.com">GitHub Pages</a>.</span>
+      </footer>
+    </main>
+  </body>
+</html>

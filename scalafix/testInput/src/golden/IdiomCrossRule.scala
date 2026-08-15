@@ -1,5 +1,5 @@
 /*
-rules = [PreferOptionIdioms, PreferEffectIdioms, PreferIndexedMap, PreferContainerTypeclasses]
+rules = [PreferOptionIdioms, PreferEffectIdioms, PreferIndexedMap, PreferPolymorphicCollections]
  */
 package golden
 
@@ -20,7 +20,7 @@ final class IdiomCrossRule[F[_]: Sync] {
   def announce(name: Option[String], log: String => F[Unit]): F[Unit] =
     name.map(log).getOrElse(Sync[F].unit)
 
-  /** `PreferIndexedMap` rewrites the body while `PreferContainerTypeclasses`
+  /** `PreferIndexedMap` rewrites the body while `PreferPolymorphicCollections`
     * rewrites the signature of the same definition.
     */
   private def total(rows: List[Int]): Int =

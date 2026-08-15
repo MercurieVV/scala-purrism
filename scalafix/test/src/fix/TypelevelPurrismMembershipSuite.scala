@@ -15,11 +15,11 @@ final class TypelevelPurrismMembershipSuite extends munit.FunSuite {
 
   test("the umbrella accepts a member rule's configuration") {
     val conf = Conf.Obj(
-      "PreferContainerTypeclasses" -> Conf.Obj(
+      "PreferPolymorphicCollections" -> Conf.Obj(
         "maxConstraints" -> Conf.Num(3),
         "containers" -> Conf.Lst(Conf.Str("Chain"))
       ),
-      "PreferElementTypeclasses" -> Conf.Obj(
+      "PreferPolymorphicCollectionOps" -> Conf.Obj(
         "elements" -> Conf.Lst(Conf.Str("Money"))
       )
     )
@@ -27,24 +27,26 @@ final class TypelevelPurrismMembershipSuite extends munit.FunSuite {
   }
 
   /** The discriminating half: an umbrella that never read
-    * `PreferContainerTypeclasses` would accept a block that cannot decode,
+    * `PreferPolymorphicCollections` would accept a block that cannot decode,
     * because an unread key is not an invalid one.
     */
   test("a member rule's configuration is actually decoded") {
     val conf = Conf.Obj(
-      "PreferContainerTypeclasses" -> Conf.Obj(
+      "PreferPolymorphicCollections" -> Conf.Obj(
         "maxConstraints" -> Conf.Str("not a number")
       )
     )
     assert(
       configure(conf).isNotOk,
-      "the umbrella did not read PreferContainerTypeclasses"
+      "the umbrella did not read PreferPolymorphicCollections"
     )
   }
 
-  test("PreferHKTTypeclasses configuration still reaches it") {
+  test("PreferPolymorphicTypeclasses configuration still reaches it") {
     val conf = Conf.Obj(
-      "PreferHKTTypeclasses" -> Conf.Obj("widenPublic" -> Conf.Bool(true))
+      "PreferPolymorphicTypeclasses" -> Conf.Obj(
+        "widenPublic" -> Conf.Bool(true)
+      )
     )
     assert(configure(conf).isOk)
   }

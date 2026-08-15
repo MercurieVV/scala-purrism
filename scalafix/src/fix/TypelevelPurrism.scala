@@ -7,9 +7,10 @@ import scalafix.v1._
 
 /** The umbrella rule threads its shared config down to the sub-rules that read
   * it. `PreferArrow` honours `PreferArrow.aggressive` and
-  * `PreferHKTTypeclasses` honours `PreferHKTTypeclasses.widenPublic` whether
-  * invoked directly or through this umbrella, so a corpus that opts into either
-  * gets it under `class:fix.TypelevelPurrism` too.
+  * `PreferPolymorphicTypeclasses` honours
+  * `PreferPolymorphicTypeclasses.widenPublic` whether invoked directly or
+  * through this umbrella, so a corpus that opts into either gets it under
+  * `class:fix.TypelevelPurrism` too.
   */
 final class TypelevelPurrism(
     preferArrow: PreferArrowConfig,
@@ -19,8 +20,8 @@ final class TypelevelPurrism(
 ) extends SemanticRule("TypelevelPurrism") {
 
   /** The shape before `PreferTypeParameters` joined: the widening member was
-    * `PreferHKTTypeclasses` alone, configured through [[PreferHKTConfig]].
-    * Retained because this constructor is published.
+    * `PreferPolymorphicTypeclasses` alone, configured through
+    * [[PreferHKTConfig]]. Retained because this constructor is published.
     */
   def this(
       preferArrow: PreferArrowConfig,
@@ -40,10 +41,12 @@ final class TypelevelPurrism(
     config.conf
       .getOrElse("PreferArrow")(PreferArrowConfig.default)
       .product(
-        config.conf.getOrElse("PreferHKTTypeclasses")(PreferHKTConfig.default)
+        config.conf.getOrElse("PreferPolymorphicTypeclasses")(
+          PreferHKTConfig.default
+        )
       )
       // Configured through its own member keys, exactly as when it is listed
-      // by name -- `PreferContainerTypeclasses.crossFile` and the rest reach it
+      // by name -- `PreferPolymorphicCollections.crossFile` and the rest reach it
       // here too.
       .product(PreferTypeParameters.from(config))
       // The classpath carries the SemanticDB payloads `PreferArrow` needs to
@@ -61,12 +64,11 @@ final class TypelevelPurrism(
   override def fix(implicit doc: SemanticDocument): Patch =
     new TypeclassWeakening().fix + new PreferKleisli().fix +
       new PreferArrow(preferArrow, classpath).fix +
-      new PreferCatsFunctions().fix +
       // Held as a field rather than constructed here: it owns the Cats index
       // and, under `crossFile`, a scan of every source in the project, and
       // building that per document would redo both for every file.
       typeParameters.fix +
-      new PreferCatsSyntax().fix + new SimplifyCatsExpressions().fix
+      new PreferCatsExpressions().fix
 }
 
 final class TypeclassWeakening extends SemanticRule("TypeclassWeakening") {

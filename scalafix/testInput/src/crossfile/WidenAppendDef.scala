@@ -1,7 +1,7 @@
 /*
-rules = [PreferContainerTypeclasses]
-PreferContainerTypeclasses.crossFile = true
-PreferContainerTypeclasses.widenPublic = true
+rules = [PreferPolymorphicCollections]
+PreferPolymorphicCollections.crossFile = true
+PreferPolymorphicCollections.widenPublic = true
 
 # The *definition* half of the appended pair. `A` reaches `describe` through
 # evidence alone, so its call sites cannot drop their type arguments and expect

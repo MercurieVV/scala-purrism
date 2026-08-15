@@ -1,7 +1,7 @@
 /*
-rules = [PreferHKTTypeclasses]
+rules = [PreferPolymorphicTypeclasses]
 
-PreferHKTTypeclasses.widenPublic = true
+PreferPolymorphicTypeclasses.widenPublic = true
  */
 package golden
 

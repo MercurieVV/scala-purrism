@@ -1,9 +1,9 @@
 /*
-rules = [PreferHKTTypeclasses]
+rules = [PreferPolymorphicTypeclasses]
 
-# The collections are `PreferContainerTypeclasses`' subject by default; these
+# The collections are `PreferPolymorphicCollections`' subject by default; these
 # fixtures are about the shape, not about who owns `List`.
-PreferHKTTypeclasses.containers = []
+PreferPolymorphicTypeclasses.containers = []
  */
 package golden
 

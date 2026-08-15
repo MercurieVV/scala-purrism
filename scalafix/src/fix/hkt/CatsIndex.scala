@@ -6,7 +6,7 @@ import scalafix.v1.Symbol
 
 /** In-memory, queryable Cats capability index, loaded from the checked-in TSV
   * artifacts under `scalafix/resources/cats-index/` (see
-  * `docs/design/PreferHKTTypeclasses.md`, item 2 and item 7).
+  * `docs/design/PreferPolymorphicTypeclasses.md`, item 2 and item 7).
   */
 final class CatsIndex private (
     val typeclasses: Map[Symbol, CatsTypeclass],

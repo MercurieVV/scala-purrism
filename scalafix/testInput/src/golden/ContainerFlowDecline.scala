@@ -1,5 +1,5 @@
 /*
-rules = [PreferContainerTypeclasses]
+rules = [PreferPolymorphicCollections]
  */
 package golden
 
@@ -19,7 +19,7 @@ final class ContainerFlowDecline {
     rows.map(row => row.trim).mkString("[", ",", "]")
 
   /** The mapped value is handed to something that asked for a `Seq`. */
-  private def wrapped(rows: Seq[String], width: FiniteDuration): Padded = // assert: PreferContainerTypeclasses
+  private def wrapped(rows: Seq[String], width: FiniteDuration): Padded = // assert: PreferPolymorphicCollections
     Padded(rows.map(row => row.take(3)), width)
 }
 

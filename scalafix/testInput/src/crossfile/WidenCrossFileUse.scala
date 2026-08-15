@@ -1,7 +1,7 @@
 /*
-rules = [PreferContainerTypeclasses]
-PreferContainerTypeclasses.crossFile = true
-PreferContainerTypeclasses.widenPublic = true
+rules = [PreferPolymorphicCollections]
+PreferPolymorphicCollections.crossFile = true
+PreferPolymorphicCollections.widenPublic = true
 
 # The *calling* half: the explicit type argument has to go, because `render`
 # grows a second type parameter and inference can recover both from the

@@ -18,7 +18,7 @@ import fix.opaque.SemanticdbIndex
   *
   * Separate from each rule's own configuration case class, and read from the
   * same configuration key, so that adding it does not change the published
-  * shape of `PreferContainerTypeclassesConfig` and friends.
+  * shape of `PreferPolymorphicCollectionsConfig` and friends.
   */
 final case class CrossFileConfig(
     crossFile: Boolean = false,

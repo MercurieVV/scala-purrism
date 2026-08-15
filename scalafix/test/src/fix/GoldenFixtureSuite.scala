@@ -43,12 +43,12 @@ final class GoldenFixtureSuite extends munit.FunSuite {
     assert(services.toSet.contains("fix.PreferCatsFunctions"))
     assert(services.toSet.contains("fix.PreferCatsSyntax"))
     assert(services.toSet.contains("fix.SimplifyCatsExpressions"))
-    assert(services.toSet.contains("fix.PreferHKTTypeclasses"))
+    assert(services.toSet.contains("fix.PreferPolymorphicTypeclasses"))
     assert(services.toSet.contains("fix.PreferEffectIdioms"))
     assert(services.toSet.contains("fix.PreferOptionIdioms"))
     assert(services.toSet.contains("fix.PreferIndexedMap"))
-    assert(services.toSet.contains("fix.PreferContainerTypeclasses"))
-    assert(services.toSet.contains("fix.PreferElementTypeclasses"))
+    assert(services.toSet.contains("fix.PreferPolymorphicCollections"))
+    assert(services.toSet.contains("fix.PreferPolymorphicCollectionOps"))
     assert(services.toSet.contains("fix.SuspendSideEffects"))
   }
 

@@ -1,7 +1,7 @@
 /*
-rules = [PreferContainerTypeclasses]
-PreferContainerTypeclasses.crossFile = true
-PreferContainerTypeclasses.widenPublic = true
+rules = [PreferPolymorphicCollections]
+PreferPolymorphicCollections.crossFile = true
+PreferPolymorphicCollections.widenPublic = true
 
 # The *calling* half that vetoes it: the argument is a conditional, so no
 # container can be read off it, and a call site that cannot be told the new type

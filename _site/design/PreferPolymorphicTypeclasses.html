@@ -1,0 +1,2036 @@
+<!DOCTYPE html>
+<html lang="en-US">
+  <head>
+    <meta charset="UTF-8">
+
+<!-- Begin Jekyll SEO tag v2.9.0 -->
+<title>scala-purrism | Scalafix semantic rules for refactoring Typelevel Scala toward pure, polymorphic Cats style.</title>
+<meta name="generator" content="Jekyll v4.4.1" />
+<meta property="og:title" content="scala-purrism" />
+<meta property="og:locale" content="en_US" />
+<meta name="description" content="Scalafix semantic rules for refactoring Typelevel Scala toward pure, polymorphic Cats style." />
+<meta name="twitter:description" property="og:description" content="Scalafix semantic rules for refactoring Typelevel Scala toward pure, polymorphic Cats style." />
+<link rel="canonical" href="http://localhost:4000/scala-purrism/design/PreferPolymorphicTypeclasses.html" />
+<meta property="og:url" content="http://localhost:4000/scala-purrism/design/PreferPolymorphicTypeclasses.html" />
+<meta property="og:site_name" content="scala-purrism" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:title" content="scala-purrism" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebPage","description":"Scalafix semantic rules for refactoring Typelevel Scala toward pure, polymorphic Cats style.","headline":"scala-purrism","url":"http://localhost:4000/scala-purrism/design/PreferPolymorphicTypeclasses.html"}</script>
+<!-- End Jekyll SEO tag -->
+
+    <link rel="preconnect" href="https://fonts.gstatic.com">
+    <link rel="preload" href="https://fonts.googleapis.com/css?family=Open+Sans:400,700&display=swap" as="style" type="text/css" crossorigin>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#157878">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="stylesheet" href="/scala-purrism/assets/css/style.css?v=">
+    <!-- start custom head snippets, customize with your own _includes/head-custom.html file -->
+
+<!-- Setup Google Analytics -->
+
+
+
+<!-- You can set your favicon here -->
+<!-- link rel="shortcut icon" type="image/x-icon" href="/scala-purrism/favicon.ico" -->
+
+<!-- end custom head snippets -->
+
+  </head>
+  <body>
+    <a id="skip-to-content" href="#content">Skip to the content.</a>
+
+    <header class="page-header" role="banner">
+      <h1 class="project-name">scala-purrism</h1>
+      <h2 class="project-tagline">Scalafix semantic rules for refactoring Typelevel Scala toward pure, polymorphic Cats style.</h2>
+      
+      
+    </header>
+
+    <main id="content" class="main-content" role="main">
+      <h1 id="preferpolymorphictypeclasses--design">PreferPolymorphicTypeclasses — design</h1>
+
+<p>Design of record for <a href="https://github.com/MercurieVV/scala-purrism/issues/33">#33</a>
+(“Prefer HKT typeclasses over concrete containers”), produced by
+<a href="https://github.com/MercurieVV/scala-purrism/issues/36">#36</a>.</p>
+
+<p>Every item below is a <strong>decision</strong>. Downstream subtasks (#37–#44) implement it and
+do not re-open it. If an implementer finds a decision unworkable, the fix is to
+amend this document first and say so on #33 — not to diverge locally.</p>
+
+<p>Repo facts this design is pinned to (verified in-tree, do not re-derive):</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Fact</th>
+      <th>Value</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Build</td>
+      <td>Mill, <code class="language-plaintext highlighter-rouge">build.mill</code></td>
+    </tr>
+    <tr>
+      <td>Scala</td>
+      <td><code class="language-plaintext highlighter-rouge">Versions.scala3 = "3.8.4"</code></td>
+    </tr>
+    <tr>
+      <td>Cats</td>
+      <td><code class="language-plaintext highlighter-rouge">Versions.catsCore = "2.13.0"</code> (<code class="language-plaintext highlighter-rouge">org.typelevel:cats-core_3:2.13.0</code>)</td>
+    </tr>
+    <tr>
+      <td>Cats Effect</td>
+      <td><code class="language-plaintext highlighter-rouge">Versions.catsEffect = "3.7.0"</code></td>
+    </tr>
+    <tr>
+      <td>Scalafix</td>
+      <td><code class="language-plaintext highlighter-rouge">Versions.scalafix = "0.14.7"</code> (artifacts suffixed <code class="language-plaintext highlighter-rouge">_3.8.4</code>, not <code class="language-plaintext highlighter-rouge">_3</code>)</td>
+    </tr>
+    <tr>
+      <td>Rule shells</td>
+      <td><code class="language-plaintext highlighter-rouge">scalafix/src/fix/&lt;Rule&gt;.scala</code></td>
+    </tr>
+    <tr>
+      <td>Rule helpers</td>
+      <td><code class="language-plaintext highlighter-rouge">scalafix/src/fix/&lt;subpackage&gt;/</code> (<code class="language-plaintext highlighter-rouge">arrow/</code>, <code class="language-plaintext highlighter-rouge">opaque/</code>)</td>
+    </tr>
+    <tr>
+      <td>Executed fixtures</td>
+      <td><code class="language-plaintext highlighter-rouge">scalafix/testInput/src/golden/&lt;Name&gt;.scala</code> + <code class="language-plaintext highlighter-rouge">scalafix/testOutput/src/golden/&lt;Name&gt;.scala</code>, <strong>flat names</strong></td>
+    </tr>
+    <tr>
+      <td>Rule registration</td>
+      <td><code class="language-plaintext highlighter-rouge">scalafix/resources/META-INF/services/scalafix.v1.Rule</code></td>
+    </tr>
+    <tr>
+      <td>Compiler flags</td>
+      <td><code class="language-plaintext highlighter-rouge">-Ysemanticdb -Wunused:imports -Werror</code> on the <code class="language-plaintext highlighter-rouge">scalafix</code> module</td>
+    </tr>
+  </tbody>
+</table>
+
+<hr />
+
+<h2 id="1-index-source">1. Index source</h2>
+
+<p><strong>Decision: option (c) — read TASTy from the published <code class="language-plaintext highlighter-rouge">cats-core_3:2.13.0</code> jar with
+<code class="language-plaintext highlighter-rouge">scala3-tasty-inspector</code>.</strong></p>
+
+<p>Rejected:</p>
+
+<ul>
+  <li><strong>(a)/(d) SemanticDB over a Cats checkout</strong> — needs a git clone of <code class="language-plaintext highlighter-rouge">v2.13.0</code>, an sbt
+cross-build with <code class="language-plaintext highlighter-rouge">-Ysemanticdb</code>, and several minutes of compile per regeneration.
+A cheap runner cannot execute that from written instructions alone.</li>
+  <li><strong>(b) Scaladoc/API metadata</strong> — HTML/JSON scraping; no reliable override chains, no
+kind information, no stable symbol strings.</li>
+  <li><strong>Java reflection over the jar</strong> — erased generic signatures. A higher-kinded
+parameter <code class="language-plaintext highlighter-rouge">F[_]</code> is indistinguishable from a proper <code class="language-plaintext highlighter-rouge">F</code>, and the kind shape is the
+single most load-bearing field in this index.</li>
+</ul>
+
+<p>TASTy wins because the jar is <em>already on the build’s classpath</em>, the inspector
+resolves parents, declarations, override chains and type-parameter kinds exactly as
+the compiler saw them, and regeneration is one <code class="language-plaintext highlighter-rouge">mill</code> invocation with no network
+beyond the coursier fetch mill already performs.</p>
+
+<p><strong>Verified, not assumed.</strong> The route was smoke-tested against the real artifact
+before this document was written:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>parents=List(cats.Functor, cats.Invariant, java.io.Serializable, ...)
+decls=List(map, imap, fmap, widen, lift, void, fproduct, fproductLeft)
+typeParams=Some(List(type F))
+apply-parents=List(cats.Apply, cats.ApplyArityFunctions, cats.InvariantSemigroupal,
+                   cats.Semigroupal, cats.Functor, cats.Invariant, ...)
+tastys=949
+</code></pre></div></div>
+
+<p>Two implementation notes that cost time if rediscovered:</p>
+
+<ol>
+  <li><code class="language-plaintext highlighter-rouge">TastyInspector.inspectTastyFilesInJar</code> needs the target’s <strong>own dependencies</strong> on
+the classpath. Reading <code class="language-plaintext highlighter-rouge">cats-core_3:2.13.0</code> fails with
+<code class="language-plaintext highlighter-rouge">undefined: new org.typelevel.scalaccompat.annotation.package.uncheckedVariance2</code>
+unless <code class="language-plaintext highlighter-rouge">org.typelevel::scalac-compat-annotation:0.1.4</code> is also a dependency.</li>
+  <li>The scalafix artifacts use a <strong>full</strong> Scala 3 version suffix (<code class="language-plaintext highlighter-rouge">scalafix-rules_3.8.4</code>),
+the tasty inspector uses the binary suffix (<code class="language-plaintext highlighter-rouge">scala3-tasty-inspector_3</code>).</li>
+  <li>The resolved <code class="language-plaintext highlighter-rouge">cats-core</code> coordinate exposes Cats Kernel as its public transitive
+API. Generation therefore inspects both the resolved <code class="language-plaintext highlighter-rouge">cats-core_3</code> jar and its
+same-version <code class="language-plaintext highlighter-rouge">cats-kernel_3</code> jar; both paths are selected in <code class="language-plaintext highlighter-rouge">build.mill</code> from
+<code class="language-plaintext highlighter-rouge">Versions.catsCore</code>. The generator contains no Cats version literal.</li>
+  <li>Mill 1.1.7 does not allow a command-local <code class="language-plaintext highlighter-rouge">Task.dest</code> value to be passed into
+another <code class="language-plaintext highlighter-rouge">Task.Command</code>. The two wrapper commands therefore launch
+<code class="language-plaintext highlighter-rouge">fix.hkt.gen.CatsIndexGen</code> from the resolved <code class="language-plaintext highlighter-rouge">indexgen.runClasspath</code> in a Java
+subprocess. The ordinary <code class="language-plaintext highlighter-rouge">indexgen.runMain</code> entry point remains runnable.</li>
+  <li>Simulacrum-compatible members such as <code class="language-plaintext highlighter-rouge">cats/Functor.Ops#map().</code> exist in the
+Cats classfiles and in downstream SemanticDB, but their synthetic <code class="language-plaintext highlighter-rouge">Ops</code> trees are
+not present in the inspected TASTy; asking <code class="language-plaintext highlighter-rouge">Symbol.requiredClass</code> for them makes
+the inspector report bad symbolic references. A narrow classfile-reflection pass
+therefore enumerates only those wrapper method names and syntax-module fields.
+Capability identity, hierarchy, kinds, signatures, bodies and override roots remain
+TASTy-derived.</li>
+</ol>
+
+<h3 id="entry-point">Entry point</h3>
+
+<p>A new module in <code class="language-plaintext highlighter-rouge">build.mill</code>, sibling to the existing <code class="language-plaintext highlighter-rouge">scalafix.explorer</code> (which is
+likewise excluded from the published artifact because it drags in tooling deps):</p>
+
+<div class="language-scala highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">object</span> <span class="nc">indexgen</span> <span class="k">extends</span> <span class="nc">ScalaModule</span> <span class="o">{</span>
+  <span class="k">def</span> <span class="nf">scalaVersion</span> <span class="k">=</span> <span class="nv">Versions</span><span class="o">.</span><span class="py">scala3</span>
+  <span class="k">def</span> <span class="nf">moduleDeps</span> <span class="k">=</span> <span class="nc">Seq</span><span class="o">(</span><span class="n">scalafix</span><span class="o">)</span>
+  <span class="k">def</span> <span class="nf">mvnDeps</span> <span class="k">=</span> <span class="nc">Seq</span><span class="o">(</span>
+    <span class="n">mvn</span><span class="s">"org.scala-lang:scala3-tasty-inspector_3:${Versions.scala3}"</span><span class="o">,</span>
+    <span class="n">mvn</span><span class="s">"org.typelevel::scalac-compat-annotation:0.1.4"</span>
+  <span class="o">)</span>
+<span class="o">}</span>
+</code></pre></div></div>
+
+<p>Runnable entry points:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Command</th>
+      <th>Effect</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">rtk mill scalafix.indexgen.runMain fix.hkt.gen.CatsIndexGen</code></td>
+      <td>regenerates the artifacts in place</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">rtk mill scalafix.catsIndex</code></td>
+      <td><code class="language-plaintext highlighter-rouge">Task.Command</code> wrapper that regenerates the four generated artifacts in place and preserves the audited, hand-written <code class="language-plaintext highlighter-rouge">stdlib.tsv</code> — <strong>the documented command</strong></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">rtk mill scalafix.catsIndexCheck</code></td>
+      <td>regenerates into <code class="language-plaintext highlighter-rouge">Task.dest</code> and fails on any byte difference from the four checked-in generator-owned files</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>The Cats coordinate is read from <code class="language-plaintext highlighter-rouge">Versions.catsCore</code>, never from a literal in the
+generator. <code class="language-plaintext highlighter-rouge">catsIndex</code> runs <strong>on demand</strong> (Cats bumps are rare and arrive via
+scala-steward); <code class="language-plaintext highlighter-rouge">catsIndexCheck</code> runs <strong>in CI</strong> and in <code class="language-plaintext highlighter-rouge">prePush</code>, so a hand-edited or
+stale artifact fails loudly. Generator source lives at
+<code class="language-plaintext highlighter-rouge">scalafix/indexgen/src/fix/hkt/gen/CatsIndexGen.scala</code>.</p>
+
+<h3 id="artifacts">Artifacts</h3>
+
+<p>Checked in under <code class="language-plaintext highlighter-rouge">scalafix/resources/cats-index/</code> (a new subdirectory; <code class="language-plaintext highlighter-rouge">scalafix/resources/</code>
+currently holds only <code class="language-plaintext highlighter-rouge">META-INF/</code>), so they are on the published rule’s classpath and
+<code class="language-plaintext highlighter-rouge">CatsIndex.load()</code> reads them as ordinary resources.</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>File</th>
+      <th>Columns</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">typeclasses.tsv</code></td>
+      <td><code class="language-plaintext highlighter-rouge">symbol</code>, <code class="language-plaintext highlighter-rouge">parents</code>, <code class="language-plaintext highlighter-rouge">kind</code>, <code class="language-plaintext highlighter-rouge">typeParams</code>, <code class="language-plaintext highlighter-rouge">depth</code>, <code class="language-plaintext highlighter-rouge">renderName</code>, <code class="language-plaintext highlighter-rouge">importPath</code>, <code class="language-plaintext highlighter-rouge">public</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">capabilities.tsv</code></td>
+      <td><code class="language-plaintext highlighter-rouge">typeclass</code>, <code class="language-plaintext highlighter-rouge">method</code>, <code class="language-plaintext highlighter-rouge">owner</code>, <code class="language-plaintext highlighter-rouge">kind</code>, <code class="language-plaintext highlighter-rouge">derived</code>, <code class="language-plaintext highlighter-rouge">arity</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">syntax.tsv</code></td>
+      <td><code class="language-plaintext highlighter-rouge">syntaxMethod</code>, <code class="language-plaintext highlighter-rouge">owner</code>, <code class="language-plaintext highlighter-rouge">method</code>, <code class="language-plaintext highlighter-rouge">importPath</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">stdlib.tsv</code></td>
+      <td><code class="language-plaintext highlighter-rouge">concreteMethod</code>, <code class="language-plaintext highlighter-rouge">kind</code>, <code class="language-plaintext highlighter-rouge">owner</code>, <code class="language-plaintext highlighter-rouge">method</code>, <code class="language-plaintext highlighter-rouge">note</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">gaps.tsv</code></td>
+      <td><code class="language-plaintext highlighter-rouge">typeclass</code>, <code class="language-plaintext highlighter-rouge">reason</code>, <code class="language-plaintext highlighter-rouge">tracked</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Snapshot for Cats 2.13.0 on Scala 3.8.4 (data rows exclude headers):</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>File</th>
+      <th style="text-align: right">Data rows</th>
+      <th style="text-align: right">Bytes</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">typeclasses.tsv</code></td>
+      <td style="text-align: right">59</td>
+      <td style="text-align: right">5,337</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">capabilities.tsv</code></td>
+      <td style="text-align: right">1,471</td>
+      <td style="text-align: right">130,439</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">syntax.tsv</code></td>
+      <td style="text-align: right">354</td>
+      <td style="text-align: right">42,998</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">stdlib.tsv</code></td>
+      <td style="text-align: right">74</td>
+      <td style="text-align: right">7,863</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">gaps.tsv</code></td>
+      <td style="text-align: right">20</td>
+      <td style="text-align: right">2,499</td>
+    </tr>
+    <tr>
+      <td><strong>Total</strong></td>
+      <td style="text-align: right"><strong>1,978</strong></td>
+      <td style="text-align: right"><strong>189,136</strong></td>
+    </tr>
+  </tbody>
+</table>
+
+<p>TSV, not JSON: the rows are flat and uniform, a TSV diff is reviewable line-by-line in
+a PR, and parsing needs no dependency. <code class="language-plaintext highlighter-rouge">symbol</code>/<code class="language-plaintext highlighter-rouge">method</code>/<code class="language-plaintext highlighter-rouge">owner</code> are <strong>SemanticDB symbol
+strings</strong> (<code class="language-plaintext highlighter-rouge">cats/Functor#</code>, <code class="language-plaintext highlighter-rouge">cats/Functor#map().</code>) so they compare directly against
+<code class="language-plaintext highlighter-rouge">scalafix.v1.Symbol</code> values obtained from a <code class="language-plaintext highlighter-rouge">SemanticDocument</code>. Multi-valued cells
+(<code class="language-plaintext highlighter-rouge">parents</code>) are <code class="language-plaintext highlighter-rouge">,</code>-separated, themselves sorted by the same rule.</p>
+
+<p><code class="language-plaintext highlighter-rouge">stdlib.tsv</code> is hand-written and reviewed because it records policy rather than facts
+that can be derived from Cats TASTy. It maps concrete stdlib/Cats-data methods
+(<code class="language-plaintext highlighter-rouge">scala/collection/immutable/List#map().</code>) either to the Cats capability they demand
+or to a decline. Its second header line is exactly
+<code class="language-plaintext highlighter-rouge"># hand-written; audited by CatsIndexDriftSuite</code>; regeneration leaves the file
+untouched, while the drift suite checks capability targets, decline names, duplicate
+keys, stable sorting, and canonical bytes. The concrete symbols in the checked-in
+snapshot were taken from SemanticDB emitted by Scala 3.8.4 for calls on <code class="language-plaintext highlighter-rouge">List</code>,
+<code class="language-plaintext highlighter-rouge">Option</code>, <code class="language-plaintext highlighter-rouge">Vector</code>, <code class="language-plaintext highlighter-rouge">Map</code>, and <code class="language-plaintext highlighter-rouge">Try</code>.</p>
+
+<p>For <code class="language-plaintext highlighter-rouge">kind = capability</code>, <code class="language-plaintext highlighter-rouge">owner</code> and <code class="language-plaintext highlighter-rouge">method</code> are the <code class="language-plaintext highlighter-rouge">(owner, method)</code> pair of
+an existing <code class="language-plaintext highlighter-rouge">capabilities.tsv</code> row. For <code class="language-plaintext highlighter-rouge">kind = decline</code>, <code class="language-plaintext highlighter-rouge">owner</code> is empty and
+<code class="language-plaintext highlighter-rouge">method</code> is one of <code class="language-plaintext highlighter-rouge">ConcreteConstructorMatch</code>, <code class="language-plaintext highlighter-rouge">OrderOrIndexSpecific</code>, or
+<code class="language-plaintext highlighter-rouge">UnsafeBody</code>. Two rows with the same <code class="language-plaintext highlighter-rouge">concreteMethod</code> are allowed only when both
+are capabilities; this is how <code class="language-plaintext highlighter-rouge">IterableOnceOps#reduce()</code> records the unrelated
+<code class="language-plaintext highlighter-rouge">Reducible.reduceLeft</code> and <code class="language-plaintext highlighter-rouge">kernel.Semigroup.combine</code> candidates. Policy-defined
+<code class="language-plaintext highlighter-rouge">gaps.tsv</code> rows remain generator-owned.</p>
+
+<p>Concrete symbols are the declarations recorded at real call sites, not synthesized from
+the receiver type. For example, <code class="language-plaintext highlighter-rouge">List#reduce</code> resolves to
+<code class="language-plaintext highlighter-rouge">scala/collection/IterableOnceOps#reduce().</code>, while <code class="language-plaintext highlighter-rouge">foldMap</code>, <code class="language-plaintext highlighter-rouge">traverse</code>, <code class="language-plaintext highlighter-rouge">mapFilter</code>,
+<code class="language-plaintext highlighter-rouge">NonEmptyList#reduceLeftTo</code>, <code class="language-plaintext highlighter-rouge">Eval#coflatMap</code>, and <code class="language-plaintext highlighter-rouge">Comonad#extract</code> resolve to Cats ops
+symbols already covered by <code class="language-plaintext highlighter-rouge">syntax.tsv</code>; <code class="language-plaintext highlighter-rouge">stdlib.tsv</code> does not duplicate those syntax
+mappings.</p>
+
+<h3 id="stable-sort--exact-specification">Stable sort — exact specification</h3>
+
+<p>Every generator-owned file is written as:</p>
+
+<ol>
+  <li>one header line, <code class="language-plaintext highlighter-rouge">#</code> followed by the column names, tab-separated;</li>
+  <li>one deterministic <code class="language-plaintext highlighter-rouge"># generated by CatsIndexGen</code> source line stating that the file
+must not be edited by hand, the <code class="language-plaintext highlighter-rouge">org.typelevel::cats-core</code> and Scala versions passed
+from <code class="language-plaintext highlighter-rouge">Versions.catsCore</code> / <code class="language-plaintext highlighter-rouge">Versions.scala3</code>, and the TASTy extraction route;</li>
+  <li>data rows sorted <strong>ascending</strong> by column 1, ties broken by column 2, then column 3,
+… through the last column;</li>
+  <li>comparison is <code class="language-plaintext highlighter-rouge">java.lang.String.compareTo</code> on the raw cell text — UTF-16 code-unit
+order, locale-independent (all symbols are ASCII, so this equals byte order);</li>
+  <li><code class="language-plaintext highlighter-rouge">\n</code> line endings, one trailing <code class="language-plaintext highlighter-rouge">\n</code>, no <code class="language-plaintext highlighter-rouge">\r</code>, no blank lines, no trailing
+whitespace, UTF-8 (<code class="language-plaintext highlighter-rouge">StandardCharsets.UTF_8</code>) with no BOM;</li>
+  <li>no timestamps, no absolute paths, no jar hashes anywhere in the file.</li>
+</ol>
+
+<p><code class="language-plaintext highlighter-rouge">stdlib.tsv</code> uses the same row sort, comparison, encoding, newline, and trailing
+newline rules. It differs only in being hand-written and using the audit header
+described above instead of the generated-source header.</p>
+
+<p>Consumers skip all leading <code class="language-plaintext highlighter-rouge">#</code> lines and parse the remaining lines as data rows; this
+keeps the exact per-file schema header stable while making provenance part of every
+checked-in artifact.</p>
+
+<p>Because the full column tuple is unique per row, the order is total and regeneration
+against an unchanged Cats produces a zero-byte diff. Overload disambiguators
+(<code class="language-plaintext highlighter-rouge">cats/Foldable#foldM().</code>, <code class="language-plaintext highlighter-rouge">cats/Foldable#foldM(+1).</code>) follow the SemanticDB
+convention and are assigned in <strong>declaration order</strong> as returned by
+<code class="language-plaintext highlighter-rouge">Symbol.declarations</code>, which TASTy preserves.</p>
+
+<h3 id="fallback">Fallback</h3>
+
+<p>If TASTy inspection stalls in #37 (e.g. an inspector regression on 3.8.4), fall back to
+the bootstrap route #33 allows: hand-write <code class="language-plaintext highlighter-rouge">typeclasses.tsv</code> and <code class="language-plaintext highlighter-rouge">capabilities.tsv</code> for
+the typeclasses named in the #33 capability list, mark the header
+<code class="language-plaintext highlighter-rouge"># source: bootstrap (hand-written)</code>, and rely on item 8’s audit to make every
+unlisted typeclass a test failure. Do <strong>not</strong> silently narrow scope. The smoke test
+above means this is unlikely; it is recorded so the fallback is a decision, not an
+improvisation.</p>
+
+<hr />
+
+<h2 id="2-capability-ir-shape">2. Capability IR shape</h2>
+
+<p><strong>Decision: <code class="language-plaintext highlighter-rouge">capability = (typeclass, method, owner, kind, derived, arity)</code>, with
+inheritance flattened at index time and the <code class="language-plaintext highlighter-rouge">owner</code> column carrying the override-chain
+root.</strong></p>
+
+<p>A <em>capability</em> is the atom the analyzer produces and the solver consumes. Its identity
+is <code class="language-plaintext highlighter-rouge">owner</code> — the <strong>root of the method’s override chain</strong> —
+<code class="language-plaintext highlighter-rouge">Symbol.allOverriddenSymbols.lastOption.getOrElse(self)</code> in the generator.</p>
+
+<p>This matters more than it sounds. A naive “the method is named <code class="language-plaintext highlighter-rouge">map</code>” keying is wrong
+in both directions, as the real index shows:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>method map      -&gt; declared in: Functor, Applicative, Monad, Traverse
+method flatMap  -&gt; declared in: FlatMap, Parallel
+</code></pre></div></div>
+
+<p><code class="language-plaintext highlighter-rouge">Applicative.map</code>, <code class="language-plaintext highlighter-rouge">Monad.map</code> and <code class="language-plaintext highlighter-rouge">Traverse.map</code> are <em>overrides</em> of <code class="language-plaintext highlighter-rouge">Functor.map</code> —
+same capability, so they collapse onto <code class="language-plaintext highlighter-rouge">owner = cats/Functor#map().</code>.</p>
+
+<p>One Cats 2.13.0 TASTy detail required a narrow refinement to the planned rule.
+<code class="language-plaintext highlighter-rouge">Parallel.flatMap</code> is a concrete, zero-argument evidence accessor returning
+<code class="language-plaintext highlighter-rouge">FlatMap[M]</code>; TASTy reports that it overrides the abstract
+<code class="language-plaintext highlighter-rouge">NonEmptyParallel.flatMap</code> accessor. Treating those accessors as one operation would
+lose the design’s required distinction from the ordinary <code class="language-plaintext highlighter-rouge">FlatMap.flatMap</code>
+capability. The implemented structural rule therefore roots a concrete zero-argument
+accessor that returns an indexed typeclass at itself; every other method uses
+<code class="language-plaintext highlighter-rouge">allOverriddenSymbols.lastOption.getOrElse(self)</code>. Thus
+<code class="language-plaintext highlighter-rouge">Parallel.flatMap</code> has <code class="language-plaintext highlighter-rouge">owner = cats/Parallel#flatMap().</code> without keying on its
+method name.</p>
+
+<p><strong>Syntax extension methods</strong> get their own table, <code class="language-plaintext highlighter-rouge">syntax.tsv</code>. The generator walks
+every <code class="language-plaintext highlighter-rouge">cats.syntax.*</code> ops class, and for each public method whose enclosing ops class
+or method takes an implicit/<code class="language-plaintext highlighter-rouge">using</code> parameter of some <code class="language-plaintext highlighter-rouge">TC[F]</code>, emits
+<code class="language-plaintext highlighter-rouge">syntaxMethod -&gt; (owner, method)</code> where <code class="language-plaintext highlighter-rouge">(owner, method)</code> is the capability rooted as
+above, plus the <code class="language-plaintext highlighter-rouge">importPath</code> needed to make the syntax available in emitted code
+(<code class="language-plaintext highlighter-rouge">cats.syntax.functor.*</code>). The analyzer resolves a call site to a symbol and looks it
+up in <code class="language-plaintext highlighter-rouge">syntax.tsv</code> first, then <code class="language-plaintext highlighter-rouge">capabilities.tsv</code>, then <code class="language-plaintext highlighter-rouge">stdlib.tsv</code>. A stdlib match
+returns every stably ordered <code class="language-plaintext highlighter-rouge">StdlibEntry</code> for that concrete symbol: capability
+entries participate in capability selection, while a decline entry produces its
+reviewed <code class="language-plaintext highlighter-rouge">DeclineReason</code>. Multiple unrelated capability entries produce
+<code class="language-plaintext highlighter-rouge">AmbiguousCapability</code>. A call site whose symbol is in none of the three is a decline
+(<code class="language-plaintext highlighter-rouge">NoCapability</code>), never a silent skip.</p>
+
+<p><strong>Inherited methods are flattened at index time.</strong> <code class="language-plaintext highlighter-rouge">capabilities.tsv</code> carries one row
+per <code class="language-plaintext highlighter-rouge">(typeclass, method)</code> pair for <em>every</em> method a typeclass provides, own or
+inherited, with <code class="language-plaintext highlighter-rouge">owner</code> naming the declaring root.</p>
+
+<p>Cost consequence, measured rather than estimated: the row count is
+<code class="language-plaintext highlighter-rouge">Σ_tc |methods(tc)|</code> rather than <code class="language-plaintext highlighter-rouge">Σ_tc |ownMethods(tc)|</code>, but the real Cats 2.13.0
+inventory is 1,471 capability rows (130,314 bytes), not the previously projected low
+tens of thousands. The representation is still deliberately flattened. It buys a
+solver that is a set-membership test over a <code class="language-plaintext highlighter-rouge">Map[Symbol, List[Capability]]</code> with no
+hierarchy walk per query, and a <code class="language-plaintext highlighter-rouge">provides(tc)</code> answer that is a single lookup.
+<code class="language-plaintext highlighter-rouge">typeclasses.tsv</code> keeps <em>direct</em> parents so the lattice remains reconstructible for
+ranking.</p>
+
+<hr />
+
+<h2 id="3-law-defined--derived-methods">3. Law-defined / derived methods</h2>
+
+<p><strong>Decision: derived methods are index entries, flagged <code class="language-plaintext highlighter-rouge">derived = true</code>. A derived entry
+may satisfy a capability check but may never be the sole justification for a rewrite.</strong></p>
+
+<p>“Derived” means: the method’s meaning comes from the typeclass’s laws or a default
+implementation in terms of other members, rather than from being the primitive the
+typeclass exists to name. <code class="language-plaintext highlighter-rouge">Applicative.map</code> (law-derivable from <code class="language-plaintext highlighter-rouge">ap</code> and <code class="language-plaintext highlighter-rouge">pure</code>) and
+<code class="language-plaintext highlighter-rouge">Traverse.sequence</code> (<code class="language-plaintext highlighter-rouge">traverse(identity)</code>) are the canonical cases. The generator sets
+<code class="language-plaintext highlighter-rouge">derived = true</code> when <code class="language-plaintext highlighter-rouge">owner != typeclass</code> <strong>or</strong> the declaration is concrete (has a
+body) rather than abstract.</p>
+
+<p>The rule this produces is precise:</p>
+
+<ul>
+  <li><strong>Satisfaction</strong> — “does typeclass <code class="language-plaintext highlighter-rouge">T</code> provide capability <code class="language-plaintext highlighter-rouge">c</code>?” — consults all rows,
+derived included. <code class="language-plaintext highlighter-rouge">Monad</code> does provide <code class="language-plaintext highlighter-rouge">map</code>.</li>
+  <li><strong>Justification</strong> — “which typeclass does this call site <em>require</em>?” — resolves to
+<code class="language-plaintext highlighter-rouge">owner</code> only, i.e. the primitive root. A <code class="language-plaintext highlighter-rouge">map</code> call justifies <code class="language-plaintext highlighter-rouge">cats/Functor#</code>, never
+<code class="language-plaintext highlighter-rouge">cats/Applicative#</code>, even though <code class="language-plaintext highlighter-rouge">Applicative</code> also declares <code class="language-plaintext highlighter-rouge">map</code>.</li>
+</ul>
+
+<p>Consequence: a derived row can never be the minimal answer, because its <code class="language-plaintext highlighter-rouge">owner</code> is
+always at least as shallow and is what the analyzer emits. So the answer to “may a
+derived entry be the sole justification for a rewrite?” is <strong>no</strong>, structurally, not by
+a check that could be forgotten.</p>
+
+<p>If a capability’s override-chain root is itself derived everywhere it appears — no
+primitive owner exists — the analyzer declines with <code class="language-plaintext highlighter-rouge">NoCapability</code> and the typeclass is
+a <code class="language-plaintext highlighter-rouge">gaps.tsv</code> candidate. That is a real, if rare, outcome, and it is reported rather
+than guessed.</p>
+
+<hr />
+
+<h2 id="4-visibility-threshold-for-widening">4. Visibility threshold for widening</h2>
+
+<p><strong>Decision: private and package-private only. Public defs decline with exactly one
+warning. A <code class="language-plaintext highlighter-rouge">widenPublic</code> config flag (default <code class="language-plaintext highlighter-rouge">false</code>) opts in.</strong></p>
+
+<p>Widening a public signature from <code class="language-plaintext highlighter-rouge">List[User]</code> to <code class="language-plaintext highlighter-rouge">G[User]</code> is a source-and-binary
+breaking change for every downstream caller. The rule cannot see those callers, so it
+cannot prove the change safe, and #33 already asks it to “preserve concrete types at
+application/public API boundaries unless the rule can prove widening is intended and
+safe”. It never can. <code class="language-plaintext highlighter-rouge">private[pkg]</code> is the widest scope where the compilation unit’s
+own module bounds the blast radius.</p>
+
+<p><strong>The decline rule, precisely</strong> (this is what <code class="language-plaintext highlighter-rouge">AbstractPublicBoundaryDecline</code> asserts):</p>
+
+<p>A candidate <code class="language-plaintext highlighter-rouge">Defn.Def</code> is <em>widenable</em> iff <code class="language-plaintext highlighter-rouge">config.widenPublic</code> is <code class="language-plaintext highlighter-rouge">true</code>, <strong>or</strong> at
+least one of the following holds:</p>
+
+<ol>
+  <li>the def carries <code class="language-plaintext highlighter-rouge">Mod.Private</code> or <code class="language-plaintext highlighter-rouge">Mod.Protected</code> with <strong>any</strong> <code class="language-plaintext highlighter-rouge">within</code> (i.e.
+<code class="language-plaintext highlighter-rouge">private</code>, <code class="language-plaintext highlighter-rouge">private[x]</code>, <code class="language-plaintext highlighter-rouge">protected[x]</code>, <code class="language-plaintext highlighter-rouge">private[this]</code>);</li>
+  <li>the def is a local definition — its nearest enclosing <code class="language-plaintext highlighter-rouge">Defn.Def</code>, <code class="language-plaintext highlighter-rouge">Term.Block</code>,
+<code class="language-plaintext highlighter-rouge">Term.Function</code>, or <code class="language-plaintext highlighter-rouge">Term.Anonymous</code> exists (a def inside a def is never part of an
+API);</li>
+  <li>every enclosing template-owner in the chain from the def to the compilation unit
+root (<code class="language-plaintext highlighter-rouge">Defn.Class</code>, <code class="language-plaintext highlighter-rouge">Defn.Trait</code>, <code class="language-plaintext highlighter-rouge">Defn.Object</code>) carries <code class="language-plaintext highlighter-rouge">Mod.Private</code> or
+<code class="language-plaintext highlighter-rouge">Mod.Protected</code>.</li>
+</ol>
+
+<p><code class="language-plaintext highlighter-rouge">protected</code> <strong>without</strong> a <code class="language-plaintext highlighter-rouge">within</code> is <em>not</em> widenable: it is visible to unknown
+subclasses outside the module.</p>
+
+<p>A def that is not widenable, but that the analyzer would otherwise have rewritten
+(i.e. every other check passed and the solver returned a <code class="language-plaintext highlighter-rouge">Solution</code>), produces
+<strong>no patch and exactly one</strong> <code class="language-plaintext highlighter-rouge">LintSeverity.Warning</code> at the def’s name position, with
+reason <code class="language-plaintext highlighter-rouge">DeclineReason.PublicBoundary(name)</code>. A def that is not widenable <em>and</em> would
+have been declined for another reason produces the other reason’s warning only — the
+visibility gate is evaluated last, so warnings never double up.</p>
+
+<p>Severity is <code class="language-plaintext highlighter-rouge">Warning</code>, not <code class="language-plaintext highlighter-rouge">Error</code>, for the same reason <code class="language-plaintext highlighter-rouge">ArrowBudgetDiagnostic</code> is:
+scalafix withholds every patch in a file that reports a lint error, which would
+silently disable the rule’s other rewrites in that file.</p>
+
+<hr />
+
+<h2 id="5-ranking-rule">5. Ranking rule</h2>
+
+<p><strong>Decision: candidate sets are ordered ascending by the triple
+<code class="language-plaintext highlighter-rouge">(constraintCount, strengthSum, symbolsLexicographic)</code>. The order is total; ties are
+impossible.</strong></p>
+
+<h3 id="definitions">Definitions</h3>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">depth(tc)</code> = the number of <em>indexed Cats typeclasses</em> that are strict ancestors of
+<code class="language-plaintext highlighter-rouge">tc</code>. Computed from <code class="language-plaintext highlighter-rouge">baseClasses</code> at index time and stored in <code class="language-plaintext highlighter-rouge">typeclasses.tsv</code>.
+Because <code class="language-plaintext highlighter-rouge">ancestors(B) ⊋ ancestors(A)</code> whenever <code class="language-plaintext highlighter-rouge">A</code> is a strict ancestor of <code class="language-plaintext highlighter-rouge">B</code>, the
+measure is strictly monotone along the lattice by construction — no tie-breaking
+needed inside it.</li>
+  <li><code class="language-plaintext highlighter-rouge">strengthSum(S)</code> = <code class="language-plaintext highlighter-rouge">Σ depth(tc)</code> over the constraint set <code class="language-plaintext highlighter-rouge">S</code>.</li>
+  <li><code class="language-plaintext highlighter-rouge">symbolsLexicographic(S)</code> = element-wise <code class="language-plaintext highlighter-rouge">String.compareTo</code> over <code class="language-plaintext highlighter-rouge">S</code>’s symbols sorted
+ascending; a proper prefix sorts first.</li>
+</ul>
+
+<p>Real depths, computed from <code class="language-plaintext highlighter-rouge">cats-core_3:2.13.0</code>:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>tc</th>
+      <th>depth</th>
+      <th>tc</th>
+      <th>depth</th>
+      <th>tc</th>
+      <th>depth</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">Invariant</code></td>
+      <td>0</td>
+      <td><code class="language-plaintext highlighter-rouge">Functor</code></td>
+      <td>1</td>
+      <td><code class="language-plaintext highlighter-rouge">Apply</code></td>
+      <td>4</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">Semigroupal</code></td>
+      <td>0</td>
+      <td><code class="language-plaintext highlighter-rouge">Contravariant</code></td>
+      <td>1</td>
+      <td><code class="language-plaintext highlighter-rouge">FlatMap</code></td>
+      <td>5</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">SemigroupK</code></td>
+      <td>0</td>
+      <td><code class="language-plaintext highlighter-rouge">MonoidK</code></td>
+      <td>1</td>
+      <td><code class="language-plaintext highlighter-rouge">Applicative</code></td>
+      <td>6</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">Defer</code></td>
+      <td>0</td>
+      <td><code class="language-plaintext highlighter-rouge">Foldable</code></td>
+      <td>1</td>
+      <td><code class="language-plaintext highlighter-rouge">ApplicativeError</code></td>
+      <td>7</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">FunctorFilter</code></td>
+      <td>0</td>
+      <td><code class="language-plaintext highlighter-rouge">TraverseFilter</code></td>
+      <td>1</td>
+      <td><code class="language-plaintext highlighter-rouge">Monad</code></td>
+      <td>8</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">Bifunctor</code></td>
+      <td>0</td>
+      <td><code class="language-plaintext highlighter-rouge">Reducible</code></td>
+      <td>2</td>
+      <td><code class="language-plaintext highlighter-rouge">NonEmptyTraverse</code></td>
+      <td>7</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">Bifoldable</code></td>
+      <td>0</td>
+      <td><code class="language-plaintext highlighter-rouge">CoflatMap</code></td>
+      <td>2</td>
+      <td><code class="language-plaintext highlighter-rouge">Alternative</code></td>
+      <td>10</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">UnorderedFoldable</code></td>
+      <td>0</td>
+      <td><code class="language-plaintext highlighter-rouge">Comonad</code></td>
+      <td>3</td>
+      <td><code class="language-plaintext highlighter-rouge">MonadError</code></td>
+      <td>10</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">Parallel</code></td>
+      <td>1</td>
+      <td><code class="language-plaintext highlighter-rouge">Traverse</code></td>
+      <td>5</td>
+      <td><code class="language-plaintext highlighter-rouge">Bitraverse</code></td>
+      <td>2</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="candidate-enumeration-kept-finite">Candidate enumeration (kept finite)</h3>
+
+<p>Given required capability owners <code class="language-plaintext highlighter-rouge">R</code>:</p>
+
+<ol>
+  <li><strong>Single-constraint candidates:</strong> every indexed typeclass <code class="language-plaintext highlighter-rouge">T</code> with a matching kind
+whose flattened capability set contains all of <code class="language-plaintext highlighter-rouge">R</code>. Each is a candidate <code class="language-plaintext highlighter-rouge">[T]</code>.</li>
+  <li><strong>Multi-constraint candidate:</strong> the antichain reduction of <code class="language-plaintext highlighter-rouge">R</code> — take the distinct
+owners of <code class="language-plaintext highlighter-rouge">R</code>, then drop any that is a strict ancestor of another in the set (the
+descendant already provides it). This yields exactly one candidate set.</li>
+</ol>
+
+<p>If the antichain has more than <code class="language-plaintext highlighter-rouge">config.maxConstraints</code> (default <code class="language-plaintext highlighter-rouge">2</code>) members and step 1
+produced nothing, the solver declines with
+<code class="language-plaintext highlighter-rouge">DeclineReason.TooManyConstraints(candidate, max)</code>.</p>
+
+<h3 id="why-count-first">Why count first</h3>
+
+<p>Cats’ typeclasses <em>are</em> the named joins of their capabilities; <code class="language-plaintext highlighter-rouge">Monad</code> exists precisely
+so that “flatMap and pure” has one name. Ranking by strength alone would answer
+<code class="language-plaintext highlighter-rouge">FlatMap</code> + <code class="language-plaintext highlighter-rouge">Applicative</code> for a monadic body and <code class="language-plaintext highlighter-rouge">Functor</code> + <code class="language-plaintext highlighter-rouge">Semigroupal</code> for a body
+that maps and products — technically weaker sets, but they push a laws-and-coherence
+distinction into every signature the rule touches, and #33’s own worked outcomes
+(<code class="language-plaintext highlighter-rouge">AbstractMonadFlatMapPure</code>, <code class="language-plaintext highlighter-rouge">AbstractAlternativeEmptyAndChoice</code>) name the joined
+typeclass. Count-first also directly serves #33’s “smallest signature change” and
+“readable output” criteria. Strength still decides everything <em>within</em> a given
+constraint count, so the rule never picks <code class="language-plaintext highlighter-rouge">Monad</code> where <code class="language-plaintext highlighter-rouge">Functor</code> would do.</p>
+
+<h3 id="worked-examples">Worked examples</h3>
+
+<p><strong>A — one stronger vs two weaker (<code class="language-plaintext highlighter-rouge">AbstractMonadFlatMapPure</code>).</strong>
+Body uses <code class="language-plaintext highlighter-rouge">flatMap</code> and <code class="language-plaintext highlighter-rouge">pure</code>. Owners: <code class="language-plaintext highlighter-rouge">{cats/FlatMap#flatMap(). (depth 5),
+cats/Applicative#pure(). (depth 6)}</code>.</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>candidate</th>
+      <th>count</th>
+      <th>strengthSum</th>
+      <th>note</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">[Monad]</code></td>
+      <td>1</td>
+      <td>8</td>
+      <td>provides both</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">[MonadError]</code></td>
+      <td>1</td>
+      <td>10</td>
+      <td>provides both</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">[Alternative]</code></td>
+      <td>1</td>
+      <td>10</td>
+      <td>provides both</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">[FlatMap, Applicative]</code></td>
+      <td>2</td>
+      <td>11</td>
+      <td>antichain of owners</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Key 1 eliminates the antichain. Key 2 picks <code class="language-plaintext highlighter-rouge">Monad</code> (8 &lt; 10). <strong>Winner: <code class="language-plaintext highlighter-rouge">cats/Monad#</code>.</strong></p>
+
+<p><strong>B — no single typeclass covers the set (<code class="language-plaintext highlighter-rouge">AbstractFunctorFilter</code>).</strong>
+Body uses <code class="language-plaintext highlighter-rouge">mapFilter</code> and <code class="language-plaintext highlighter-rouge">map</code>. Owners: <code class="language-plaintext highlighter-rouge">{cats/FunctorFilter#mapFilter(). (0),
+cats/Functor#map(). (1)}</code>. <code class="language-plaintext highlighter-rouge">FunctorFilter</code> does not extend <code class="language-plaintext highlighter-rouge">Functor</code> in Cats — it holds
+one as a member — so step 1 yields <strong>no</strong> single-constraint candidate. The antichain
+<code class="language-plaintext highlighter-rouge">[Functor, FunctorFilter]</code> (count 2, sum 1) is the only candidate.
+<strong>Winner: <code class="language-plaintext highlighter-rouge">[cats/Functor#, cats/FunctorFilter#]</code></strong>, rendered
+<code class="language-plaintext highlighter-rouge">[G[_]: Functor: FunctorFilter]</code> in symbol order.</p>
+
+<p><strong>C — key 3 exercised.</strong> Two distinct sets with equal count and equal strength sum, e.g.
+<code class="language-plaintext highlighter-rouge">[Contravariant (1), FunctorFilter (0)]</code> and <code class="language-plaintext highlighter-rouge">[Functor (1), FunctorFilter (0)]</code> — both
+count 2, sum 1. Key 3 compares <code class="language-plaintext highlighter-rouge">cats/Contravariant#</code> against <code class="language-plaintext highlighter-rouge">cats/Functor#</code>;
+<code class="language-plaintext highlighter-rouge">C</code> &lt; <code class="language-plaintext highlighter-rouge">F</code>, so the first wins. Key 3 exists so that the order is total by construction:
+two distinct symbol sets always differ lexicographically, so <code class="language-plaintext highlighter-rouge">rank</code> never returns a tie
+and <code class="language-plaintext highlighter-rouge">solve</code> never has to report ranking ambiguity. (<code class="language-plaintext highlighter-rouge">AbstractAmbiguousWeakestCapability</code>
+therefore asserts <em>capability-resolution</em> ambiguity, not ranking ambiguity — see item 9.)</p>
+
+<h3 id="existing-constraint-reuse">Existing-constraint reuse</h3>
+
+<p>Reuse is <strong>not</strong> a ranking key. It is applied earlier: if the enclosing scope already
+declares a type parameter of matching kind whose constraints are a superset of a
+candidate solution’s, <code class="language-plaintext highlighter-rouge">HktRewriter</code> reuses that parameter and emits no new constraint at
+all (<code class="language-plaintext highlighter-rouge">AbstractExistingConstraintReuse</code>). Making reuse a ranking key would let it change
+<em>which</em> typeclass is chosen; making it a rewriting decision only lets it change <em>how</em>
+the chosen answer is spelled.</p>
+
+<hr />
+
+<h2 id="6-kind-shapes-supported-in-v1">6. Kind shapes supported in v1</h2>
+
+<p><strong>Decision: <code class="language-plaintext highlighter-rouge">Star</code> and <code class="language-plaintext highlighter-rouge">Unary</code> are in. <code class="language-plaintext highlighter-rouge">Binary</code> is indexed but not solved. Type lambdas
+are out.</strong></p>
+
+<table>
+  <thead>
+    <tr>
+      <th>shape</th>
+      <th>v1</th>
+      <th>meaning</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">KindShape.Star</code></td>
+      <td><strong>in</strong></td>
+      <td>value-level abstraction: <code class="language-plaintext highlighter-rouge">A</code> with <code class="language-plaintext highlighter-rouge">Monoid[A]</code>, <code class="language-plaintext highlighter-rouge">Semigroup[A]</code>, <code class="language-plaintext highlighter-rouge">Order[A]</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">KindShape.Unary</code></td>
+      <td><strong>in</strong></td>
+      <td><code class="language-plaintext highlighter-rouge">F[_]</code> — <code class="language-plaintext highlighter-rouge">Functor</code>, <code class="language-plaintext highlighter-rouge">Monad</code>, <code class="language-plaintext highlighter-rouge">Traverse</code>, …</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">KindShape.Binary</code></td>
+      <td><strong>indexed, declined</strong></td>
+      <td><code class="language-plaintext highlighter-rouge">F[_, _]</code> — <code class="language-plaintext highlighter-rouge">Bifunctor</code>, <code class="language-plaintext highlighter-rouge">Bifoldable</code>, <code class="language-plaintext highlighter-rouge">Bitraverse</code></td>
+    </tr>
+    <tr>
+      <td>type lambda</td>
+      <td><strong>out</strong></td>
+      <td><code class="language-plaintext highlighter-rouge">[X] =&gt;&gt; Either[E, X]</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Rationale for cutting <code class="language-plaintext highlighter-rouge">Binary</code> and type lambdas:</p>
+
+<ol>
+  <li>Scala 3 has no <code class="language-plaintext highlighter-rouge">Either[E, *]</code> — that is kind-projector syntax, available only under
+<code class="language-plaintext highlighter-rouge">-Ykind-projector</code>, which this build does not set. Native syntax is
+<code class="language-plaintext highlighter-rouge">[X] =&gt;&gt; Either[E, X]</code>, which the rewriter would have to synthesize.</li>
+  <li>Abstracting <code class="language-plaintext highlighter-rouge">Either[String, Int]</code> to <code class="language-plaintext highlighter-rouge">F[Int]</code> requires callers to infer
+<code class="language-plaintext highlighter-rouge">F = [X] =&gt;&gt; Either[String, X]</code>. Scala 3 does not reliably infer a partially-applied
+type constructor from an applied binary type, so the rewrite compiles at the
+definition and breaks at the call sites — the worst possible failure mode for a rule
+whose expected outputs must compile.</li>
+  <li>Choosing <em>which</em> parameter to fix adds a whole solve dimension (left-fixed vs
+right-fixed vs bifunctorial) that has no bearing on the unary case.</li>
+</ol>
+
+<p><strong>Important distinction:</strong> the shape being decided is the kind of the <em>abstracted type
+constructor</em>, not the arity of the <em>typeclass</em>. <code class="language-plaintext highlighter-rouge">MonadError[F, E]</code> is in scope — <code class="language-plaintext highlighter-rouge">F</code> is
+<code class="language-plaintext highlighter-rouge">Unary</code>, and <code class="language-plaintext highlighter-rouge">E</code> is a proper type carried through <code class="language-plaintext highlighter-rouge">Solution.extraTypeParams</code> (or left
+concrete when the source pins it, e.g. <code class="language-plaintext highlighter-rouge">MonadError[F, Throwable]</code> for <code class="language-plaintext highlighter-rouge">Try</code>).
+Likewise <code class="language-plaintext highlighter-rouge">Parallel[M]</code>, <code class="language-plaintext highlighter-rouge">FunctorFilter[F]</code> and <code class="language-plaintext highlighter-rouge">Defer[F]</code> are all <code class="language-plaintext highlighter-rouge">Unary</code>.</p>
+
+<h3 id="tracked-gaps">Tracked gaps</h3>
+
+<p>Cut shapes become <code class="language-plaintext highlighter-rouge">gaps.tsv</code> rows, not silence:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>cats/Bifunctor#	binary kind F[_, _] not solved in v1; needs type-lambda rendering	#33
+cats/Bifoldable#	binary kind F[_, _] not solved in v1; needs type-lambda rendering	#33
+cats/Bitraverse#	binary kind F[_, _] not solved in v1; needs type-lambda rendering	#33
+</code></pre></div></div>
+
+<h3 id="consequence-for-33s-fixture-list">Consequence for #33’s fixture list</h3>
+
+<p>Three of #33’s 22 positive fixture names name shapes that are out of v1. They are
+<strong>re-designated, not deleted</strong> — the names survive, the assertion flips:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>fixture</th>
+      <th>v1 status</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">AbstractBifunctorEitherBimap</code></td>
+      <td>negative: no patch + one <code class="language-plaintext highlighter-rouge">UnsupportedKind(Binary)</code> warning</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">AbstractBitraverse</code></td>
+      <td>negative: no patch + one <code class="language-plaintext highlighter-rouge">UnsupportedKind(Binary)</code> warning</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">AbstractTypeLambdaEitherRight</code></td>
+      <td>negative: no patch + one <code class="language-plaintext highlighter-rouge">UnsupportedKind(Binary)</code> warning</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>They are promoted back to positive when the binary-kind phase lands. v1 therefore has
+<strong>19 positive and 13 negative</strong> fixtures, still 32 files.</p>
+
+<hr />
+
+<h2 id="7-module-boundaries">7. Module boundaries</h2>
+
+<p>Files, following the existing layout (<code class="language-plaintext highlighter-rouge">PreferArrow.scala</code> at <code class="language-plaintext highlighter-rouge">scalafix/src/fix/</code>, helpers
+at <code class="language-plaintext highlighter-rouge">scalafix/src/fix/arrow/</code>):</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>File</th>
+      <th>Contents</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">scalafix/src/fix/hkt/CapabilityIR.scala</code></td>
+      <td><code class="language-plaintext highlighter-rouge">KindShape</code>, <code class="language-plaintext highlighter-rouge">Capability</code>, <code class="language-plaintext highlighter-rouge">CatsTypeclass</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">scalafix/src/fix/hkt/CatsIndex.scala</code></td>
+      <td>index loader + lattice queries</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">scalafix/src/fix/hkt/UsageAnalyzer.scala</code></td>
+      <td><code class="language-plaintext highlighter-rouge">RequiredOp</code>, <code class="language-plaintext highlighter-rouge">DeclineReason</code>, <code class="language-plaintext highlighter-rouge">UsageResult</code>, <code class="language-plaintext highlighter-rouge">UsageAnalyzer</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">scalafix/src/fix/hkt/CapabilitySolver.scala</code></td>
+      <td>candidate enumeration, ranking, <code class="language-plaintext highlighter-rouge">solve</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">scalafix/src/fix/hkt/HktRewriter.scala</code></td>
+      <td>signature/body/import rendering</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">scalafix/src/fix/PreferPolymorphicTypeclasses.scala</code></td>
+      <td>rule shell, config, diagnostic</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">scalafix/indexgen/src/fix/hkt/gen/CatsIndexGen.scala</code></td>
+      <td>TASTy generator (not published)</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">scalafix/resources/META-INF/services/scalafix.v1.Rule</code></td>
+      <td>add <code class="language-plaintext highlighter-rouge">fix.PreferPolymorphicTypeclasses</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Six seams, deliberately wide. Every signature below <strong>compiles</strong> against
+<code class="language-plaintext highlighter-rouge">scalafix-rules_3.8.4:0.14.7</code> + <code class="language-plaintext highlighter-rouge">cats-core:2.13.0</code> on Scala 3.8.4 — verified before
+this document was committed, with the files laid out exactly as above. <code class="language-plaintext highlighter-rouge">???</code> marks a
+body the implement leaves fill in; nothing else is elided.</p>
+
+<p>Note for implementers: the module builds with <code class="language-plaintext highlighter-rouge">-Wunused:imports -Werror</code>, so each real
+file must import only what it uses. The import blocks below are the union across seams.</p>
+
+<h3 id="scalafixsrcfixhktcapabilityirscala"><code class="language-plaintext highlighter-rouge">scalafix/src/fix/hkt/CapabilityIR.scala</code></h3>
+
+<div class="language-scala highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">package</span> <span class="nn">fix.hkt</span>
+
+<span class="k">import</span> <span class="nn">scalafix.v1.Symbol</span>
+
+<span class="cm">/** Kind of the type constructor under analysis. */</span>
+<span class="k">sealed</span> <span class="k">trait</span> <span class="nc">KindShape</span>
+
+<span class="k">object</span> <span class="nc">KindShape</span> <span class="o">{</span>
+  <span class="k">case</span> <span class="k">object</span> <span class="nc">Star</span> <span class="k">extends</span> <span class="nc">KindShape</span>
+  <span class="k">case</span> <span class="k">object</span> <span class="nc">Unary</span> <span class="k">extends</span> <span class="nc">KindShape</span>
+  <span class="k">case</span> <span class="k">object</span> <span class="nc">Binary</span> <span class="k">extends</span> <span class="nc">KindShape</span>
+
+  <span class="k">def</span> <span class="nf">arity</span><span class="o">(</span><span class="n">shape</span><span class="k">:</span> <span class="kt">KindShape</span><span class="o">)</span><span class="k">:</span> <span class="kt">Int</span> <span class="o">=</span> <span class="o">???</span>
+  <span class="k">def</span> <span class="nf">parse</span><span class="o">(</span><span class="n">token</span><span class="k">:</span> <span class="kt">String</span><span class="o">)</span><span class="k">:</span> <span class="kt">Option</span><span class="o">[</span><span class="kt">KindShape</span><span class="o">]</span> <span class="k">=</span> <span class="o">???</span>
+  <span class="k">def</span> <span class="nf">render</span><span class="o">(</span><span class="n">shape</span><span class="k">:</span> <span class="kt">KindShape</span><span class="o">)</span><span class="k">:</span> <span class="kt">String</span> <span class="o">=</span> <span class="o">???</span>
+<span class="o">}</span>
+
+<span class="k">final</span> <span class="k">case</span> <span class="k">class</span> <span class="nc">Capability</span><span class="o">(</span>
+    <span class="n">typeclass</span><span class="k">:</span> <span class="kt">Symbol</span><span class="o">,</span>
+    <span class="n">method</span><span class="k">:</span> <span class="kt">Symbol</span><span class="o">,</span>
+    <span class="n">owner</span><span class="k">:</span> <span class="kt">Symbol</span><span class="o">,</span>
+    <span class="n">kind</span><span class="k">:</span> <span class="kt">KindShape</span><span class="o">,</span>
+    <span class="n">derived</span><span class="k">:</span> <span class="kt">Boolean</span><span class="o">,</span>
+    <span class="n">arity</span><span class="k">:</span> <span class="kt">Int</span>
+<span class="o">)</span>
+
+<span class="k">sealed</span> <span class="k">trait</span> <span class="nc">StdlibMapping</span>
+
+<span class="k">object</span> <span class="nc">StdlibMapping</span> <span class="o">{</span>
+  <span class="k">final</span> <span class="k">case</span> <span class="k">class</span> <span class="nc">ToCapability</span><span class="o">(</span><span class="n">owner</span><span class="k">:</span> <span class="kt">Symbol</span><span class="o">,</span> <span class="n">method</span><span class="k">:</span> <span class="kt">Symbol</span><span class="o">)</span>
+      <span class="k">extends</span> <span class="nc">StdlibMapping</span>
+  <span class="k">final</span> <span class="k">case</span> <span class="k">class</span> <span class="nc">ToDecline</span><span class="o">(</span><span class="n">reason</span><span class="k">:</span> <span class="kt">String</span><span class="o">)</span> <span class="k">extends</span> <span class="nc">StdlibMapping</span>
+<span class="o">}</span>
+
+<span class="k">final</span> <span class="k">case</span> <span class="k">class</span> <span class="nc">StdlibEntry</span><span class="o">(</span>
+    <span class="n">concreteMethod</span><span class="k">:</span> <span class="kt">Symbol</span><span class="o">,</span>
+    <span class="n">mapping</span><span class="k">:</span> <span class="kt">StdlibMapping</span>
+<span class="o">)</span>
+
+<span class="k">final</span> <span class="k">case</span> <span class="k">class</span> <span class="nc">CatsTypeclass</span><span class="o">(</span>
+    <span class="n">symbol</span><span class="k">:</span> <span class="kt">Symbol</span><span class="o">,</span>
+    <span class="n">parents</span><span class="k">:</span> <span class="kt">List</span><span class="o">[</span><span class="kt">Symbol</span><span class="o">],</span>
+    <span class="n">kind</span><span class="k">:</span> <span class="kt">KindShape</span><span class="o">,</span>
+    <span class="n">typeParamCount</span><span class="k">:</span> <span class="kt">Int</span><span class="o">,</span>
+    <span class="n">depth</span><span class="k">:</span> <span class="kt">Int</span><span class="o">,</span>
+    <span class="n">renderName</span><span class="k">:</span> <span class="kt">String</span><span class="o">,</span>
+    <span class="n">importPath</span><span class="k">:</span> <span class="kt">String</span><span class="o">,</span>
+    <span class="n">isPublic</span><span class="k">:</span> <span class="kt">Boolean</span>
+<span class="o">)</span>
+</code></pre></div></div>
+
+<h3 id="scalafixsrcfixhktcatsindexscala"><code class="language-plaintext highlighter-rouge">scalafix/src/fix/hkt/CatsIndex.scala</code></h3>
+
+<div class="language-scala highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">package</span> <span class="nn">fix.hkt</span>
+
+<span class="k">import</span> <span class="nn">scalafix.v1.Symbol</span>
+
+<span class="k">final</span> <span class="k">class</span> <span class="nc">CatsIndex</span><span class="o">(</span>
+    <span class="k">val</span> <span class="nv">typeclasses</span><span class="k">:</span> <span class="kt">Map</span><span class="o">[</span><span class="kt">Symbol</span>, <span class="kt">CatsTypeclass</span><span class="o">],</span>
+    <span class="k">val</span> <span class="nv">capabilities</span><span class="k">:</span> <span class="kt">Map</span><span class="o">[</span><span class="kt">Symbol</span>, <span class="kt">List</span><span class="o">[</span><span class="kt">Capability</span><span class="o">]],</span>
+    <span class="k">val</span> <span class="nv">syntax</span><span class="k">:</span> <span class="kt">Map</span><span class="o">[</span><span class="kt">Symbol</span>, <span class="kt">Capability</span><span class="o">],</span>
+    <span class="k">val</span> <span class="nv">stdlib</span><span class="k">:</span> <span class="kt">Map</span><span class="o">[</span><span class="kt">Symbol</span>, <span class="kt">List</span><span class="o">[</span><span class="kt">StdlibEntry</span><span class="o">]]</span>
+<span class="o">)</span> <span class="o">{</span>
+  <span class="k">def</span> <span class="nf">providersOf</span><span class="o">(</span><span class="n">method</span><span class="k">:</span> <span class="kt">Symbol</span><span class="o">)</span><span class="k">:</span> <span class="kt">List</span><span class="o">[</span><span class="kt">Capability</span><span class="o">]</span> <span class="k">=</span> <span class="o">???</span>
+  <span class="k">def</span> <span class="nf">primitiveOwner</span><span class="o">(</span><span class="n">method</span><span class="k">:</span> <span class="kt">Symbol</span><span class="o">)</span><span class="k">:</span> <span class="kt">Option</span><span class="o">[</span><span class="kt">Symbol</span><span class="o">]</span> <span class="k">=</span> <span class="o">???</span>
+  <span class="k">def</span> <span class="nf">resolveSyntax</span><span class="o">(</span><span class="n">method</span><span class="k">:</span> <span class="kt">Symbol</span><span class="o">)</span><span class="k">:</span> <span class="kt">Option</span><span class="o">[</span><span class="kt">Capability</span><span class="o">]</span> <span class="k">=</span> <span class="o">???</span>
+  <span class="k">def</span> <span class="nf">resolveStdlib</span><span class="o">(</span><span class="n">method</span><span class="k">:</span> <span class="kt">Symbol</span><span class="o">)</span><span class="k">:</span> <span class="kt">List</span><span class="o">[</span><span class="kt">StdlibEntry</span><span class="o">]</span> <span class="k">=</span> <span class="o">???</span>
+  <span class="k">def</span> <span class="nf">syntaxImport</span><span class="o">(</span><span class="n">method</span><span class="k">:</span> <span class="kt">Symbol</span><span class="o">)</span><span class="k">:</span> <span class="kt">Option</span><span class="o">[</span><span class="kt">String</span><span class="o">]</span> <span class="k">=</span> <span class="o">???</span>
+  <span class="k">def</span> <span class="nf">isAncestor</span><span class="o">(</span><span class="n">ancestor</span><span class="k">:</span> <span class="kt">Symbol</span><span class="o">,</span> <span class="n">descendant</span><span class="k">:</span> <span class="kt">Symbol</span><span class="o">)</span><span class="k">:</span> <span class="kt">Boolean</span> <span class="o">=</span> <span class="o">???</span>
+  <span class="k">def</span> <span class="nf">depth</span><span class="o">(</span><span class="n">typeclass</span><span class="k">:</span> <span class="kt">Symbol</span><span class="o">)</span><span class="k">:</span> <span class="kt">Int</span> <span class="o">=</span> <span class="o">???</span>
+  <span class="k">def</span> <span class="nf">publicTypeclasses</span><span class="k">:</span> <span class="kt">List</span><span class="o">[</span><span class="kt">CatsTypeclass</span><span class="o">]</span> <span class="k">=</span> <span class="o">???</span>
+<span class="o">}</span>
+
+<span class="k">object</span> <span class="nc">CatsIndex</span> <span class="o">{</span>
+  <span class="k">val</span> <span class="nv">capabilitiesResource</span><span class="k">:</span> <span class="kt">String</span> <span class="o">=</span> <span class="s">"cats-index/capabilities.tsv"</span>
+  <span class="k">val</span> <span class="nv">typeclassesResource</span><span class="k">:</span> <span class="kt">String</span> <span class="o">=</span> <span class="s">"cats-index/typeclasses.tsv"</span>
+  <span class="k">val</span> <span class="nv">syntaxResource</span><span class="k">:</span> <span class="kt">String</span> <span class="o">=</span> <span class="s">"cats-index/syntax.tsv"</span>
+  <span class="k">val</span> <span class="nv">stdlibResource</span><span class="k">:</span> <span class="kt">String</span> <span class="o">=</span> <span class="s">"cats-index/stdlib.tsv"</span>
+  <span class="k">val</span> <span class="nv">gapsResource</span><span class="k">:</span> <span class="kt">String</span> <span class="o">=</span> <span class="s">"cats-index/gaps.tsv"</span>
+
+  <span class="k">def</span> <span class="nf">load</span><span class="o">()</span><span class="k">:</span> <span class="kt">CatsIndex</span> <span class="o">=</span> <span class="o">???</span>
+  <span class="k">def</span> <span class="nf">parse</span><span class="o">(</span>
+      <span class="n">typeclassRows</span><span class="k">:</span> <span class="kt">Iterator</span><span class="o">[</span><span class="kt">String</span><span class="o">],</span>
+      <span class="n">capabilityRows</span><span class="k">:</span> <span class="kt">Iterator</span><span class="o">[</span><span class="kt">String</span><span class="o">],</span>
+      <span class="n">syntaxRows</span><span class="k">:</span> <span class="kt">Iterator</span><span class="o">[</span><span class="kt">String</span><span class="o">],</span>
+      <span class="n">stdlibRows</span><span class="k">:</span> <span class="kt">Iterator</span><span class="o">[</span><span class="kt">String</span><span class="o">]</span>
+  <span class="o">)</span><span class="k">:</span> <span class="kt">Either</span><span class="o">[</span><span class="kt">String</span>, <span class="kt">CatsIndex</span><span class="o">]</span> <span class="k">=</span> <span class="o">???</span>
+<span class="o">}</span>
+</code></pre></div></div>
+
+<p><code class="language-plaintext highlighter-rouge">capabilities</code> is keyed by <strong>typeclass</strong> symbol (flattened, per item 2); <code class="language-plaintext highlighter-rouge">providersOf</code>
+inverts it for a method. <code class="language-plaintext highlighter-rouge">parse</code> returns <code class="language-plaintext highlighter-rouge">Left</code> with the offending line so a malformed
+artifact fails loudly instead of yielding an empty index.</p>
+
+<p><strong>Deviation from the original sketch above (applied in #38, same commit):</strong> the
+sketch predates the final #37 artifact and omits two things it needs. First,
+<code class="language-plaintext highlighter-rouge">syntax.tsv</code> and <code class="language-plaintext highlighter-rouge">stdlib.tsv</code> need their own resource-path constants alongside
+<code class="language-plaintext highlighter-rouge">capabilitiesResource</code>/<code class="language-plaintext highlighter-rouge">typeclassesResource</code>/<code class="language-plaintext highlighter-rouge">gapsResource</code>, mirroring the five
+checked-in files from item 1 — <code class="language-plaintext highlighter-rouge">syntaxResource</code> and <code class="language-plaintext highlighter-rouge">stdlibResource</code> above.
+Second, <code class="language-plaintext highlighter-rouge">parse</code> cannot build the <code class="language-plaintext highlighter-rouge">syntax: Map[Symbol, Capability]</code> and
+<code class="language-plaintext highlighter-rouge">stdlib: Map[Symbol, List[StdlibEntry]]</code> fields from only the typeclass and
+capability iterators, so it takes both <code class="language-plaintext highlighter-rouge">syntaxRows: Iterator[String]</code> and
+<code class="language-plaintext highlighter-rouge">stdlibRows: Iterator[String]</code>, as reflected in the signature above (the
+original sketch took only <code class="language-plaintext highlighter-rouge">typeclassRows</code> and <code class="language-plaintext highlighter-rouge">capabilityRows</code>).</p>
+
+<h3 id="scalafixsrcfixhktusageanalyzerscala"><code class="language-plaintext highlighter-rouge">scalafix/src/fix/hkt/UsageAnalyzer.scala</code></h3>
+
+<div class="language-scala highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">package</span> <span class="nn">fix.hkt</span>
+
+<span class="k">import</span> <span class="nn">scala.meta.inputs.Position</span>
+
+<span class="k">import</span> <span class="nn">scalafix.v1.SemanticDocument</span>
+<span class="k">import</span> <span class="nn">scalafix.v1.Symbol</span>
+
+<span class="k">final</span> <span class="k">case</span> <span class="k">class</span> <span class="nc">RequiredOp</span><span class="o">(</span>
+    <span class="n">method</span><span class="k">:</span> <span class="kt">Symbol</span><span class="o">,</span>
+    <span class="n">position</span><span class="k">:</span> <span class="kt">Position</span><span class="o">,</span>
+    <span class="n">kind</span><span class="k">:</span> <span class="kt">KindShape</span>
+<span class="o">)</span>
+
+<span class="k">sealed</span> <span class="k">trait</span> <span class="nc">DeclineReason</span> <span class="o">{</span>
+  <span class="k">def</span> <span class="nf">message</span><span class="k">:</span> <span class="kt">String</span>
+<span class="o">}</span>
+
+<span class="k">object</span> <span class="nc">DeclineReason</span> <span class="o">{</span>
+  <span class="k">final</span> <span class="k">case</span> <span class="k">class</span> <span class="nc">ConcreteConstructorMatch</span><span class="o">(</span><span class="n">what</span><span class="k">:</span> <span class="kt">String</span><span class="o">)</span> <span class="k">extends</span> <span class="nc">DeclineReason</span> <span class="o">{</span>
+    <span class="k">def</span> <span class="nf">message</span><span class="k">:</span> <span class="kt">String</span> <span class="o">=</span> <span class="o">???</span>
+  <span class="o">}</span>
+  <span class="k">final</span> <span class="k">case</span> <span class="k">class</span> <span class="nc">OrderOrIndexSpecific</span><span class="o">(</span><span class="n">what</span><span class="k">:</span> <span class="kt">String</span><span class="o">)</span> <span class="k">extends</span> <span class="nc">DeclineReason</span> <span class="o">{</span>
+    <span class="k">def</span> <span class="nf">message</span><span class="k">:</span> <span class="kt">String</span> <span class="o">=</span> <span class="o">???</span>
+  <span class="o">}</span>
+  <span class="k">final</span> <span class="k">case</span> <span class="k">class</span> <span class="nc">UnsupportedKind</span><span class="o">(</span><span class="n">shape</span><span class="k">:</span> <span class="kt">KindShape</span><span class="o">)</span> <span class="k">extends</span> <span class="nc">DeclineReason</span> <span class="o">{</span>
+    <span class="k">def</span> <span class="nf">message</span><span class="k">:</span> <span class="kt">String</span> <span class="o">=</span> <span class="o">???</span>
+  <span class="o">}</span>
+  <span class="k">final</span> <span class="k">case</span> <span class="k">class</span> <span class="nc">PublicBoundary</span><span class="o">(</span><span class="n">defName</span><span class="k">:</span> <span class="kt">String</span><span class="o">)</span> <span class="k">extends</span> <span class="nc">DeclineReason</span> <span class="o">{</span>
+    <span class="k">def</span> <span class="nf">message</span><span class="k">:</span> <span class="kt">String</span> <span class="o">=</span> <span class="o">???</span>
+  <span class="o">}</span>
+  <span class="k">final</span> <span class="k">case</span> <span class="k">class</span> <span class="nc">AmbiguousCapability</span><span class="o">(</span><span class="n">candidates</span><span class="k">:</span> <span class="kt">List</span><span class="o">[</span><span class="kt">Symbol</span><span class="o">])</span> <span class="k">extends</span> <span class="nc">DeclineReason</span> <span class="o">{</span>
+    <span class="k">def</span> <span class="nf">message</span><span class="k">:</span> <span class="kt">String</span> <span class="o">=</span> <span class="o">???</span>
+  <span class="o">}</span>
+  <span class="k">final</span> <span class="k">case</span> <span class="k">class</span> <span class="nc">NoCapability</span><span class="o">(</span><span class="n">method</span><span class="k">:</span> <span class="kt">Symbol</span><span class="o">)</span> <span class="k">extends</span> <span class="nc">DeclineReason</span> <span class="o">{</span>
+    <span class="k">def</span> <span class="nf">message</span><span class="k">:</span> <span class="kt">String</span> <span class="o">=</span> <span class="o">???</span>
+  <span class="o">}</span>
+  <span class="k">final</span> <span class="k">case</span> <span class="k">class</span> <span class="nc">UnsafeBody</span><span class="o">(</span><span class="n">what</span><span class="k">:</span> <span class="kt">String</span><span class="o">)</span> <span class="k">extends</span> <span class="nc">DeclineReason</span> <span class="o">{</span>
+    <span class="k">def</span> <span class="nf">message</span><span class="k">:</span> <span class="kt">String</span> <span class="o">=</span> <span class="o">???</span>
+  <span class="o">}</span>
+  <span class="k">final</span> <span class="k">case</span> <span class="k">class</span> <span class="nc">NameConflict</span><span class="o">(</span><span class="n">tried</span><span class="k">:</span> <span class="kt">List</span><span class="o">[</span><span class="kt">String</span><span class="o">])</span> <span class="k">extends</span> <span class="nc">DeclineReason</span> <span class="o">{</span>
+    <span class="k">def</span> <span class="nf">message</span><span class="k">:</span> <span class="kt">String</span> <span class="o">=</span> <span class="o">???</span>
+  <span class="o">}</span>
+  <span class="k">final</span> <span class="k">case</span> <span class="k">class</span> <span class="nc">TooManyConstraints</span><span class="o">(</span><span class="n">candidate</span><span class="k">:</span> <span class="kt">List</span><span class="o">[</span><span class="kt">Symbol</span><span class="o">],</span> <span class="n">max</span><span class="k">:</span> <span class="kt">Int</span><span class="o">)</span>
+      <span class="k">extends</span> <span class="nc">DeclineReason</span> <span class="o">{</span>
+    <span class="k">def</span> <span class="nf">message</span><span class="k">:</span> <span class="kt">String</span> <span class="o">=</span> <span class="o">???</span>
+  <span class="o">}</span>
+  <span class="k">case</span> <span class="k">object</span> <span class="nc">MissingEvidence</span> <span class="k">extends</span> <span class="nc">DeclineReason</span> <span class="o">{</span>
+    <span class="k">def</span> <span class="nf">message</span><span class="k">:</span> <span class="kt">String</span> <span class="o">=</span> <span class="o">???</span>
+  <span class="o">}</span>
+<span class="o">}</span>
+
+<span class="k">sealed</span> <span class="k">trait</span> <span class="nc">UsageResult</span>
+
+<span class="k">object</span> <span class="nc">UsageResult</span> <span class="o">{</span>
+  <span class="k">final</span> <span class="k">case</span> <span class="k">class</span> <span class="nc">Abstractable</span><span class="o">(</span>
+      <span class="n">defn</span><span class="k">:</span> <span class="kt">scala.meta.Defn.Def</span><span class="o">,</span>
+      <span class="n">target</span><span class="k">:</span> <span class="kt">scala.meta.Type</span><span class="o">,</span>
+      <span class="n">constructor</span><span class="k">:</span> <span class="kt">Symbol</span><span class="o">,</span>
+      <span class="n">elementType</span><span class="k">:</span> <span class="kt">scala.meta.Type</span><span class="o">,</span>
+      <span class="n">ops</span><span class="k">:</span> <span class="kt">List</span><span class="o">[</span><span class="kt">RequiredOp</span><span class="o">]</span>
+  <span class="o">)</span> <span class="k">extends</span> <span class="nc">UsageResult</span>
+
+  <span class="k">final</span> <span class="k">case</span> <span class="k">class</span> <span class="nc">Declined</span><span class="o">(</span><span class="n">position</span><span class="k">:</span> <span class="kt">Position</span><span class="o">,</span> <span class="n">reason</span><span class="k">:</span> <span class="kt">DeclineReason</span><span class="o">)</span> <span class="k">extends</span> <span class="nc">UsageResult</span>
+<span class="o">}</span>
+
+<span class="k">object</span> <span class="nc">UsageAnalyzer</span> <span class="o">{</span>
+  <span class="k">def</span> <span class="nf">analyze</span><span class="o">(</span><span class="n">defn</span><span class="k">:</span> <span class="kt">scala.meta.Defn.Def</span><span class="o">,</span> <span class="n">index</span><span class="k">:</span> <span class="kt">CatsIndex</span><span class="o">,</span> <span class="n">widenPublic</span><span class="k">:</span> <span class="kt">Boolean</span><span class="o">)(</span>
+      <span class="k">implicit</span> <span class="n">doc</span><span class="k">:</span> <span class="kt">SemanticDocument</span>
+  <span class="o">)</span><span class="k">:</span> <span class="kt">List</span><span class="o">[</span><span class="kt">UsageResult</span><span class="o">]</span> <span class="k">=</span> <span class="o">???</span>
+
+  <span class="k">def</span> <span class="nf">isWidenable</span><span class="o">(</span><span class="n">defn</span><span class="k">:</span> <span class="kt">scala.meta.Defn.Def</span><span class="o">,</span> <span class="n">widenPublic</span><span class="k">:</span> <span class="kt">Boolean</span><span class="o">)(</span><span class="k">implicit</span>
+      <span class="n">doc</span><span class="k">:</span> <span class="kt">SemanticDocument</span>
+  <span class="o">)</span><span class="k">:</span> <span class="kt">Boolean</span> <span class="o">=</span> <span class="o">???</span>
+<span class="o">}</span>
+</code></pre></div></div>
+
+<p><code class="language-plaintext highlighter-rouge">analyze</code> returns a list because one <code class="language-plaintext highlighter-rouge">def</code> may mention several concrete constructors;
+each is analysed independently and yields its own <code class="language-plaintext highlighter-rouge">Abstractable</code> or <code class="language-plaintext highlighter-rouge">Declined</code>.</p>
+
+<h3 id="scalafixsrcfixhktcapabilitysolverscala"><code class="language-plaintext highlighter-rouge">scalafix/src/fix/hkt/CapabilitySolver.scala</code></h3>
+
+<div class="language-scala highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">package</span> <span class="nn">fix.hkt</span>
+
+<span class="k">import</span> <span class="nn">scalafix.v1.Symbol</span>
+
+<span class="k">object</span> <span class="nc">CapabilitySolver</span> <span class="o">{</span>
+  <span class="k">final</span> <span class="k">case</span> <span class="k">class</span> <span class="nc">Solution</span><span class="o">(</span>
+      <span class="n">constraints</span><span class="k">:</span> <span class="kt">List</span><span class="o">[</span><span class="kt">Symbol</span><span class="o">],</span>
+      <span class="n">extraTypeParams</span><span class="k">:</span> <span class="kt">List</span><span class="o">[</span><span class="kt">String</span><span class="o">],</span>
+      <span class="n">strengthSum</span><span class="k">:</span> <span class="kt">Int</span>
+  <span class="o">)</span>
+
+  <span class="k">def</span> <span class="nf">solve</span><span class="o">(</span><span class="n">ops</span><span class="k">:</span> <span class="kt">List</span><span class="o">[</span><span class="kt">RequiredOp</span><span class="o">],</span> <span class="n">index</span><span class="k">:</span> <span class="kt">CatsIndex</span><span class="o">,</span> <span class="n">maxConstraints</span><span class="k">:</span> <span class="kt">Int</span><span class="o">)</span>
+      <span class="k">:</span> <span class="kt">Either</span><span class="o">[</span><span class="kt">DeclineReason</span>, <span class="kt">Solution</span><span class="o">]</span> <span class="k">=</span> <span class="o">???</span>
+
+  <span class="k">def</span> <span class="nf">candidates</span><span class="o">(</span><span class="n">ops</span><span class="k">:</span> <span class="kt">List</span><span class="o">[</span><span class="kt">RequiredOp</span><span class="o">],</span> <span class="n">index</span><span class="k">:</span> <span class="kt">CatsIndex</span><span class="o">)</span><span class="k">:</span> <span class="kt">List</span><span class="o">[</span><span class="kt">List</span><span class="o">[</span><span class="kt">Symbol</span><span class="o">]]</span> <span class="k">=</span> <span class="o">???</span>
+
+  <span class="k">def</span> <span class="nf">rank</span><span class="o">(</span><span class="n">candidates</span><span class="k">:</span> <span class="kt">List</span><span class="o">[</span><span class="kt">List</span><span class="o">[</span><span class="kt">Symbol</span><span class="o">]],</span> <span class="n">index</span><span class="k">:</span> <span class="kt">CatsIndex</span><span class="o">)</span><span class="k">:</span> <span class="kt">List</span><span class="o">[</span><span class="kt">List</span><span class="o">[</span><span class="kt">Symbol</span><span class="o">]]</span> <span class="k">=</span> <span class="o">???</span>
+
+  <span class="k">def</span> <span class="nf">supports</span><span class="o">(</span><span class="n">typeclass</span><span class="k">:</span> <span class="kt">Symbol</span><span class="o">,</span> <span class="n">index</span><span class="k">:</span> <span class="kt">CatsIndex</span><span class="o">)</span><span class="k">:</span> <span class="kt">Boolean</span> <span class="o">=</span> <span class="o">???</span>
+<span class="o">}</span>
+</code></pre></div></div>
+
+<p>Pure: no <code class="language-plaintext highlighter-rouge">SemanticDocument</code>, no tree, no I/O. <code class="language-plaintext highlighter-rouge">rank</code> returns the candidates in the
+total order of item 5, best first. <code class="language-plaintext highlighter-rouge">supports</code> is what the item-8 audit calls.</p>
+
+<h3 id="scalafixsrcfixhkthktrewriterscala"><code class="language-plaintext highlighter-rouge">scalafix/src/fix/hkt/HktRewriter.scala</code></h3>
+
+<div class="language-scala highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">package</span> <span class="nn">fix.hkt</span>
+
+<span class="k">import</span> <span class="nn">scalafix.v1.Patch</span>
+<span class="k">import</span> <span class="nn">scalafix.v1.SemanticDocument</span>
+
+<span class="k">object</span> <span class="nc">HktRewriter</span> <span class="o">{</span>
+  <span class="k">def</span> <span class="nf">rewrite</span><span class="o">(</span>
+      <span class="n">usage</span><span class="k">:</span> <span class="kt">UsageResult.Abstractable</span><span class="o">,</span>
+      <span class="n">solution</span><span class="k">:</span> <span class="kt">CapabilitySolver.Solution</span><span class="o">,</span>
+      <span class="n">index</span><span class="k">:</span> <span class="kt">CatsIndex</span><span class="o">,</span>
+      <span class="n">typeParamName</span><span class="k">:</span> <span class="kt">String</span>
+  <span class="o">)(</span><span class="k">implicit</span> <span class="n">doc</span><span class="k">:</span> <span class="kt">SemanticDocument</span><span class="o">)</span><span class="k">:</span> <span class="kt">Patch</span> <span class="o">=</span> <span class="o">???</span>
+
+  <span class="k">def</span> <span class="nf">freshTypeParamName</span><span class="o">(</span>
+      <span class="n">defn</span><span class="k">:</span> <span class="kt">scala.meta.Defn.Def</span><span class="o">,</span>
+      <span class="n">preferred</span><span class="k">:</span> <span class="kt">List</span><span class="o">[</span><span class="kt">String</span><span class="o">]</span>
+  <span class="o">)</span><span class="k">:</span> <span class="kt">Option</span><span class="o">[</span><span class="kt">String</span><span class="o">]</span> <span class="k">=</span> <span class="o">???</span>
+
+  <span class="k">def</span> <span class="nf">requiredImports</span><span class="o">(</span>
+      <span class="n">solution</span><span class="k">:</span> <span class="kt">CapabilitySolver.Solution</span><span class="o">,</span>
+      <span class="n">index</span><span class="k">:</span> <span class="kt">CatsIndex</span>
+  <span class="o">)</span><span class="k">:</span> <span class="kt">List</span><span class="o">[</span><span class="kt">String</span><span class="o">]</span> <span class="k">=</span> <span class="o">???</span>
+<span class="o">}</span>
+</code></pre></div></div>
+
+<p><code class="language-plaintext highlighter-rouge">freshTypeParamName</code> is tried against <code class="language-plaintext highlighter-rouge">List("G", "H", "K")</code> in that order and returns
+<code class="language-plaintext highlighter-rouge">None</code> if all three are taken by an enclosing or local type parameter — the trigger for
+<code class="language-plaintext highlighter-rouge">DeclineReason.NameConflict</code>. Every <code class="language-plaintext highlighter-rouge">Patch</code> is anchored on a <code class="language-plaintext highlighter-rouge">doc.tree</code> node; the
+rewriter never re-parses <code class="language-plaintext highlighter-rouge">doc.input.text</code> (<code class="language-plaintext highlighter-rouge">docs/RULES.md</code>).</p>
+
+<h3 id="scalafixsrcfixpreferpolymorphictypeclassesscala"><code class="language-plaintext highlighter-rouge">scalafix/src/fix/PreferPolymorphicTypeclasses.scala</code></h3>
+
+<div class="language-scala highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">package</span> <span class="nn">fix</span>
+
+<span class="k">import</span> <span class="nn">metaconfig.ConfDecoder</span>
+<span class="k">import</span> <span class="nn">metaconfig.Configured</span>
+<span class="k">import</span> <span class="nn">scalafix.v1._</span>
+
+<span class="k">import</span> <span class="nn">fix.hkt.CatsIndex</span>
+<span class="k">import</span> <span class="nn">fix.hkt.DeclineReason</span>
+
+<span class="k">final</span> <span class="k">case</span> <span class="k">class</span> <span class="nc">PreferPolymorphicTypeclassesConfig</span><span class="o">(</span>
+    <span class="n">widenPublic</span><span class="k">:</span> <span class="kt">Boolean</span> <span class="o">=</span> <span class="kc">false</span><span class="o">,</span>
+    <span class="n">maxConstraints</span><span class="k">:</span> <span class="kt">Int</span> <span class="o">=</span> <span class="mi">2</span>
+<span class="o">)</span>
+
+<span class="k">object</span> <span class="nc">PreferPolymorphicTypeclassesConfig</span> <span class="o">{</span>
+  <span class="k">val</span> <span class="nv">default</span><span class="k">:</span> <span class="kt">PreferPolymorphicTypeclassesConfig</span> <span class="o">=</span> <span class="nc">PreferPolymorphicTypeclassesConfig</span><span class="o">()</span>
+  <span class="k">implicit</span> <span class="k">val</span> <span class="nv">decoder</span><span class="k">:</span> <span class="kt">ConfDecoder</span><span class="o">[</span><span class="kt">PreferPolymorphicTypeclassesConfig</span><span class="o">]</span> <span class="k">=</span>
+    <span class="nv">ConfDecoder</span><span class="o">.</span><span class="py">from</span> <span class="o">{</span> <span class="n">conf</span> <span class="k">=&gt;</span>
+      <span class="n">conf</span>
+        <span class="o">.</span><span class="py">getOrElse</span><span class="o">(</span><span class="s">"widenPublic"</span><span class="o">)(</span><span class="nv">default</span><span class="o">.</span><span class="py">widenPublic</span><span class="o">)</span>
+        <span class="o">.</span><span class="py">product</span><span class="o">(</span><span class="nv">conf</span><span class="o">.</span><span class="py">getOrElse</span><span class="o">(</span><span class="s">"maxConstraints"</span><span class="o">)(</span><span class="nv">default</span><span class="o">.</span><span class="py">maxConstraints</span><span class="o">))</span>
+        <span class="o">.</span><span class="py">map</span><span class="o">(</span><span class="nv">PreferPolymorphicTypeclassesConfig</span><span class="o">.</span><span class="py">apply</span><span class="o">.</span><span class="py">tupled</span><span class="o">)</span>
+    <span class="o">}</span>
+<span class="o">}</span>
+
+<span class="k">final</span> <span class="k">case</span> <span class="k">class</span> <span class="nc">HKTDeclineDiagnostic</span><span class="o">(</span>
+    <span class="k">override</span> <span class="k">val</span> <span class="nv">position</span><span class="k">:</span> <span class="kt">scala.meta.inputs.Position</span><span class="o">,</span>
+    <span class="n">reason</span><span class="k">:</span> <span class="kt">DeclineReason</span>
+<span class="o">)</span> <span class="k">extends</span> <span class="nc">Diagnostic</span> <span class="o">{</span>
+  <span class="k">override</span> <span class="k">def</span> <span class="nf">message</span><span class="k">:</span> <span class="kt">String</span> <span class="o">=</span> <span class="nv">reason</span><span class="o">.</span><span class="py">message</span>
+  <span class="k">override</span> <span class="k">def</span> <span class="nf">severity</span><span class="k">:</span> <span class="kt">scalafix.lint.LintSeverity</span> <span class="o">=</span>
+    <span class="nv">scalafix</span><span class="o">.</span><span class="py">lint</span><span class="o">.</span><span class="py">LintSeverity</span><span class="o">.</span><span class="py">Warning</span>
+<span class="o">}</span>
+
+<span class="k">final</span> <span class="k">class</span> <span class="nc">PreferPolymorphicTypeclasses</span><span class="o">(</span><span class="n">config</span><span class="k">:</span> <span class="kt">PreferPolymorphicTypeclassesConfig</span><span class="o">)</span>
+    <span class="k">extends</span> <span class="nc">SemanticRule</span><span class="o">(</span><span class="s">"PreferPolymorphicTypeclasses"</span><span class="o">)</span> <span class="o">{</span>
+
+  <span class="k">def</span> <span class="nf">this</span><span class="o">()</span> <span class="k">=</span> <span class="nf">this</span><span class="o">(</span><span class="nv">PreferPolymorphicTypeclassesConfig</span><span class="o">.</span><span class="py">default</span><span class="o">)</span>
+
+  <span class="k">private</span> <span class="k">lazy</span> <span class="k">val</span> <span class="nv">index</span><span class="k">:</span> <span class="kt">CatsIndex</span> <span class="o">=</span> <span class="nv">CatsIndex</span><span class="o">.</span><span class="py">load</span><span class="o">()</span>
+
+  <span class="k">override</span> <span class="k">def</span> <span class="nf">withConfiguration</span><span class="o">(</span><span class="n">configuration</span><span class="k">:</span> <span class="kt">Configuration</span><span class="o">)</span><span class="k">:</span> <span class="kt">Configured</span><span class="o">[</span><span class="kt">Rule</span><span class="o">]</span> <span class="k">=</span>
+    <span class="nv">configuration</span><span class="o">.</span><span class="py">conf</span>
+      <span class="o">.</span><span class="py">getOrElse</span><span class="o">(</span><span class="s">"PreferPolymorphicTypeclasses"</span><span class="o">)(</span><span class="nv">PreferPolymorphicTypeclassesConfig</span><span class="o">.</span><span class="py">default</span><span class="o">)</span>
+      <span class="o">.</span><span class="py">map</span><span class="o">(</span><span class="k">new</span> <span class="nc">PreferPolymorphicTypeclasses</span><span class="o">(</span><span class="k">_</span><span class="o">))</span>
+
+  <span class="k">override</span> <span class="k">def</span> <span class="nf">fix</span><span class="o">(</span><span class="k">implicit</span> <span class="n">doc</span><span class="k">:</span> <span class="kt">SemanticDocument</span><span class="o">)</span><span class="k">:</span> <span class="kt">Patch</span> <span class="o">=</span> <span class="o">???</span>
+<span class="o">}</span>
+</code></pre></div></div>
+
+<p>The config shape mirrors <code class="language-plaintext highlighter-rouge">PreferArrowConfig</code> exactly, including the
+<code class="language-plaintext highlighter-rouge">ConfDecoder.from</code> + <code class="language-plaintext highlighter-rouge">product</code> + <code class="language-plaintext highlighter-rouge">apply.tupled</code> idiom, so it needs no metaconfig
+derivation macro.</p>
+
+<hr />
+
+<h2 id="7a-rendering-contract">7a. Rendering contract</h2>
+
+<p>This section is normative for the rewriter (#66), rule shell (#67), and executed
+fixtures (#42/#43). Where a general preference elsewhere in this document leaves
+formatting freedom, this section wins.</p>
+
+<h3 id="syntax-import-lookup-and-required-import-set">Syntax-import lookup and required import set</h3>
+
+<p><code class="language-plaintext highlighter-rouge">syntax.tsv</code>’s fourth column is retained by <code class="language-plaintext highlighter-rouge">CatsIndex</code>. The additive query
+<code class="language-plaintext highlighter-rouge">syntaxImport(method: Symbol): Option[String]</code> accepts either the syntax-wrapper symbol
+from column 1 or the resolved primitive owner/method carried by <code class="language-plaintext highlighter-rouge">RequiredOp.method</code>. It
+returns column 4 verbatim. When inherited syntax creates several rows for the same
+primitive, the row whose <code class="language-plaintext highlighter-rouge">*.Ops</code> symbol normalizes directly to that primitive wins;
+ties fall back to <code class="language-plaintext highlighter-rouge">(syntaxMethod.value, importPath)</code> ascending. Consequently
+<code class="language-plaintext highlighter-rouge">cats/Functor#map().</code> maps to <code class="language-plaintext highlighter-rouge">cats.syntax.functor.*</code>, not the inherited
+<code class="language-plaintext highlighter-rouge">cats.syntax.apply.*</code> row. <code class="language-plaintext highlighter-rouge">resolveSyntax</code> remains keyed by column 1 and is unchanged.</p>
+
+<p>The fixed two-argument seam cannot see <code class="language-plaintext highlighter-rouge">UsageResult.Abstractable.ops</code> because
+<code class="language-plaintext highlighter-rouge">CapabilitySolver.Solution</code> contains only <code class="language-plaintext highlighter-rouge">constraints</code>, <code class="language-plaintext highlighter-rouge">extraTypeParams</code>, and
+<code class="language-plaintext highlighter-rouge">strengthSum</code>. Its exact compatibility behaviour is therefore:</p>
+
+<div class="language-scala highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">HktRewriter</span><span class="o">.</span><span class="py">requiredImports</span><span class="o">(</span><span class="n">solution</span><span class="o">,</span> <span class="n">index</span><span class="o">)</span>
+</code></pre></div></div>
+
+<p>returns the distinct <code class="language-plaintext highlighter-rouge">CatsTypeclass.importPath</code> values for <code class="language-plaintext highlighter-rouge">solution.constraints</code>,
+sorted by ordinary <code class="language-plaintext highlighter-rouge">String.compareTo</code>. <code class="language-plaintext highlighter-rouge">rewrite</code> then computes its final import list as:</p>
+
+<div class="language-scala highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nf">requiredImports</span><span class="o">(</span><span class="n">solution</span><span class="o">,</span> <span class="n">index</span><span class="o">)</span> <span class="o">++</span> <span class="nv">usage</span><span class="o">.</span><span class="py">ops</span><span class="o">.</span><span class="py">flatMap</span><span class="o">(</span><span class="n">op</span> <span class="k">=&gt;</span> <span class="nv">index</span><span class="o">.</span><span class="py">syntaxImport</span><span class="o">(</span><span class="nv">op</span><span class="o">.</span><span class="py">method</span><span class="o">))</span>
+</code></pre></div></div>
+
+<p>and normalizes that expression into one combined list containing:</p>
+
+<ol>
+  <li>every typeclass import from the two-argument result; and</li>
+  <li><code class="language-plaintext highlighter-rouge">index.syntaxImport(op.method)</code> for every <code class="language-plaintext highlighter-rouge">op</code> actually present in <code class="language-plaintext highlighter-rouge">usage.ops</code>.</li>
+</ol>
+
+<p>Missing syntax-import metadata is not guessed and contributes no string. The combined
+strings are deduplicated by exact string equality and then sorted ascending with
+<code class="language-plaintext highlighter-rouge">String.compareTo</code>; typeclass imports are not placed in a separate group. For the
+Functor smoke case the result is exactly:</p>
+
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>cats.Functor
+cats.syntax.functor.*
+</code></pre></div></div>
+
+<p>Before rendering, remove an import if an equivalent import is already in lexical scope
+at the candidate def. Equivalence is determined from the existing <code class="language-plaintext highlighter-rouge">Import</code> trees, not
+by substring matching: a direct import or selector of the same path suppresses it, and
+an enclosing wildcard import suppresses a member beneath that prefix. Thus
+<code class="language-plaintext highlighter-rouge">import cats.Functor</code>, <code class="language-plaintext highlighter-rouge">import cats.{Functor}</code>, and <code class="language-plaintext highlighter-rouge">import cats.*</code> each suppress a new
+<code class="language-plaintext highlighter-rouge">cats.Functor</code>; <code class="language-plaintext highlighter-rouge">import cats.syntax.functor.*</code> suppresses that exact module import.
+Aliases and exclusions do not suppress the unaliased import. Imports in an unrelated
+local block are not in scope and do not suppress anything.</p>
+
+<p>An in-scope <code class="language-plaintext highlighter-rouge">import cats.syntax.all.*</code> suppresses <strong>every</strong> generated
+<code class="language-plaintext highlighter-rouge">cats.syntax.&lt;module&gt;.*</code> import. It does not suppress typeclass imports. Existing imports
+keep their original spelling and order; only the remaining newly emitted strings are
+sorted, and they are inserted as one contiguous block.</p>
+
+<h3 id="signature-rewrite">Signature rewrite</h3>
+
+<p>For a unary <code class="language-plaintext highlighter-rouge">UsageResult.Abstractable</code>, walk only the declared parameter types and the
+declared result type of <code class="language-plaintext highlighter-rouge">usage.defn</code>. At every <code class="language-plaintext highlighter-rouge">Type.Apply</code> whose head resolves to
+<code class="language-plaintext highlighter-rouge">usage.constructor</code>, replace the head node with the chosen type-parameter name and do
+not descend into that application’s arguments. Descend through non-matching wrappers
+so a target nested below an unrelated result wrapper is still reached. This is a
+pre-order, outermost-match rule:</p>
+
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>List[A]                 -&gt; G[A]
+Option[List[A]]         -&gt; Option[G[A]]
+List[List[A]]           -&gt; G[List[A]]
+</code></pre></div></div>
+
+<p>The last line is intentional: once the outer matching application is rewritten, a
+nested occurrence of the same concrete constructor remains concrete. Every matching
+outer occurrence in every parameter clause and in the result type is rewritten; no
+term in the body and no local type annotation is rewritten.</p>
+
+<p>Preserve <code class="language-plaintext highlighter-rouge">elementType</code> byte-for-byte by patching only the constructor-head tree
+(<code class="language-plaintext highlighter-rouge">Type.Apply.tpe</code>), never by printing a replacement <code class="language-plaintext highlighter-rouge">Type.Apply</code> from scratch. For
+<code class="language-plaintext highlighter-rouge">AbstractTraverseListTraverse</code>, this produces
+<code class="language-plaintext highlighter-rouge">(xs: G[Int]): Option[G[Int]]</code>: <code class="language-plaintext highlighter-rouge">List</code> is the selected constructor, while the unrelated
+outer result wrapper <code class="language-plaintext highlighter-rouge">Option</code> stays concrete. The body is not rewritten.</p>
+
+<h3 id="constraint-style-detection">Constraint-style detection</h3>
+
+<p>Style detection scans the one enclosing <code class="language-plaintext highlighter-rouge">Source</code> represented by <code class="language-plaintext highlighter-rouge">doc.tree</code>, including
+all definitions and constructors in that source. It inspects:</p>
+
+<ul>
+  <li>every non-empty <code class="language-plaintext highlighter-rouge">Type.Param</code> context-bound list; and</li>
+  <li>every parameter clause marked <code class="language-plaintext highlighter-rouge">using</code>, whether its evidence parameter is named or
+anonymous.</li>
+</ul>
+
+<p>Comments, strings, imports, and trees outside that <code class="language-plaintext highlighter-rouge">Source</code> do not participate. If the
+source contains at least one <code class="language-plaintext highlighter-rouge">using</code> clause, render a <code class="language-plaintext highlighter-rouge">using</code> clause. Otherwise, if it
+contains at least one context bound, render context bounds. On a mixed file, <code class="language-plaintext highlighter-rouge">using</code>
+wins. If the source contains neither style, default to context bounds.</p>
+
+<p><code class="language-plaintext highlighter-rouge">solution.extraTypeParams.nonEmpty</code> overrides that file-style result and always forces
+a <strong>named</strong> <code class="language-plaintext highlighter-rouge">using</code> clause. Context-bound syntax cannot render the additional applied
+typeclass arguments without synthesizing a type lambda. Name the evidence parameter
+after the new or reused type parameter. Fixture 12 therefore renders exactly:</p>
+
+<div class="language-scala highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">private</span> <span class="k">def</span> <span class="nf">parse</span><span class="o">[</span><span class="kt">F</span><span class="o">[</span><span class="k">_</span><span class="o">]](</span><span class="n">s</span><span class="k">:</span> <span class="kt">String</span><span class="o">)(</span><span class="n">using</span> <span class="n">F</span><span class="k">:</span> <span class="kt">MonadError</span><span class="o">[</span><span class="kt">F</span>, <span class="kt">Throwable</span><span class="o">])</span><span class="k">:</span> <span class="kt">F</span><span class="o">[</span><span class="kt">Int</span><span class="o">]</span>
+</code></pre></div></div>
+
+<p>When <code class="language-plaintext highlighter-rouge">extraTypeParams</code> is empty, context-bound style renders constraints in
+<code class="language-plaintext highlighter-rouge">solution.constraints</code> symbol order, for example <code class="language-plaintext highlighter-rouge">[G[_]: Functor: FunctorFilter]</code>.
+Using style renders one named evidence parameter per constraint, in the same order; use
+the type-parameter name for a single constraint and append stable numeric suffixes
+<code class="language-plaintext highlighter-rouge">2</code>, <code class="language-plaintext highlighter-rouge">3</code>, … when there are several (<code class="language-plaintext highlighter-rouge">G</code>, <code class="language-plaintext highlighter-rouge">G2</code>, <code class="language-plaintext highlighter-rouge">G3</code>).</p>
+
+<h3 id="existing-constraint-reuse-1">Existing-constraint reuse</h3>
+
+<p>Search visible type parameters from the candidate def outward through enclosing defs
+and template owners, innermost scope first and source order within one owner. A candidate
+matches the requested kind exactly: <code class="language-plaintext highlighter-rouge">A</code> for <code class="language-plaintext highlighter-rouge">Star</code>, <code class="language-plaintext highlighter-rouge">G[_]</code> for <code class="language-plaintext highlighter-rouge">Unary</code>. Read its Cats
+constraints from both of these sources and union them:</p>
+
+<ol>
+  <li>context bounds written on that <code class="language-plaintext highlighter-rouge">Type.Param</code>; and</li>
+  <li>in-scope <code class="language-plaintext highlighter-rouge">using</code> evidence parameters whose type is an indexed Cats typeclass applied
+to that candidate type parameter.</li>
+</ol>
+
+<p>Resolve every typeclass through SemanticDB. For an applied constraint with additional
+arguments, those non-constructor arguments must be semantically identical to the
+solution’s rendered arguments; in particular <code class="language-plaintext highlighter-rouge">MonadError[G, Throwable]</code> does not match
+<code class="language-plaintext highlighter-rouge">MonadError[G, DomainError]</code>. A candidate constraint set is a superset of the solution
+iff, for every required typeclass <code class="language-plaintext highlighter-rouge">R</code>, the set contains some <code class="language-plaintext highlighter-rouge">C</code> where <code class="language-plaintext highlighter-rouge">C == R</code> or
+<code class="language-plaintext highlighter-rouge">index.isAncestor(R, C)</code>; a stronger constraint therefore satisfies a weaker one.
+This makes an existing <code class="language-plaintext highlighter-rouge">Traverse[G]</code> a valid superset of a <code class="language-plaintext highlighter-rouge">Functor[G]</code> solution.</p>
+
+<p>Choose the first matching candidate in the search order. Rewrite concrete constructor
+heads to that parameter, but emit no type parameter and no constraint. Do not emit the
+solution’s typeclass imports: the existing evidence is already in scope. Emit only the
+syntax imports required by <code class="language-plaintext highlighter-rouge">usage.ops</code>, after applying the existing-import suppression
+rules above. This is the exact contract for <code class="language-plaintext highlighter-rouge">AbstractExistingConstraintReuse</code>.</p>
+
+<h3 id="patch-anchoring">Patch anchoring</h3>
+
+<p>Every patch anchor is a node reachable from the original <code class="language-plaintext highlighter-rouge">doc.tree</code>:</p>
+
+<ul>
+  <li>When the def has no type parameters, insert the complete new type-parameter clause
+with <code class="language-plaintext highlighter-rouge">Patch.addRight(defn.name, renderedTypeParams)</code>. <code class="language-plaintext highlighter-rouge">defn.name</code> is the anchor; do
+not parse <code class="language-plaintext highlighter-rouge">doc.input.text</code> merely to manufacture a missing type-parameter-list node.</li>
+  <li>When a type-parameter clause exists, append relative to its last original
+<code class="language-plaintext highlighter-rouge">Type.Param</code>; constraint edits anchor to the original <code class="language-plaintext highlighter-rouge">Type.Param</code> or original using
+parameter clause involved.</li>
+  <li>Parameter type replacements anchor to each matching original <code class="language-plaintext highlighter-rouge">Type.Apply.tpe</code> below
+a <code class="language-plaintext highlighter-rouge">Term.Param.decltpe</code>.</li>
+  <li>Result type replacements anchor to each matching original <code class="language-plaintext highlighter-rouge">Type.Apply.tpe</code> below
+<code class="language-plaintext highlighter-rouge">defn.decltpe</code>.</li>
+  <li>Import insertion anchors after the last in-scope top-level/package <code class="language-plaintext highlighter-rouge">Import</code>. If there
+is none, anchor after the enclosing unbraced package’s <code class="language-plaintext highlighter-rouge">Pkg.ref</code>; for a source without
+a package, anchor before its first original top-level <code class="language-plaintext highlighter-rouge">Stat</code>. A candidate def implies
+such a stat exists.</li>
+</ul>
+
+<p>No edit may anchor to a tree obtained by reparsing <code class="language-plaintext highlighter-rouge">doc.input.text</code>, even when the def
+has no existing type parameters. Positions from a second parse are forbidden by
+<code class="language-plaintext highlighter-rouge">docs/RULES.md</code>.</p>
+
+<h3 id="idempotence">Idempotence</h3>
+
+<p>The current <code class="language-plaintext highlighter-rouge">UsageAnalyzer.signatureTargets</code>/<code class="language-plaintext highlighter-rouge">outerConcreteTargets</code> partially provides
+idempotence: an applied head whose symbol is a type parameter fails the
+<code class="language-plaintext highlighter-rouge">isGlobal &amp;&amp; !isTypeParameter</code> test, so <code class="language-plaintext highlighter-rouge">G[A]</code> itself is not returned as a concrete
+target. It then descends into that application’s arguments, however, and other concrete
+applications elsewhere in the signature (for example the preserved <code class="language-plaintext highlighter-rouge">Option</code> in
+<code class="language-plaintext highlighter-rouge">Option[G[A]]</code>) can still be discovered. Analyzer target discovery alone is therefore
+not a sufficient second-run guard.</p>
+
+<p>The shell must not call the analyzer for a def when both conditions hold:</p>
+
+<ol>
+  <li>a declared parameter or result type contains a <code class="language-plaintext highlighter-rouge">Type.Apply</code> whose head resolves to
+a visible type parameter; and</li>
+  <li>that type parameter has at least one visible indexed Cats constraint according to
+the context-bound/using lookup defined above.</li>
+</ol>
+
+<p>Such a def produces no candidate, no diagnostic, and no patch. Before the first rewrite
+<code class="language-plaintext highlighter-rouge">AbstractExistingConstraintReuse</code> has a constrained enclosing <code class="language-plaintext highlighter-rouge">G</code> but no <code class="language-plaintext highlighter-rouge">G[...]</code> in
+the candidate def’s signature, so it does not trip the guard; after reuse it does. This
+predicate also makes every newly introduced context-bound or using-style abstraction a
+no-op on the second run.</p>
+
+<h3 id="byte-exact-smoke-fixtures">Byte-exact smoke fixtures</h3>
+
+<p>These are complete file bodies for the two #67 smoke pairs. #67 copies them verbatim to
+the flat executed-fixture paths shown. The negative pair follows
+<code class="language-plaintext highlighter-rouge">ArrowFlowFanOutNegativeShadow.scala</code>: its input places <code class="language-plaintext highlighter-rouge">// assert:</code> on the diagnostic
+line, while its expected output omits that testkit-only assertion comment.</p>
+
+<h4 id="scalafixtestinputsrcgoldenabstractfunctorlistmapscala"><code class="language-plaintext highlighter-rouge">scalafix/testInput/src/golden/AbstractFunctorListMap.scala</code></h4>
+
+<div class="language-scala highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cm">/*
+rules = [PreferPolymorphicTypeclasses]
+ */</span>
+<span class="k">package</span> <span class="nn">golden</span>
+
+<span class="k">final</span> <span class="k">case</span> <span class="k">class</span> <span class="nc">FunctorUser</span><span class="o">(</span><span class="n">name</span><span class="k">:</span> <span class="kt">String</span><span class="o">)</span>
+
+<span class="k">object</span> <span class="nc">AbstractFunctorListMap</span> <span class="o">{</span>
+  <span class="k">private</span> <span class="k">def</span> <span class="nf">names</span><span class="o">(</span><span class="n">users</span><span class="k">:</span> <span class="kt">List</span><span class="o">[</span><span class="kt">FunctorUser</span><span class="o">])</span><span class="k">:</span> <span class="kt">List</span><span class="o">[</span><span class="kt">String</span><span class="o">]</span> <span class="k">=</span>
+    <span class="nv">users</span><span class="o">.</span><span class="py">map</span><span class="o">(</span><span class="nv">_</span><span class="o">.</span><span class="py">name</span><span class="o">)</span>
+<span class="o">}</span>
+</code></pre></div></div>
+
+<h4 id="scalafixtestoutputsrcgoldenabstractfunctorlistmapscala"><code class="language-plaintext highlighter-rouge">scalafix/testOutput/src/golden/AbstractFunctorListMap.scala</code></h4>
+
+<div class="language-scala highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cm">/*
+rules = [PreferPolymorphicTypeclasses]
+ */</span>
+<span class="k">package</span> <span class="nn">golden</span>
+
+<span class="k">import</span> <span class="nn">cats.Functor</span>
+<span class="k">import</span> <span class="nn">cats.syntax.functor.</span><span class="o">*</span>
+
+<span class="k">final</span> <span class="k">case</span> <span class="k">class</span> <span class="nc">FunctorUser</span><span class="o">(</span><span class="n">name</span><span class="k">:</span> <span class="kt">String</span><span class="o">)</span>
+
+<span class="k">object</span> <span class="nc">AbstractFunctorListMap</span> <span class="o">{</span>
+  <span class="k">private</span> <span class="k">def</span> <span class="nf">names</span><span class="o">[</span><span class="kt">G</span><span class="o">[</span><span class="k">_</span><span class="o">]</span><span class="kt">:</span> <span class="kt">Functor</span><span class="o">](</span><span class="n">users</span><span class="k">:</span> <span class="kt">G</span><span class="o">[</span><span class="kt">FunctorUser</span><span class="o">])</span><span class="k">:</span> <span class="kt">G</span><span class="o">[</span><span class="kt">String</span><span class="o">]</span> <span class="k">=</span>
+    <span class="nv">users</span><span class="o">.</span><span class="py">map</span><span class="o">(</span><span class="nv">_</span><span class="o">.</span><span class="py">name</span><span class="o">)</span>
+<span class="o">}</span>
+</code></pre></div></div>
+
+<h4 id="scalafixtestinputsrcgoldenabstractpublicboundarydeclinescala"><code class="language-plaintext highlighter-rouge">scalafix/testInput/src/golden/AbstractPublicBoundaryDecline.scala</code></h4>
+
+<div class="language-scala highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cm">/*
+rules = [PreferPolymorphicTypeclasses]
+
+PreferPolymorphicTypeclasses.widenPublic = false
+ */</span>
+<span class="k">package</span> <span class="nn">golden</span>
+
+<span class="k">final</span> <span class="k">case</span> <span class="k">class</span> <span class="nc">PublicBoundaryUser</span><span class="o">(</span><span class="n">name</span><span class="k">:</span> <span class="kt">String</span><span class="o">)</span>
+
+<span class="k">object</span> <span class="nc">AbstractPublicBoundaryDecline</span> <span class="o">{</span>
+  <span class="k">def</span> <span class="nf">names</span><span class="o">(</span><span class="n">users</span><span class="k">:</span> <span class="kt">List</span><span class="o">[</span><span class="kt">PublicBoundaryUser</span><span class="o">])</span><span class="k">:</span> <span class="kt">List</span><span class="o">[</span><span class="kt">String</span><span class="o">]</span> <span class="k">=</span> <span class="c1">// assert: PreferPolymorphicTypeclasses</span>
+    <span class="nv">users</span><span class="o">.</span><span class="py">map</span><span class="o">(</span><span class="nv">_</span><span class="o">.</span><span class="py">name</span><span class="o">)</span>
+<span class="o">}</span>
+</code></pre></div></div>
+
+<h4 id="scalafixtestoutputsrcgoldenabstractpublicboundarydeclinescala"><code class="language-plaintext highlighter-rouge">scalafix/testOutput/src/golden/AbstractPublicBoundaryDecline.scala</code></h4>
+
+<div class="language-scala highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cm">/*
+rules = [PreferPolymorphicTypeclasses]
+
+PreferPolymorphicTypeclasses.widenPublic = false
+ */</span>
+<span class="k">package</span> <span class="nn">golden</span>
+
+<span class="k">final</span> <span class="k">case</span> <span class="k">class</span> <span class="nc">PublicBoundaryUser</span><span class="o">(</span><span class="n">name</span><span class="k">:</span> <span class="kt">String</span><span class="o">)</span>
+
+<span class="k">object</span> <span class="nc">AbstractPublicBoundaryDecline</span> <span class="o">{</span>
+  <span class="k">def</span> <span class="nf">names</span><span class="o">(</span><span class="n">users</span><span class="k">:</span> <span class="kt">List</span><span class="o">[</span><span class="kt">PublicBoundaryUser</span><span class="o">])</span><span class="k">:</span> <span class="kt">List</span><span class="o">[</span><span class="kt">String</span><span class="o">]</span> <span class="k">=</span>
+    <span class="nv">users</span><span class="o">.</span><span class="py">map</span><span class="o">(</span><span class="nv">_</span><span class="o">.</span><span class="py">name</span><span class="o">)</span>
+<span class="o">}</span>
+</code></pre></div></div>
+
+<hr />
+
+<h2 id="8-gap-audit-contract">8. Gap-audit contract</h2>
+
+<p><strong>File:</strong> <code class="language-plaintext highlighter-rouge">scalafix/resources/cats-index/gaps.tsv</code>
+<strong>Test:</strong> <code class="language-plaintext highlighter-rouge">scalafix/test/src/fix/hkt/CatsIndexAuditSuite.scala</code></p>
+
+<p>Columns (tab-separated, <code class="language-plaintext highlighter-rouge">#</code>-prefixed header, sorted by column 1 per item 1’s rule):</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>column</th>
+      <th>meaning</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">typeclass</code></td>
+      <td>SemanticDB symbol, e.g. <code class="language-plaintext highlighter-rouge">cats/Bitraverse#</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">reason</code></td>
+      <td>non-empty free text: <em>why</em> it is unsupported</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">tracked</code></td>
+      <td>issue reference (<code class="language-plaintext highlighter-rouge">#33</code>) or the literal <code class="language-plaintext highlighter-rouge">none</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<p>The suite enumerates <code class="language-plaintext highlighter-rouge">index.publicTypeclasses</code> — <strong>no hard-coded typeclass list</strong> — and
+asserts four things:</p>
+
+<ol>
+  <li><strong>No unlisted gap.</strong> For every <code class="language-plaintext highlighter-rouge">tc</code> with <code class="language-plaintext highlighter-rouge">isPublic = true</code>, either
+<code class="language-plaintext highlighter-rouge">CapabilitySolver.supports(tc.symbol, index)</code> is <code class="language-plaintext highlighter-rouge">true</code>, or <code class="language-plaintext highlighter-rouge">tc.symbol</code> appears in
+<code class="language-plaintext highlighter-rouge">gaps.tsv</code>.</li>
+  <li><strong>No stale gap.</strong> Every <code class="language-plaintext highlighter-rouge">gaps.tsv</code> row whose typeclass <em>is</em> supported fails.</li>
+  <li><strong>No orphan gap.</strong> Every <code class="language-plaintext highlighter-rouge">gaps.tsv</code> typeclass exists in <code class="language-plaintext highlighter-rouge">typeclasses.tsv</code>.</li>
+  <li><strong>Well-formed.</strong> Every row has exactly 3 columns, a non-empty <code class="language-plaintext highlighter-rouge">reason</code>, and the file
+is sorted.</li>
+</ol>
+
+<p>Failure message shapes, fixed here so the fixture and the test agree:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Unsupported Cats typeclass is not listed in scalafix/resources/cats-index/gaps.tsv:
+  cats/Bitraverse#  (kind=Binary, depth=2)
+Either teach CapabilitySolver to support it, or add a row:
+  cats/Bitraverse#&lt;TAB&gt;&lt;why it is unsupported&gt;&lt;TAB&gt;#33
+</code></pre></div></div>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Stale gap in scalafix/resources/cats-index/gaps.tsv:
+  cats/Foldable#  is now supported by CapabilitySolver; remove this row.
+</code></pre></div></div>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Orphan gap in scalafix/resources/cats-index/gaps.tsv:
+  cats/NotAThing#  is not present in scalafix/resources/cats-index/typeclasses.tsv.
+</code></pre></div></div>
+
+<p><code class="language-plaintext highlighter-rouge">supports(tc, index)</code> is defined as: <code class="language-plaintext highlighter-rouge">CapabilitySolver.solve</code> returns a <code class="language-plaintext highlighter-rouge">Right</code> for the
+capability set consisting of every non-derived capability whose <code class="language-plaintext highlighter-rouge">owner</code>’s typeclass is
+<code class="language-plaintext highlighter-rouge">tc</code> — i.e. the typeclass’s own primitives. A typeclass whose kind is not in v1 (item 6)
+returns <code class="language-plaintext highlighter-rouge">false</code>, which is exactly what puts <code class="language-plaintext highlighter-rouge">Bifunctor</code>/<code class="language-plaintext highlighter-rouge">Bifoldable</code>/<code class="language-plaintext highlighter-rouge">Bitraverse</code> in
+<code class="language-plaintext highlighter-rouge">gaps.tsv</code>.</p>
+
+<hr />
+
+<h2 id="9-fixture-matrix">9. Fixture matrix</h2>
+
+<p><strong>Layout:</strong> executed fixtures only — <code class="language-plaintext highlighter-rouge">scalafix/testInput/src/golden/&lt;Name&gt;.scala</code> and
+<code class="language-plaintext highlighter-rouge">scalafix/testOutput/src/golden/&lt;Name&gt;.scala</code>, <strong>flat names</strong>, matching relative paths,
+consistent with <code class="language-plaintext highlighter-rouge">docs/GOLDEN_FIXTURES.md</code>. Nothing is added under
+<code class="language-plaintext highlighter-rouge">scalafix/test/resources/golden</code> (unexecuted; that doc forbids new fixtures there).</p>
+
+<p><strong>Rule header</strong> — every fixture, positive and negative, opens with:</p>
+
+<div class="language-scala highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cm">/*
+rules = [PreferPolymorphicTypeclasses]
+ */</span>
+<span class="k">package</span> <span class="nn">golden</span>
+</code></pre></div></div>
+
+<p><code class="language-plaintext highlighter-rouge">AbstractPublicBoundaryDecline</code> additionally pins the default explicitly, because that
+is the behaviour under test:</p>
+
+<div class="language-scala highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cm">/*
+rules = [PreferPolymorphicTypeclasses]
+
+PreferPolymorphicTypeclasses.widenPublic = false
+ */</span>
+<span class="k">package</span> <span class="nn">golden</span>
+</code></pre></div></div>
+
+<p>Negative fixtures assert their warning inline, in the style of
+<code class="language-plaintext highlighter-rouge">ArrowFlowFanOutNegativeShadow.scala</code>:</p>
+
+<div class="language-scala highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  <span class="k">private</span> <span class="k">def</span> <span class="nf">head</span><span class="o">(</span><span class="n">xs</span><span class="k">:</span> <span class="kt">List</span><span class="o">[</span><span class="kt">Int</span><span class="o">])</span><span class="k">:</span> <span class="kt">Int</span> <span class="o">=</span> <span class="nv">xs</span><span class="o">.</span><span class="py">head</span> <span class="c1">// assert: PreferPolymorphicTypeclasses</span>
+</code></pre></div></div>
+
+<p>and their <code class="language-plaintext highlighter-rouge">testOutput</code> file is byte-identical to the input except that the
+<code class="language-plaintext highlighter-rouge">// assert:</code> comment is not carried over by the testkit’s expected-output comparison —
+copy a neighbouring <code class="language-plaintext highlighter-rouge">Arrow*</code> negative pair for the exact convention. Every declined
+fixture asserts <strong>exactly one</strong> warning and <strong>zero</strong> edits.</p>
+
+<p>All input defs are <code class="language-plaintext highlighter-rouge">private</code> unless the fixture is specifically about visibility.</p>
+
+<h3 id="positive-fixtures-19">Positive fixtures (19)</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>Fixture</th>
+      <th>Input shape</th>
+      <th>Expected output shape</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>1</td>
+      <td><code class="language-plaintext highlighter-rouge">AbstractFunctorListMap</code></td>
+      <td><code class="language-plaintext highlighter-rouge">private def names(us: List[User]): List[String] = us.map(_.name)</code></td>
+      <td><code class="language-plaintext highlighter-rouge">private def names[G[_]: Functor](us: G[User]): G[String] = us.map(_.name)</code>; adds <code class="language-plaintext highlighter-rouge">cats.Functor</code>, <code class="language-plaintext highlighter-rouge">cats.syntax.functor.*</code></td>
+    </tr>
+    <tr>
+      <td>2</td>
+      <td><code class="language-plaintext highlighter-rouge">AbstractApplyMap2</code></td>
+      <td><code class="language-plaintext highlighter-rouge">private def pair(xs: List[Int], ys: List[Int]): List[Int] = xs.map2(ys)(_ + _)</code> (<code class="language-plaintext highlighter-rouge">cats.syntax.apply.*</code>)</td>
+      <td><code class="language-plaintext highlighter-rouge">[G[_]: Apply]</code>, both params and result <code class="language-plaintext highlighter-rouge">G[Int]</code>; adds <code class="language-plaintext highlighter-rouge">cats.Apply</code></td>
+    </tr>
+    <tr>
+      <td>3</td>
+      <td><code class="language-plaintext highlighter-rouge">AbstractApplicativePure</code></td>
+      <td>body uses <code class="language-plaintext highlighter-rouge">.map</code> and <code class="language-plaintext highlighter-rouge">List(x).pure</code>-style <code class="language-plaintext highlighter-rouge">pure</code></td>
+      <td><code class="language-plaintext highlighter-rouge">[G[_]: Applicative]</code>; <code class="language-plaintext highlighter-rouge">Applicative</code> beats <code class="language-plaintext highlighter-rouge">Monad</code> on key 2</td>
+    </tr>
+    <tr>
+      <td>4</td>
+      <td><code class="language-plaintext highlighter-rouge">AbstractFlatMapDependent</code></td>
+      <td><code class="language-plaintext highlighter-rouge">xs.flatMap(f).map(g)</code>, no <code class="language-plaintext highlighter-rouge">pure</code></td>
+      <td><code class="language-plaintext highlighter-rouge">[G[_]: FlatMap]</code> — owners <code class="language-plaintext highlighter-rouge">{FlatMap, Functor}</code>, <code class="language-plaintext highlighter-rouge">Functor</code> is an ancestor so the antichain is <code class="language-plaintext highlighter-rouge">[FlatMap]</code>, and <code class="language-plaintext highlighter-rouge">FlatMap</code> (5) beats <code class="language-plaintext highlighter-rouge">Monad</code> (8)</td>
+    </tr>
+    <tr>
+      <td>5</td>
+      <td><code class="language-plaintext highlighter-rouge">AbstractMonadFlatMapPure</code></td>
+      <td><code class="language-plaintext highlighter-rouge">xs.flatMap(f)</code> and <code class="language-plaintext highlighter-rouge">pure</code></td>
+      <td><code class="language-plaintext highlighter-rouge">[G[_]: Monad]</code> — worked example A of item 5</td>
+    </tr>
+    <tr>
+      <td>6</td>
+      <td><code class="language-plaintext highlighter-rouge">AbstractTraverseListTraverse</code></td>
+      <td><code class="language-plaintext highlighter-rouge">private def all(xs: List[Int]): Option[List[Int]] = xs.traverse(f)</code> with <code class="language-plaintext highlighter-rouge">f: Int =&gt; Option[Int]</code></td>
+      <td><code class="language-plaintext highlighter-rouge">[G[_]: Traverse](xs: G[Int]): Option[G[Int]]</code> — the inner <code class="language-plaintext highlighter-rouge">Option</code> stays concrete; only the outer constructor is abstracted</td>
+    </tr>
+    <tr>
+      <td>7</td>
+      <td><code class="language-plaintext highlighter-rouge">AbstractFoldableListFoldMap</code></td>
+      <td><code class="language-plaintext highlighter-rouge">xs.foldMap(_.toString)</code></td>
+      <td><code class="language-plaintext highlighter-rouge">[G[_]: Foldable]</code>, result stays <code class="language-plaintext highlighter-rouge">String</code></td>
+    </tr>
+    <tr>
+      <td>8</td>
+      <td><code class="language-plaintext highlighter-rouge">AbstractReducibleNonEmpty</code></td>
+      <td><code class="language-plaintext highlighter-rouge">NonEmptyList[Int]</code> + <code class="language-plaintext highlighter-rouge">reduceLeftTo</code></td>
+      <td><code class="language-plaintext highlighter-rouge">[G[_]: Reducible](xs: G[Int])</code></td>
+    </tr>
+    <tr>
+      <td>9</td>
+      <td><code class="language-plaintext highlighter-rouge">AbstractMonoidEmptyAndCombine</code></td>
+      <td><code class="language-plaintext highlighter-rouge">private def fold(xs: List[String]): String = xs.foldLeft("")(_ \|+\| _)</code></td>
+      <td><code class="language-plaintext highlighter-rouge">KindShape.Star</code>: <code class="language-plaintext highlighter-rouge">private def fold[A: Monoid](xs: List[A]): A</code> — the <em>element</em> is abstracted, the container is not</td>
+    </tr>
+    <tr>
+      <td>10</td>
+      <td><code class="language-plaintext highlighter-rouge">AbstractSemigroupKCombineK</code></td>
+      <td><code class="language-plaintext highlighter-rouge">xs.combineK(ys)</code> on <code class="language-plaintext highlighter-rouge">List</code></td>
+      <td><code class="language-plaintext highlighter-rouge">[G[_]: SemigroupK]</code></td>
+    </tr>
+    <tr>
+      <td>11</td>
+      <td><code class="language-plaintext highlighter-rouge">AbstractAlternativeEmptyAndChoice</code></td>
+      <td><code class="language-plaintext highlighter-rouge">pure</code>, <code class="language-plaintext highlighter-rouge">combineK</code>, and <code class="language-plaintext highlighter-rouge">MonoidK</code>’s <code class="language-plaintext highlighter-rouge">empty</code></td>
+      <td><code class="language-plaintext highlighter-rouge">[G[_]: Alternative]</code> — owners <code class="language-plaintext highlighter-rouge">{Applicative(6), SemigroupK(0), MonoidK(1)}</code>, antichain drops <code class="language-plaintext highlighter-rouge">SemigroupK</code>; single-constraint <code class="language-plaintext highlighter-rouge">Alternative</code> wins on key 1</td>
+    </tr>
+    <tr>
+      <td>12</td>
+      <td><code class="language-plaintext highlighter-rouge">AbstractMonadErrorEitherRaiseHandle</code></td>
+      <td><code class="language-plaintext highlighter-rouge">scala.util.Try[Int]</code>, <code class="language-plaintext highlighter-rouge">raiseError</code> + <code class="language-plaintext highlighter-rouge">recoverWith</code> + <code class="language-plaintext highlighter-rouge">flatMap</code></td>
+      <td><code class="language-plaintext highlighter-rouge">private def parse[F[_]](s: String)(using F: MonadError[F, Throwable]): F[Int]</code>. <strong>Deviation from the name:</strong> the input uses <code class="language-plaintext highlighter-rouge">Try</code>, not <code class="language-plaintext highlighter-rouge">Either</code>. <code class="language-plaintext highlighter-rouge">Either[String, Int] =&gt; F[Int]</code> needs a type lambda at every call site, which item 6 puts out of v1; <code class="language-plaintext highlighter-rouge">Try</code> exercises the same <code class="language-plaintext highlighter-rouge">MonadError</code> path at <code class="language-plaintext highlighter-rouge">Unary</code> kind. The name is kept so #33’s list stays traceable.</td>
+    </tr>
+    <tr>
+      <td>13</td>
+      <td><code class="language-plaintext highlighter-rouge">AbstractFunctorFilter</code></td>
+      <td><code class="language-plaintext highlighter-rouge">xs.mapFilter(f)</code> and <code class="language-plaintext highlighter-rouge">xs.map(g)</code></td>
+      <td><code class="language-plaintext highlighter-rouge">[G[_]: Functor: FunctorFilter]</code> — worked example B of item 5</td>
+    </tr>
+    <tr>
+      <td>14</td>
+      <td><code class="language-plaintext highlighter-rouge">AbstractTraverseFilter</code></td>
+      <td><code class="language-plaintext highlighter-rouge">xs.traverseFilter(f)</code> only</td>
+      <td><code class="language-plaintext highlighter-rouge">[G[_]: TraverseFilter]</code></td>
+    </tr>
+    <tr>
+      <td>15</td>
+      <td><code class="language-plaintext highlighter-rouge">AbstractContravariantContramap</code></td>
+      <td><code class="language-plaintext highlighter-rouge">private def byName(s: Show[String]): Show[User] = s.contramap(_.name)</code></td>
+      <td><code class="language-plaintext highlighter-rouge">private def byName[G[_]: Contravariant](s: G[String]): G[User]</code></td>
+    </tr>
+    <tr>
+      <td>16</td>
+      <td><code class="language-plaintext highlighter-rouge">AbstractInvariantImap</code></td>
+      <td><code class="language-plaintext highlighter-rouge">Semigroup[String]</code> + <code class="language-plaintext highlighter-rouge">.imap</code></td>
+      <td><code class="language-plaintext highlighter-rouge">[G[_]: Invariant]</code> — <code class="language-plaintext highlighter-rouge">Invariant</code> (0) is the override-chain root of <code class="language-plaintext highlighter-rouge">imap</code></td>
+    </tr>
+    <tr>
+      <td>17</td>
+      <td><code class="language-plaintext highlighter-rouge">AbstractComonadExtractCoflatMap</code></td>
+      <td><code class="language-plaintext highlighter-rouge">Eval[Int]</code> + <code class="language-plaintext highlighter-rouge">.coflatMap(w =&gt; w.extract + 1)</code></td>
+      <td><code class="language-plaintext highlighter-rouge">[G[_]: Comonad]</code></td>
+    </tr>
+    <tr>
+      <td>18</td>
+      <td><code class="language-plaintext highlighter-rouge">AbstractDefer</code></td>
+      <td><code class="language-plaintext highlighter-rouge">Eval.defer(...)</code> recursion</td>
+      <td><code class="language-plaintext highlighter-rouge">[G[_]: Defer]</code>, body uses <code class="language-plaintext highlighter-rouge">Defer[G].defer(...)</code></td>
+    </tr>
+    <tr>
+      <td>19</td>
+      <td><code class="language-plaintext highlighter-rouge">AbstractExistingConstraintReuse</code></td>
+      <td>class already declares <code class="language-plaintext highlighter-rouge">[G[_]: Traverse]</code>; a private def takes <code class="language-plaintext highlighter-rouge">List[User]</code> and only maps</td>
+      <td>reuses <code class="language-plaintext highlighter-rouge">G</code>: <code class="language-plaintext highlighter-rouge">private def names(us: G[User]): G[String]</code> — <strong>no</strong> new type parameter, <strong>no</strong> new constraint, <code class="language-plaintext highlighter-rouge">cats.syntax.functor.*</code> import only if absent</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="negative-fixtures-13">Negative fixtures (13)</h3>
+
+<p>Every row: <strong>no patch + exactly one warning</strong>, at the position given.</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>Fixture</th>
+      <th>Input trigger</th>
+      <th><code class="language-plaintext highlighter-rouge">DeclineReason</code></th>
+      <th>Warning position</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>1</td>
+      <td><code class="language-plaintext highlighter-rouge">AbstractConcretePatternMatch</code></td>
+      <td><code class="language-plaintext highlighter-rouge">xs match { case Nil =&gt; 0; case h :: t =&gt; ... }</code></td>
+      <td><code class="language-plaintext highlighter-rouge">ConcreteConstructorMatch("Nil")</code></td>
+      <td>the <code class="language-plaintext highlighter-rouge">case Nil</code> pattern</td>
+    </tr>
+    <tr>
+      <td>2</td>
+      <td><code class="language-plaintext highlighter-rouge">AbstractConcreteOrderSpecific</code></td>
+      <td><code class="language-plaintext highlighter-rouge">xs.sorted.head</code></td>
+      <td><code class="language-plaintext highlighter-rouge">OrderOrIndexSpecific("head")</code></td>
+      <td>the <code class="language-plaintext highlighter-rouge">.head</code> call</td>
+    </tr>
+    <tr>
+      <td>3</td>
+      <td><code class="language-plaintext highlighter-rouge">AbstractConcreteOptionBranchingWithoutCapability</code></td>
+      <td><code class="language-plaintext highlighter-rouge">if (o.isDefined) o.get else d</code></td>
+      <td><code class="language-plaintext highlighter-rouge">ConcreteConstructorMatch("isDefined")</code></td>
+      <td>the <code class="language-plaintext highlighter-rouge">.isDefined</code> call</td>
+    </tr>
+    <tr>
+      <td>4</td>
+      <td><code class="language-plaintext highlighter-rouge">AbstractConcreteEitherLeftSpecificWithoutBifunctor</code></td>
+      <td><code class="language-plaintext highlighter-rouge">e.left.map(f)</code> on <code class="language-plaintext highlighter-rouge">Either[String, Int]</code></td>
+      <td><code class="language-plaintext highlighter-rouge">UnsupportedKind(Binary)</code></td>
+      <td>the def name</td>
+    </tr>
+    <tr>
+      <td>5</td>
+      <td><code class="language-plaintext highlighter-rouge">AbstractPublicBoundaryDecline</code></td>
+      <td>a <strong>public</strong> def otherwise identical to fixture 1 of the positive table</td>
+      <td><code class="language-plaintext highlighter-rouge">PublicBoundary("names")</code></td>
+      <td>the def name</td>
+    </tr>
+    <tr>
+      <td>6</td>
+      <td><code class="language-plaintext highlighter-rouge">AbstractAmbiguousWeakestCapability</code></td>
+      <td><code class="language-plaintext highlighter-rouge">xs.reduce(_ + _)</code> on <code class="language-plaintext highlighter-rouge">List</code></td>
+      <td><code class="language-plaintext highlighter-rouge">AmbiguousCapability(List(cats/Reducible#reduceLeft()., cats/kernel/Semigroup#combine().))</code> — <code class="language-plaintext highlighter-rouge">stdlib.tsv</code> maps <code class="language-plaintext highlighter-rouge">reduce</code> to two unrelated capability roots, and <code class="language-plaintext highlighter-rouge">List</code> is not provably non-empty</td>
+      <td>the <code class="language-plaintext highlighter-rouge">.reduce</code> call</td>
+    </tr>
+    <tr>
+      <td>7</td>
+      <td><code class="language-plaintext highlighter-rouge">AbstractTypeParamNameConflict</code></td>
+      <td>enclosing scope declares type params named <code class="language-plaintext highlighter-rouge">G</code>, <code class="language-plaintext highlighter-rouge">H</code> <strong>and</strong> <code class="language-plaintext highlighter-rouge">K</code></td>
+      <td><code class="language-plaintext highlighter-rouge">NameConflict(List("G", "H", "K"))</code></td>
+      <td>the def name</td>
+    </tr>
+    <tr>
+      <td>8</td>
+      <td><code class="language-plaintext highlighter-rouge">AbstractMissingCatsEvidence</code></td>
+      <td><code class="language-plaintext highlighter-rouge">private def total[B](xs: List[B]): B = xs.foldMap(identity)</code> — <code class="language-plaintext highlighter-rouge">foldMap</code> needs <code class="language-plaintext highlighter-rouge">Monoid[B]</code>, <code class="language-plaintext highlighter-rouge">B</code> has no such bound</td>
+      <td><code class="language-plaintext highlighter-rouge">MissingEvidence</code></td>
+      <td>the <code class="language-plaintext highlighter-rouge">.foldMap</code> call</td>
+    </tr>
+    <tr>
+      <td>9</td>
+      <td><code class="language-plaintext highlighter-rouge">AbstractMutableOrThrowingBody</code></td>
+      <td>body contains <code class="language-plaintext highlighter-rouge">var acc</code> and <code class="language-plaintext highlighter-rouge">throw new IllegalStateException(...)</code></td>
+      <td><code class="language-plaintext highlighter-rouge">UnsafeBody("var")</code></td>
+      <td>the <code class="language-plaintext highlighter-rouge">var</code> definition</td>
+    </tr>
+    <tr>
+      <td>10</td>
+      <td><code class="language-plaintext highlighter-rouge">AbstractUnsupportedCatsApiGapFailsIndexAudit</code></td>
+      <td>uses a <code class="language-plaintext highlighter-rouge">gaps.tsv</code>-listed API (<code class="language-plaintext highlighter-rouge">Bitraverse</code>-shaped)</td>
+      <td><code class="language-plaintext highlighter-rouge">UnsupportedKind(Binary)</code>; paired with <code class="language-plaintext highlighter-rouge">CatsIndexAuditSuite</code> proving the symbol is listed</td>
+      <td>the def name</td>
+    </tr>
+    <tr>
+      <td>11</td>
+      <td><code class="language-plaintext highlighter-rouge">AbstractBifunctorEitherBimap</code></td>
+      <td><code class="language-plaintext highlighter-rouge">e.bimap(f, g)</code> on <code class="language-plaintext highlighter-rouge">Either[String, Int]</code></td>
+      <td><code class="language-plaintext highlighter-rouge">UnsupportedKind(Binary)</code> — <strong>re-designated from positive</strong>, see item 6</td>
+      <td>the def name</td>
+    </tr>
+    <tr>
+      <td>12</td>
+      <td><code class="language-plaintext highlighter-rouge">AbstractBitraverse</code></td>
+      <td><code class="language-plaintext highlighter-rouge">e.bitraverse(f, g)</code></td>
+      <td><code class="language-plaintext highlighter-rouge">UnsupportedKind(Binary)</code> — <strong>re-designated from positive</strong></td>
+      <td>the def name</td>
+    </tr>
+    <tr>
+      <td>13</td>
+      <td><code class="language-plaintext highlighter-rouge">AbstractTypeLambdaEitherRight</code></td>
+      <td><code class="language-plaintext highlighter-rouge">private def widen(e: Either[String, Int]): Either[String, String] = e.map(_.toString)</code></td>
+      <td><code class="language-plaintext highlighter-rouge">UnsupportedKind(Binary)</code> — <strong>re-designated from positive</strong>; abstracting the right slot needs <code class="language-plaintext highlighter-rouge">[X] =&gt;&gt; Either[String, X]</code></td>
+      <td>the def name</td>
+    </tr>
+  </tbody>
+</table>
+
+<hr />
+
+<h2 id="phase--subtask-breakdown">Phase / subtask breakdown</h2>
+
+<p>The child issues already exist. This is the shape they should have after this design
+lands; where a child contradicts a decision above, the child is amended (item-by-item
+list in the #36 hand-off), not the design.</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>Leaf</th>
+      <th>Phase</th>
+      <th>Depends on</th>
+      <th>Runner tier</th>
+      <th>Why that tier</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>37</td>
+      <td>Generate + check in the Cats capability inventory</td>
+      <td>source-of-truth</td>
+      <td>#36</td>
+      <td><strong>strong</strong> (<code class="language-plaintext highlighter-rouge">codex/gpt-5/high</code>, <code class="language-plaintext highlighter-rouge">claude/opus</code>)</td>
+      <td>TASTy inspector API + override-chain rooting + a new mill module; the smoke test above de-risks it but does not write it</td>
+    </tr>
+    <tr>
+      <td>38</td>
+      <td>Capability IR + index loader</td>
+      <td>implement</td>
+      <td>#36, #37</td>
+      <td><strong>mid</strong> (<code class="language-plaintext highlighter-rouge">claude/sonnet</code>, <code class="language-plaintext highlighter-rouge">codex/gpt-5/medium</code>)</td>
+      <td>pure parsing against a fixed format and fixed signatures</td>
+    </tr>
+    <tr>
+      <td>39</td>
+      <td>Usage analyzer</td>
+      <td>implement</td>
+      <td>#36, #38</td>
+      <td><strong>strong</strong> (<code class="language-plaintext highlighter-rouge">codex/gpt-5/high</code>, <code class="language-plaintext highlighter-rouge">claude/opus</code>)</td>
+      <td>highest-risk leaf: Scala 3 extension-method and <code class="language-plaintext highlighter-rouge">cats.syntax</code> symbol resolution is fiddly</td>
+    </tr>
+    <tr>
+      <td>40</td>
+      <td>Solver</td>
+      <td>implement</td>
+      <td>#36, #38</td>
+      <td><strong>mid</strong> (<code class="language-plaintext highlighter-rouge">codex/gpt-5/medium</code>)</td>
+      <td>the algorithm is fully specified in item 5, including candidate enumeration and the total order</td>
+    </tr>
+    <tr>
+      <td>41</td>
+      <td>Rewriter + rule shell</td>
+      <td>implement</td>
+      <td>#36, #39, #40</td>
+      <td><strong>strong</strong> (<code class="language-plaintext highlighter-rouge">codex/gpt-5/high</code>, <code class="language-plaintext highlighter-rouge">claude/opus</code>)</td>
+      <td>patch rendering, constraint-style detection, idempotence</td>
+    </tr>
+    <tr>
+      <td>42</td>
+      <td>Positive fixtures (19)</td>
+      <td>test</td>
+      <td>#36, #41</td>
+      <td><strong>cheap</strong> (<code class="language-plaintext highlighter-rouge">claude/haiku</code>, <code class="language-plaintext highlighter-rouge">claude/sonnet</code>)</td>
+      <td>the matrix states input and output shape per row</td>
+    </tr>
+    <tr>
+      <td>43</td>
+      <td>Negative fixtures (13) + gap audit</td>
+      <td>test</td>
+      <td>#36, #41</td>
+      <td><strong>cheap→mid</strong> (<code class="language-plaintext highlighter-rouge">claude/sonnet</code>)</td>
+      <td>matrix-driven; the audit test needs the fixed message shapes from item 8</td>
+    </tr>
+    <tr>
+      <td>44</td>
+      <td>Corpus run</td>
+      <td>test</td>
+      <td>#42, #43</td>
+      <td><strong>mid</strong> (<code class="language-plaintext highlighter-rouge">claude/sonnet</code>)</td>
+      <td>mechanical execution plus judgement calls recorded in a report</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Ordering constraint worth naming: #42 and #43 are cheap <strong>only because</strong> items 5, 6, 8
+and 9 are decided here. A fixture author who has to re-derive whether <code class="language-plaintext highlighter-rouge">{flatMap, pure}</code>
+means <code class="language-plaintext highlighter-rouge">Monad</code> or <code class="language-plaintext highlighter-rouge">FlatMap + Applicative</code> is doing design, not fixtures, and needs a
+strong runner. Keep the matrix authoritative.</p>
+
+<h2 id="conclusions">Conclusions</h2>
+
+<p><code class="language-plaintext highlighter-rouge">stdlib.tsv</code> has the final column layout <code class="language-plaintext highlighter-rouge">concreteMethod</code>, <code class="language-plaintext highlighter-rouge">kind</code>, <code class="language-plaintext highlighter-rouge">owner</code>,
+<code class="language-plaintext highlighter-rouge">method</code>, <code class="language-plaintext highlighter-rouge">note</code>. <code class="language-plaintext highlighter-rouge">kind</code> is <code class="language-plaintext highlighter-rouge">capability</code> or <code class="language-plaintext highlighter-rouge">decline</code>; decline names are restricted
+to <code class="language-plaintext highlighter-rouge">ConcreteConstructorMatch</code>, <code class="language-plaintext highlighter-rouge">OrderOrIndexSpecific</code>, and <code class="language-plaintext highlighter-rouge">UnsafeBody</code>.</p>
+
+<p>The stable analyzer-facing signatures are:</p>
+
+<div class="language-scala highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">sealed</span> <span class="k">trait</span> <span class="nc">StdlibMapping</span>
+
+<span class="k">object</span> <span class="nc">StdlibMapping</span> <span class="o">{</span>
+  <span class="k">final</span> <span class="k">case</span> <span class="k">class</span> <span class="nc">ToCapability</span><span class="o">(</span><span class="n">owner</span><span class="k">:</span> <span class="kt">Symbol</span><span class="o">,</span> <span class="n">method</span><span class="k">:</span> <span class="kt">Symbol</span><span class="o">)</span>
+      <span class="k">extends</span> <span class="nc">StdlibMapping</span>
+  <span class="k">final</span> <span class="k">case</span> <span class="k">class</span> <span class="nc">ToDecline</span><span class="o">(</span><span class="n">reason</span><span class="k">:</span> <span class="kt">String</span><span class="o">)</span> <span class="k">extends</span> <span class="nc">StdlibMapping</span>
+<span class="o">}</span>
+
+<span class="k">final</span> <span class="k">case</span> <span class="k">class</span> <span class="nc">StdlibEntry</span><span class="o">(</span>
+    <span class="n">concreteMethod</span><span class="k">:</span> <span class="kt">Symbol</span><span class="o">,</span>
+    <span class="n">mapping</span><span class="k">:</span> <span class="kt">StdlibMapping</span>
+<span class="o">)</span>
+</code></pre></div></div>
+
+<hr />
+
+<h2 id="10-as-built--the-wiring-and-where-it-departs-from-this-document">10. As built — the wiring, and where it departs from this document</h2>
+
+<p>The rule shell now runs on the engine (<code class="language-plaintext highlighter-rouge">UsageAnalyzer</code> → <code class="language-plaintext highlighter-rouge">CapabilitySolver</code> →
+<code class="language-plaintext highlighter-rouge">HktRewriter</code>) instead of the fixture-name table it shipped with. What landed
+differs from the sections above in the following places; each is a decision, and
+the sections above stay as the record of what was intended.</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Decision</th>
+      <th>As built</th>
+      <th>Why</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Config type</td>
+      <td><code class="language-plaintext highlighter-rouge">PreferPolymorphicTypeclassesConfig(rewrite, widenPublic = false, maxConstraints = 2)</code>; the old <code class="language-plaintext highlighter-rouge">PreferHKTConfig</code> and a <code class="language-plaintext highlighter-rouge">PreferPolymorphicTypeclasses(PreferHKTConfig)</code> constructor are retained</td>
+      <td>item 7’s shape, plus <code class="language-plaintext highlighter-rouge">rewrite</code> for parity with the container rule. The old names stay because MiMa checks this module against the last release</td>
+    </tr>
+    <tr>
+      <td>Kind shapes</td>
+      <td><code class="language-plaintext highlighter-rouge">Unary</code> only</td>
+      <td><code class="language-plaintext highlighter-rouge">Star</code> widening is <code class="language-plaintext highlighter-rouge">PreferPolymorphicCollectionOps</code>’ subject (<code class="language-plaintext highlighter-rouge">A: Monoid</code>), and nothing in this rule renders a <code class="language-plaintext highlighter-rouge">Star</code> target. <code class="language-plaintext highlighter-rouge">Binary</code> is declined as item 6 says</td>
+    </tr>
+    <tr>
+      <td>Type-parameter names</td>
+      <td><code class="language-plaintext highlighter-rouge">G</code>, <code class="language-plaintext highlighter-rouge">H</code>, <code class="language-plaintext highlighter-rouge">K</code></td>
+      <td>as in negative fixture 7, which needs all three taken to reach <code class="language-plaintext highlighter-rouge">NameConflict</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">DeclineReason.NoCapability</code></td>
+      <td>never reported</td>
+      <td>the analyzer declines on the <em>first</em> unresolvable call anywhere in the body, usually an element-level one (<code class="language-plaintext highlighter-rouge">String#toInt</code>). Reporting it would warn on most definitions. Same rationale as <code class="language-plaintext highlighter-rouge">PreferPolymorphicCollections.mentionsContainer</code></td>
+    </tr>
+    <tr>
+      <td>Body rewriting</td>
+      <td>none, as item 7a’s rendering contract requires</td>
+      <td>which makes fixtures 8, 12, 13, 14 and 18 (<code class="language-plaintext highlighter-rouge">Reducible[NonEmptyList]</code>, <code class="language-plaintext highlighter-rouge">Try(...)</code>, <code class="language-plaintext highlighter-rouge">FunctorFilter[Option]</code>, <code class="language-plaintext highlighter-rouge">TraverseFilter[List]</code>, <code class="language-plaintext highlighter-rouge">Eval.defer</code>) <strong>no-ops</strong> rather than the rewrites their rows describe: each body names the concrete constructor, and only a body rewrite could carry it over. They are kept as fixtures asserting exactly that, and the shapes are listed under <code class="language-plaintext highlighter-rouge">docs/RULES.md</code> “Candidate Rules”</td>
+    </tr>
+    <tr>
+      <td>Fixture 9 (<code class="language-plaintext highlighter-rouge">AbstractMonoidEmptyAndCombine</code>)</td>
+      <td>widens the <em>container</em> to <code class="language-plaintext highlighter-rouge">[A: Monoid, G[_]: Foldable]</code> rather than the element</td>
+      <td>the input’s <code class="language-plaintext highlighter-rouge">foldLeft</code> is a <code class="language-plaintext highlighter-rouge">Foldable</code> capability on <code class="language-plaintext highlighter-rouge">xs</code>; element abstraction is the other rule</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">MissingEvidence</code></td>
+      <td>not produced</td>
+      <td>no element-evidence check exists; the fixture supplies <code class="language-plaintext highlighter-rouge">Monoid[B]</code> locally so the widened form compiles</td>
+    </tr>
+    <tr>
+      <td>Stale imports</td>
+      <td>the widened constructor’s import is removed when nothing else in the file names it</td>
+      <td>otherwise <code class="language-plaintext highlighter-rouge">import cats.Eval</code> survives a rewrite that deleted its last use, and <code class="language-plaintext highlighter-rouge">-Wunused:imports -Werror</code> turns our rewrite into a build failure</td>
+    </tr>
+    <tr>
+      <td>Infix calls</td>
+      <td><code class="language-plaintext highlighter-rouge">Term.ApplyInfix</code> counts as a call on its left-hand side</td>
+      <td><code class="language-plaintext highlighter-rouge">x &lt;+&gt; y</code> is <code class="language-plaintext highlighter-rouge">combineK</code>, and Cats syntax is written infix. Infix calls do not <em>extend</em> a chain: <code class="language-plaintext highlighter-rouge">w.extract + 1</code> is arithmetic on an element, not an operation on the container</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">&lt;+&gt;</code></td>
+      <td>added to the hand-written <code class="language-plaintext highlighter-rouge">stdlib.tsv</code></td>
+      <td>the generator emits an <code class="language-plaintext highlighter-rouge">Ops</code> row per capability <em>name</em>, so operator aliases (<code class="language-plaintext highlighter-rouge">&lt;+&gt;</code> → <code class="language-plaintext highlighter-rouge">combineK</code>) have no row. One audited row states the alias; a general alias pass would have to read <code class="language-plaintext highlighter-rouge">Ops</code> method bodies</td>
+    </tr>
+    <tr>
+      <td>Visibility</td>
+      <td>the analyzer is always asked <code class="language-plaintext highlighter-rouge">widenPublic = true</code>, and the rule applies <code class="language-plaintext highlighter-rouge">UsageAnalyzer.isWidenable</code> to the <em>solved</em> result</td>
+      <td>asking the analyzer to decide it reports <code class="language-plaintext highlighter-rouge">PublicBoundary</code> for every public definition that merely mentions a concrete type. On <code class="language-plaintext highlighter-rouge">skreeep2</code>’s <code class="language-plaintext highlighter-rouge">core</code> that was 17 warnings, of which 1 was about a definition anything could have widened</td>
+    </tr>
+    <tr>
+      <td>Declines</td>
+      <td>reported only when the signature names a unary constructor <code class="language-plaintext highlighter-rouge">CatsIndex.knowsConstructor</code> recognises</td>
+      <td>otherwise <code class="language-plaintext highlighter-rouge">def sumPlanes(out: FloatBuffer, base: Int): Unit</code> is told its <code class="language-plaintext highlighter-rouge">var</code> blocks an abstraction that never existed. Trialling on <code class="language-plaintext highlighter-rouge">skreeep2</code> this cut the whole-repo warning count from 52 to 12, with no rewrite lost</td>
+    </tr>
+    <tr>
+      <td>Overrides</td>
+      <td>new <code class="language-plaintext highlighter-rouge">DeclineReason.InheritedSignature</code>, raised in <code class="language-plaintext highlighter-rouge">UsageAnalyzer</code> for a def that declares <code class="language-plaintext highlighter-rouge">override</code> or has <code class="language-plaintext highlighter-rouge">overriddenSymbols</code></td>
+      <td>found by the same trial: the rule widened <code class="language-plaintext highlighter-rouge">override def apply[A](fa: Seq[A]): List[A]</code> into <code class="language-plaintext highlighter-rouge">apply[A, G[_]: Foldable]</code>, which implements nothing and does not compile. It is a decline for every consumer of the engine, so it belongs to the analyzer, not to this rule</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="call-sites-and-the-shape-of-the-trial-that-found-them">Call sites, and the shape of the trial that found them</h3>
+
+<p>The <code class="language-plaintext highlighter-rouge">skreeep2</code> trial drove three further decisions, all about the <em>other</em> end of
+a widened signature:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Decision</th>
+      <th>As built</th>
+      <th>Why</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Chain exit</td>
+      <td><code class="language-plaintext highlighter-rouge">capabilities.tsv</code> gained an <code class="language-plaintext highlighter-rouge">exits</code> column, generated from TASTy: whether a capability’s result mentions the abstracted constructor. <code class="language-plaintext highlighter-rouge">UsageAnalyzer</code> stops growing a call chain at an exit, and <code class="language-plaintext highlighter-rouge">ContainerFlow</code> stops accounting there</td>
+      <td><code class="language-plaintext highlighter-rouge">xs.toList.zipWithIndex.map(f)</code> is a <code class="language-plaintext highlighter-rouge">Foldable</code> use of <code class="language-plaintext highlighter-rouge">xs</code> and then a <code class="language-plaintext highlighter-rouge">List</code> expression. Read as one chain it declines as order-specific; read with the exit it widens, which is what <code class="language-plaintext highlighter-rouge">SinesGenerator.fromRatios</code> needed</td>
+    </tr>
+    <tr>
+      <td>Rule overlap</td>
+      <td><code class="language-plaintext highlighter-rouge">PreferPolymorphicTypeclasses.containers</code> defaults to the collections, which it leaves to <code class="language-plaintext highlighter-rouge">PreferPolymorphicCollections</code></td>
+      <td>run together on one signature the two rules produced <code class="language-plaintext highlighter-rouge">names[S[_]: Functor][G[_]: Functor](users: SG[String])</code></td>
+    </tr>
+    <tr>
+      <td>Call sites</td>
+      <td><code class="language-plaintext highlighter-rouge">fix.container.WidenScope</code> (see <code class="language-plaintext highlighter-rouge">docs/RULES.md</code>), opt-in per rule as <code class="language-plaintext highlighter-rouge">crossFile</code></td>
+      <td>widening <code class="language-plaintext highlighter-rouge">fromRatios[T]</code> to <code class="language-plaintext highlighter-rouge">fromRatios[T, S[_]]</code> compiled <code class="language-plaintext highlighter-rouge">signals</code> and broke <code class="language-plaintext highlighter-rouge">score</code>, whose <code class="language-plaintext highlighter-rouge">fromRatios[V](...)</code> names one type argument too few</td>
+    </tr>
+  </tbody>
+</table>
+
+
+      <footer class="site-footer">
+        
+        <span class="site-footer-credits">This page was generated by <a href="https://pages.github.com">GitHub Pages</a>.</span>
+      </footer>
+    </main>
+  </body>
+</html>

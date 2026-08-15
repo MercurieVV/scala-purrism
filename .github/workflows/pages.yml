@@ -1,8 +1,8 @@
 name: Pages
 
 # The rule reference lives in `docs/` and is rendered by mdoc, which compiles
-# every Scala block in it. CI already runs that render as a check; this
-# workflow publishes its output.
+# every Scala block in it. The docs runner then applies Laika's Helium theme,
+# matching Typelevel's mdoc site stack without requiring an sbt build.
 on:
   push:
     branches:
@@ -11,7 +11,6 @@ on:
       - "docs/**"
       - "mdoc-docs/**"
       - "build.mill"
-      - ".github/pages/**"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
@@ -43,18 +42,11 @@ jobs:
       - name: Render docs
         run: ./mill docs.run
 
-      - name: Add the Jekyll configuration
-        run: cp .github/pages/_config.yml website/docs/_config.yml
-
       - uses: actions/configure-pages@v6
 
-      - name: Build the site
-        uses: actions/jekyll-build-pages@v1
-        with:
-          source: website/docs
-          destination: ./_site
-
       - uses: actions/upload-pages-artifact@v5
+        with:
+          path: website/site
 
   deploy:
     needs: build

@@ -13,7 +13,7 @@ import fix.hkt.HktRewriter
 import fix.hkt.UsageAnalyzer
 import fix.hkt.UsageResult
 
-final case class PreferElementTypeclassesConfig(
+final case class PreferPolymorphicCollectionOpsConfig(
     rewrite: Boolean = true,
     widenPublic: Boolean = false,
     maxConstraints: Int = 2,
@@ -21,10 +21,11 @@ final case class PreferElementTypeclassesConfig(
       List("List", "Seq", "Vector", "IndexedSeq", "LazyList")
 )
 
-object PreferElementTypeclassesConfig {
-  val default: PreferElementTypeclassesConfig = PreferElementTypeclassesConfig()
+object PreferPolymorphicCollectionOpsConfig {
+  val default: PreferPolymorphicCollectionOpsConfig =
+    PreferPolymorphicCollectionOpsConfig()
 
-  implicit val decoder: ConfDecoder[PreferElementTypeclassesConfig] =
+  implicit val decoder: ConfDecoder[PreferPolymorphicCollectionOpsConfig] =
     ConfDecoder.from { conf =>
       conf
         .getOrElse("rewrite")(default.rewrite)
@@ -32,7 +33,7 @@ object PreferElementTypeclassesConfig {
         .product(conf.getOrElse("maxConstraints")(default.maxConstraints))
         .product(conf.getOrElse("containers")(default.containers))
         .map { case (((rewrite, widenPublic), maxConstraints), containers) =>
-          PreferElementTypeclassesConfig(
+          PreferPolymorphicCollectionOpsConfig(
             rewrite,
             widenPublic,
             maxConstraints,
@@ -45,10 +46,10 @@ object PreferElementTypeclassesConfig {
 /** The concrete element types this rule is willing to assume an instance for.
   *
   * A separate configuration class rather than another field on
-  * [[PreferElementTypeclassesConfig]] because that one is published: adding a
-  * field to a case class changes `apply`, `copy` and the constructor, and MiMa
-  * reads that as a break. Decoded from the same `PreferElementTypeclasses`
-  * block, so it is one key to the user.
+  * [[PreferPolymorphicCollectionOpsConfig]] because that one is published:
+  * adding a field to a case class changes `apply`, `copy` and the constructor,
+  * and MiMa reads that as a break. Decoded from the same
+  * `PreferPolymorphicCollectionOps` block, so it is one key to the user.
   *
   * An empty list turns the filter off: every element type is then taken to have
   * the instance the rewrite needs, which is what to set when the codebase ships
@@ -99,7 +100,7 @@ object ElementTypesConfig {
   *   rows.mkString_("[", ",", "]")
   * }}}
   *
-  * Separate from [[PreferContainerTypeclasses]] because **it can change what
+  * Separate from [[PreferPolymorphicCollections]] because **it can change what
   * the program prints.** `mkString` renders each element with `toString`;
   * `mkString_` renders it with `Show`, and the two agree only where someone
   * made them agree. `sum` and `combineAll` are the same story for `Numeric`
@@ -109,43 +110,45 @@ object ElementTypesConfig {
   * Declines when the element's instance is not known to exist. For an element
   * that is a type parameter the rule adds the bound itself; for a concrete one
   * it only fires where Cats ships the instance, which is the list in
-  * [[PreferElementTypeclasses.instanceProvided]].
+  * [[PreferPolymorphicCollectionOps.instanceProvided]].
   */
-final class PreferElementTypeclasses(
-    config: PreferElementTypeclassesConfig,
+final class PreferPolymorphicCollectionOps(
+    config: PreferPolymorphicCollectionOpsConfig,
     crossFile: CrossFileConfig,
     elementTypes: ElementTypesConfig,
     classpath: List[java.nio.file.Path]
-) extends SemanticRule("PreferElementTypeclasses") {
+) extends SemanticRule("PreferPolymorphicCollectionOps") {
 
   def this(
-      config: PreferElementTypeclassesConfig,
+      config: PreferPolymorphicCollectionOpsConfig,
       crossFile: CrossFileConfig,
       classpath: List[java.nio.file.Path]
   ) = this(config, crossFile, ElementTypesConfig.default, classpath)
 
-  def this(config: PreferElementTypeclassesConfig) =
+  def this(config: PreferPolymorphicCollectionOpsConfig) =
     this(config, CrossFileConfig.default, Nil)
 
-  def this() = this(PreferElementTypeclassesConfig.default)
+  def this() = this(PreferPolymorphicCollectionOpsConfig.default)
 
   override def withConfiguration(
       configuration: Configuration
   ): Configured[Rule] =
     configuration.conf
-      .getOrElse("PreferElementTypeclasses")(
-        PreferElementTypeclassesConfig.default
+      .getOrElse("PreferPolymorphicCollectionOps")(
+        PreferPolymorphicCollectionOpsConfig.default
       )
       .product(
         configuration.conf
-          .getOrElse("PreferElementTypeclasses")(CrossFileConfig.default)
+          .getOrElse("PreferPolymorphicCollectionOps")(CrossFileConfig.default)
       )
       .product(
         configuration.conf
-          .getOrElse("PreferElementTypeclasses")(ElementTypesConfig.default)
+          .getOrElse("PreferPolymorphicCollectionOps")(
+            ElementTypesConfig.default
+          )
       )
       .map { case ((config, crossFile), elementTypes) =>
-        new PreferElementTypeclasses(
+        new PreferPolymorphicCollectionOps(
           config,
           crossFile,
           elementTypes,
@@ -154,7 +157,7 @@ final class PreferElementTypeclasses(
       }
 
   /** This rule widens the container too, so the call sites that name their type
-    * arguments are its problem as much as `PreferContainerTypeclasses`'. See
+    * arguments are its problem as much as `PreferPolymorphicCollections`'. See
     * [[WidenScope]].
     */
   private lazy val scope: WidenScope =

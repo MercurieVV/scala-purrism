@@ -1,5 +1,5 @@
 /*
-rules = [PreferElementTypeclasses]
+rules = [PreferPolymorphicCollectionOps]
  */
 package golden
 

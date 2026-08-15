@@ -21,7 +21,8 @@ import scalafix.v1.TypeApplyTree
   * own `map` -- is not on the tree at all. It is in `doc.synthetics`, keyed by
   * the position the conversion was applied at. Recovering it is the difference
   * between "this receiver has a Cats Functor" and "this identifier is spelled
-  * map", so both `PreferHKTTypeclasses` and the Cats expression rules need it.
+  * map", so both `PreferPolymorphicTypeclasses` and the Cats expression rules
+  * need it.
   */
 object SemanticSupport {
 
@@ -114,8 +115,8 @@ object SemanticSupport {
 
   /** Aliases the compiler also emits for the same constructors, which
     * [[stdlibConstructors]] does not carry. Kept separate because that table
-    * drives `PreferHKTTypeclasses` decline decisions, and widening it there
-    * would change which definitions that rule refuses to abstract.
+    * drives `PreferPolymorphicTypeclasses` decline decisions, and widening it
+    * there would change which definitions that rule refuses to abstract.
     */
   private val stdlibConstructorAliases: Map[String, Set[String]] = Map(
     "Right" -> Set("scala/package.Right."),

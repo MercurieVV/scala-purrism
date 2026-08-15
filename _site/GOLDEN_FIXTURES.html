@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en-US">
+  <head>
+    <meta charset="UTF-8">
+
+<!-- Begin Jekyll SEO tag v2.9.0 -->
+<title>scala-purrism | Scalafix semantic rules for refactoring Typelevel Scala toward pure, polymorphic Cats style.</title>
+<meta name="generator" content="Jekyll v4.4.1" />
+<meta property="og:title" content="scala-purrism" />
+<meta property="og:locale" content="en_US" />
+<meta name="description" content="Scalafix semantic rules for refactoring Typelevel Scala toward pure, polymorphic Cats style." />
+<meta name="twitter:description" property="og:description" content="Scalafix semantic rules for refactoring Typelevel Scala toward pure, polymorphic Cats style." />
+<link rel="canonical" href="http://localhost:4000/scala-purrism/GOLDEN_FIXTURES.html" />
+<meta property="og:url" content="http://localhost:4000/scala-purrism/GOLDEN_FIXTURES.html" />
+<meta property="og:site_name" content="scala-purrism" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:title" content="scala-purrism" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebPage","description":"Scalafix semantic rules for refactoring Typelevel Scala toward pure, polymorphic Cats style.","headline":"scala-purrism","url":"http://localhost:4000/scala-purrism/GOLDEN_FIXTURES.html"}</script>
+<!-- End Jekyll SEO tag -->
+
+    <link rel="preconnect" href="https://fonts.gstatic.com">
+    <link rel="preload" href="https://fonts.googleapis.com/css?family=Open+Sans:400,700&display=swap" as="style" type="text/css" crossorigin>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#157878">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="stylesheet" href="/scala-purrism/assets/css/style.css?v=">
+    <!-- start custom head snippets, customize with your own _includes/head-custom.html file -->
+
+<!-- Setup Google Analytics -->
+
+
+
+<!-- You can set your favicon here -->
+<!-- link rel="shortcut icon" type="image/x-icon" href="/scala-purrism/favicon.ico" -->
+
+<!-- end custom head snippets -->
+
+  </head>
+  <body>
+    <a id="skip-to-content" href="#content">Skip to the content.</a>
+
+    <header class="page-header" role="banner">
+      <h1 class="project-name">scala-purrism</h1>
+      <h2 class="project-tagline">Scalafix semantic rules for refactoring Typelevel Scala toward pure, polymorphic Cats style.</h2>
+      
+      
+    </header>
+
+    <main id="content" class="main-content" role="main">
+      <h1 id="golden-fixtures">Golden Fixtures</h1>
+
+<p>Golden fixtures are the contract for this project. There are two kinds, and they
+are not interchangeable.</p>
+
+<h2 id="executed-fixtures-scalafixtestinput-and-scalafixtestoutput">Executed fixtures (<code class="language-plaintext highlighter-rouge">scalafix/testInput</code> and <code class="language-plaintext highlighter-rouge">scalafix/testOutput</code>)</h2>
+
+<p>These are the ones a test actually runs. <code class="language-plaintext highlighter-rouge">SemanticFixtureSuite</code> compiles every
+file under <code class="language-plaintext highlighter-rouge">scalafix/testInput/src</code> with SemanticDB, runs the rules named in the
+file’s own header comment, and diffs the result against the same-named file
+under <code class="language-plaintext highlighter-rouge">scalafix/testOutput/src</code>.</p>
+
+<p>Each input file opens with a testkit comment naming its rules and any config:</p>
+
+<div class="language-scala highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cm">/*
+rules = [PropagateOpaqueType]
+
+PropagateOpaqueType.types = [
+  { name = "TicketId", underlying = "scala/Predef.String#", seeds = [ "golden/Ticket#id." ] }
+]
+ */</span>
+<span class="k">package</span> <span class="nn">golden</span>
+</code></pre></div></div>
+
+<p>Rules:</p>
+
+<ul>
+  <li>Use identical relative paths under <code class="language-plaintext highlighter-rouge">testInput/src</code> and <code class="language-plaintext highlighter-rouge">testOutput/src</code>.</li>
+  <li><strong>Both</strong> modules must compile. An expected output that does not typecheck
+fails the build, which is deliberate — it is what proves a rewrite produces
+valid code.</li>
+  <li>If a rule changes nothing, no output file is needed.</li>
+  <li>Keep each fixture focused on one behaviour.</li>
+  <li>Prefer realistic Cats and Cats Effect examples over synthetic syntax puzzles.</li>
+  <li>Set <code class="language-plaintext highlighter-rouge">SCALAFIX_SAVE_EXPECT=true</code> to overwrite expected files with current
+output. Read the diff before committing it.</li>
+</ul>
+
+<p>A fixture that exists only to give the analysis something to inspect — rather
+than to pin a rewrite — should name a rule that changes nothing, so it needs no
+output file. <code class="language-plaintext highlighter-rouge">golden/KleisliFlow.scala</code> does this with <code class="language-plaintext highlighter-rouge">rules = [DisableSyntax]</code>.</p>
+
+<h2 id="illustrative-fixtures-scalafixtestresourcesgoldentypelevel">Illustrative fixtures (<code class="language-plaintext highlighter-rouge">scalafix/test/resources/golden/typelevel</code>)</h2>
+
+<p>The older <code class="language-plaintext highlighter-rouge">base</code>/<code class="language-plaintext highlighter-rouge">expected</code> pairs under <code class="language-plaintext highlighter-rouge">scalafix/test/resources</code>. <strong>No test
+runs a rule against these.</strong> <code class="language-plaintext highlighter-rouge">GoldenFixtureSuite</code> only checks that the two
+directory listings match; the files document intent for opaque-type propagation
+and the Typelevel rules but nothing enforces them. Several already disagree with
+what their rule actually produces.</p>
+
+<p>Do not add fixtures here — an unexecuted fixture reports green no matter what
+the rule does. New work belongs in <code class="language-plaintext highlighter-rouge">testInput</code>/<code class="language-plaintext highlighter-rouge">testOutput</code>.</p>
+
+<h2 id="why-the-split-exists">Why the split exists</h2>
+
+<p><code class="language-plaintext highlighter-rouge">scalafix-testkit</code>, which supplies the machinery for executed fixtures, is
+ScalaTest-based while this project runs munit, and the entry points needed to
+construct a <code class="language-plaintext highlighter-rouge">SemanticDocument</code> are <code class="language-plaintext highlighter-rouge">private[scalafix]</code>. <code class="language-plaintext highlighter-rouge">MunitSemanticRuleSuite</code>
+lives in package <code class="language-plaintext highlighter-rouge">scalafix.testkit</code> for exactly that reason; see its scaladoc.</p>
+
+
+      <footer class="site-footer">
+        
+        <span class="site-footer-credits">This page was generated by <a href="https://pages.github.com">GitHub Pages</a>.</span>
+      </footer>
+    </main>
+  </body>
+</html>

@@ -14,11 +14,11 @@ import fix.hkt.HktRewriter
 import fix.hkt.UsageAnalyzer
 import fix.hkt.UsageResult
 
-final case class PreferHKTTypeclassesConfig(
+final case class PreferPolymorphicTypeclassesConfig(
     rewrite: Boolean = true,
     widenPublic: Boolean = false,
     maxConstraints: Int = 2,
-    /** Constructors this rule leaves to `PreferContainerTypeclasses`.
+    /** Constructors this rule leaves to `PreferPolymorphicCollections`.
       *
       * Both rules widen a unary constructor to a type parameter, and run
       * together they widen the same one twice --
@@ -26,16 +26,17 @@ final case class PreferHKTTypeclassesConfig(
       * signature. The collections are the container rule's subject: it names
       * the parameter `S`, reports positional access, and is configured with
       * this same list. Set this to `[]` to widen collections with this rule
-      * where `PreferContainerTypeclasses` is not enabled.
+      * where `PreferPolymorphicCollections` is not enabled.
       */
     containers: List[String] =
       List("List", "Seq", "Vector", "IndexedSeq", "LazyList")
 )
 
-object PreferHKTTypeclassesConfig {
-  val default: PreferHKTTypeclassesConfig = PreferHKTTypeclassesConfig()
+object PreferPolymorphicTypeclassesConfig {
+  val default: PreferPolymorphicTypeclassesConfig =
+    PreferPolymorphicTypeclassesConfig()
 
-  implicit val decoder: ConfDecoder[PreferHKTTypeclassesConfig] =
+  implicit val decoder: ConfDecoder[PreferPolymorphicTypeclassesConfig] =
     ConfDecoder.from { conf =>
       conf
         .getOrElse("rewrite")(default.rewrite)
@@ -43,7 +44,7 @@ object PreferHKTTypeclassesConfig {
         .product(conf.getOrElse("maxConstraints")(default.maxConstraints))
         .product(conf.getOrElse("containers")(default.containers))
         .map { case (((rewrite, widenPublic), maxConstraints), containers) =>
-          PreferHKTTypeclassesConfig(
+          PreferPolymorphicTypeclassesConfig(
             rewrite,
             widenPublic,
             maxConstraints,
@@ -55,8 +56,8 @@ object PreferHKTTypeclassesConfig {
 
 /** The shape this rule's configuration had before it was wired to the `fix.hkt`
   * engine. Retained so the published constructor
-  * `PreferHKTTypeclasses(PreferHKTConfig)` keeps resolving; new configuration
-  * goes on [[PreferHKTTypeclassesConfig]].
+  * `PreferPolymorphicTypeclasses(PreferHKTConfig)` keeps resolving; new
+  * configuration goes on [[PreferPolymorphicTypeclassesConfig]].
   */
 final case class PreferHKTConfig(
     widenPublic: Boolean = false
@@ -102,15 +103,16 @@ final case class HKTDeclineDiagnostic(
   * The rule is a wiring of the shared capability engine -- `UsageAnalyzer`
   * resolves each body call to the Cats capability it needs, `CapabilitySolver`
   * picks the weakest constraint set covering them, `HktRewriter` renders the
-  * signature and the imports. `PreferContainerTypeclasses` is the same engine
+  * signature and the imports. `PreferPolymorphicCollections` is the same engine
   * pointed at collections only; this rule takes any unary constructor the index
   * knows -- `Eval`, `Show`, `Semigroup`, `Option`, `List`.
   *
   * Only `KindShape.Unary` targets are widened. `Star` targets (abstracting an
-  * *element* to `A: Monoid`) belong to `PreferElementTypeclasses`, and `Binary`
-  * ones are out of v1 by `docs/design/PreferHKTTypeclasses.md` item 6: Scala 3
-  * does not reliably infer `[X] =>> Either[E, X]` at the call sites, so the
-  * rewrite would compile at the definition and break at every caller.
+  * *element* to `A: Monoid`) belong to `PreferPolymorphicCollectionOps`, and
+  * `Binary` ones are out of v1 by `docs/design/PreferPolymorphicTypeclasses.md`
+  * item 6: Scala 3 does not reliably infer `[X] =>> Either[E, X]` at the call
+  * sites, so the rewrite would compile at the definition and break at every
+  * caller.
   *
   * The body is never rewritten. A definition whose body names the concrete
   * constructor in a way the signature widening would invalidate -- an operation
@@ -118,31 +120,33 @@ final case class HKTDeclineDiagnostic(
   * names the constructor -- is declined by `ContainerFlow` instead of being
   * half-abstracted.
   */
-final class PreferHKTTypeclasses(
-    config: PreferHKTTypeclassesConfig,
+final class PreferPolymorphicTypeclasses(
+    config: PreferPolymorphicTypeclassesConfig,
     crossFile: CrossFileConfig,
     classpath: List[java.nio.file.Path]
-) extends SemanticRule("PreferHKTTypeclasses") {
+) extends SemanticRule("PreferPolymorphicTypeclasses") {
 
-  def this(config: PreferHKTTypeclassesConfig) =
+  def this(config: PreferPolymorphicTypeclassesConfig) =
     this(config, CrossFileConfig.default, Nil)
 
-  def this() = this(PreferHKTTypeclassesConfig.default)
+  def this() = this(PreferPolymorphicTypeclassesConfig.default)
 
   def this(legacy: PreferHKTConfig) =
-    this(PreferHKTTypeclassesConfig(widenPublic = legacy.widenPublic))
+    this(PreferPolymorphicTypeclassesConfig(widenPublic = legacy.widenPublic))
 
   override def withConfiguration(
       configuration: Configuration
   ): Configured[Rule] =
     configuration.conf
-      .getOrElse("PreferHKTTypeclasses")(PreferHKTTypeclassesConfig.default)
+      .getOrElse("PreferPolymorphicTypeclasses")(
+        PreferPolymorphicTypeclassesConfig.default
+      )
       .product(
         configuration.conf
-          .getOrElse("PreferHKTTypeclasses")(CrossFileConfig.default)
+          .getOrElse("PreferPolymorphicTypeclasses")(CrossFileConfig.default)
       )
       .map { case (config, crossFile) =>
-        new PreferHKTTypeclasses(
+        new PreferPolymorphicTypeclasses(
           config,
           crossFile,
           configuration.scalacClasspath.map(_.toNIO)
@@ -435,7 +439,7 @@ final class PreferHKTTypeclasses(
       }
       .nextOption()
 
-  /** Whether the constructor is one `PreferContainerTypeclasses` owns.
+  /** Whether the constructor is one `PreferPolymorphicCollections` owns.
     *
     * `["*"]` cedes every constructor, which is the setting for a run where the
     * container rule is configured with the same wildcard and this rule is only
@@ -552,9 +556,9 @@ final class PreferHKTTypeclasses(
     }
 
   /** `G` first: it is what the fixtures and
-    * `docs/design/PreferHKTTypeclasses.md` name the abstracted constructor, and
-    * `F` is left alone because a file that already abstracts over an effect has
-    * usually spent it.
+    * `docs/design/PreferPolymorphicTypeclasses.md` name the abstracted
+    * constructor, and `F` is left alone because a file that already abstracts
+    * over an effect has usually spent it.
     */
   private val TypeParamNames: List[String] = List("G", "H", "K")
 

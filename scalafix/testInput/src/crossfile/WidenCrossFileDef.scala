@@ -1,7 +1,7 @@
 /*
-rules = [PreferContainerTypeclasses]
-PreferContainerTypeclasses.crossFile = true
-PreferContainerTypeclasses.widenPublic = true
+rules = [PreferPolymorphicCollections]
+PreferPolymorphicCollections.crossFile = true
+PreferPolymorphicCollections.widenPublic = true
 
 # The *definition* half. `render` declares a type parameter already, so a call
 # site is free to write `render[Int](...)` -- and after widening that call names

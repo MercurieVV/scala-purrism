@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en-US">
+  <head>
+    <meta charset="UTF-8">
+
+<!-- Begin Jekyll SEO tag v2.9.0 -->
+<title>scala-purrism | Scalafix semantic rules for refactoring Typelevel Scala toward pure, polymorphic Cats style.</title>
+<meta name="generator" content="Jekyll v4.4.1" />
+<meta property="og:title" content="scala-purrism" />
+<meta property="og:locale" content="en_US" />
+<meta name="description" content="Scalafix semantic rules for refactoring Typelevel Scala toward pure, polymorphic Cats style." />
+<meta name="twitter:description" property="og:description" content="Scalafix semantic rules for refactoring Typelevel Scala toward pure, polymorphic Cats style." />
+<link rel="canonical" href="http://localhost:4000/scala-purrism/PUBLISHING.html" />
+<meta property="og:url" content="http://localhost:4000/scala-purrism/PUBLISHING.html" />
+<meta property="og:site_name" content="scala-purrism" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:title" content="scala-purrism" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebPage","description":"Scalafix semantic rules for refactoring Typelevel Scala toward pure, polymorphic Cats style.","headline":"scala-purrism","url":"http://localhost:4000/scala-purrism/PUBLISHING.html"}</script>
+<!-- End Jekyll SEO tag -->
+
+    <link rel="preconnect" href="https://fonts.gstatic.com">
+    <link rel="preload" href="https://fonts.googleapis.com/css?family=Open+Sans:400,700&display=swap" as="style" type="text/css" crossorigin>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#157878">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="stylesheet" href="/scala-purrism/assets/css/style.css?v=">
+    <!-- start custom head snippets, customize with your own _includes/head-custom.html file -->
+
+<!-- Setup Google Analytics -->
+
+
+
+<!-- You can set your favicon here -->
+<!-- link rel="shortcut icon" type="image/x-icon" href="/scala-purrism/favicon.ico" -->
+
+<!-- end custom head snippets -->
+
+  </head>
+  <body>
+    <a id="skip-to-content" href="#content">Skip to the content.</a>
+
+    <header class="page-header" role="banner">
+      <h1 class="project-name">scala-purrism</h1>
+      <h2 class="project-tagline">Scalafix semantic rules for refactoring Typelevel Scala toward pure, polymorphic Cats style.</h2>
+      
+      
+    </header>
+
+    <main id="content" class="main-content" role="main">
+      <h1 id="publishing">Publishing</h1>
+
+<p>The publishable artifact is:</p>
+
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>io.github.mercurievv:scala-purrism-scalafix_3:&lt;version&gt;
+</code></pre></div></div>
+
+<p>Publishing uses Mill’s Sonatype Central publisher.</p>
+
+<h2 id="required-setup">Required Setup</h2>
+
+<ol>
+  <li>Rename the GitHub repository to <code class="language-plaintext highlighter-rouge">scala-purrism</code> or update <code class="language-plaintext highlighter-rouge">Project.repositoryName</code> in <code class="language-plaintext highlighter-rouge">build.mill</code>.</li>
+  <li>Verify the <code class="language-plaintext highlighter-rouge">io.github.mercurievv</code> namespace in Sonatype Central.</li>
+  <li>Confirm the project license before the first immutable release. The current POM metadata declares Apache-2.0.</li>
+  <li>Add these GitHub Actions secrets:</li>
+</ol>
+
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>MILL_PGP_PASSPHRASE
+MILL_PGP_SECRET_BASE64
+MILL_SONATYPE_PASSWORD
+MILL_SONATYPE_USERNAME
+</code></pre></div></div>
+
+<p><code class="language-plaintext highlighter-rouge">MILL_SONATYPE_USERNAME</code> and <code class="language-plaintext highlighter-rouge">MILL_SONATYPE_PASSWORD</code> should be a Sonatype Central portal token username/password pair.</p>
+
+<h2 id="local-checks">Local Checks</h2>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>rtk mill scalafix.compile
+rtk mill scalafix.test
+rtk mill docs.run
+rtk mill scalafix.publishM2Local
+</code></pre></div></div>
+
+<h2 id="release-flow">Release Flow</h2>
+
+<ol>
+  <li>Update <code class="language-plaintext highlighter-rouge">Project.publishVersion</code> in <code class="language-plaintext highlighter-rouge">build.mill</code> to the release version.</li>
+  <li>Merge the version change after CI passes.</li>
+  <li>Tag the exact commit:</li>
+</ol>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>rtk git tag v0.2.0
+rtk git push origin v0.2.0
+</code></pre></div></div>
+
+<p>The <code class="language-plaintext highlighter-rouge">Release</code> workflow publishes tagged versions to Sonatype Central.</p>
+
+<h2 id="documentation-site">Documentation Site</h2>
+
+<p><a href="https://mercurievv.github.io/scala-purrism/">https://mercurievv.github.io/scala-purrism/</a>, published by the <code class="language-plaintext highlighter-rouge">Pages</code>
+workflow on every push to <code class="language-plaintext highlighter-rouge">master</code> that touches <code class="language-plaintext highlighter-rouge">docs/</code>, <code class="language-plaintext highlighter-rouge">mdoc-docs/</code>,
+<code class="language-plaintext highlighter-rouge">build.mill</code> or the workflow’s own files. The repository’s Pages source is
+already set to <em>GitHub Actions</em>, so no repository setting changes with this.</p>
+
+<p>The workflow runs <code class="language-plaintext highlighter-rouge">docs.run</code>, which first renders <code class="language-plaintext highlighter-rouge">docs/</code> with mdoc and then
+hands the generated Markdown to Laika. Laika applies the Helium documentation
+theme used by Typelevel sites and writes the deployable HTML to <code class="language-plaintext highlighter-rouge">website/site</code>.</p>
+
+<p>To preview it as it will be served:</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>rtk mill docs.run
+rtk python3 <span class="nt">-m</span> http.server 4242 <span class="nt">--directory</span> website/site
+</code></pre></div></div>
+
+
+      <footer class="site-footer">
+        
+        <span class="site-footer-credits">This page was generated by <a href="https://pages.github.com">GitHub Pages</a>.</span>
+      </footer>
+    </main>
+  </body>
+</html>

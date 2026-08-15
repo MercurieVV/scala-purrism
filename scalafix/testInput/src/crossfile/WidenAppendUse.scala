@@ -1,7 +1,7 @@
 /*
-rules = [PreferContainerTypeclasses]
-PreferContainerTypeclasses.crossFile = true
-PreferContainerTypeclasses.widenPublic = true
+rules = [PreferPolymorphicCollections]
+PreferPolymorphicCollections.crossFile = true
+PreferPolymorphicCollections.widenPublic = true
 
 # The *calling* half: the container is read off the argument this call already
 # passes, and named.

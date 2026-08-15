@@ -1,10 +1,10 @@
 /*
-rules = [PreferContainerTypeclasses]
+rules = [PreferPolymorphicCollections]
  */
 package golden
 
 final class ContainerHandedOverDecline {
-  private def names(users: List[String]): List[String] = // assert: PreferContainerTypeclasses
+  private def names(users: List[String]): List[String] = // assert: PreferPolymorphicCollections
     users.map(user => user.toUpperCase)
 
   val asValue: List[String] => List[String] = names

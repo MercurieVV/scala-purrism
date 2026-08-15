@@ -14,7 +14,7 @@ import fix.hkt.HktRewriter
 import fix.hkt.UsageAnalyzer
 import fix.hkt.UsageResult
 
-final case class PreferContainerTypeclassesConfig(
+final case class PreferPolymorphicCollectionsConfig(
     rewrite: Boolean = true,
     widenPublic: Boolean = false,
     maxConstraints: Int = 2,
@@ -22,11 +22,11 @@ final case class PreferContainerTypeclassesConfig(
       List("List", "Seq", "Vector", "IndexedSeq", "LazyList")
 )
 
-object PreferContainerTypeclassesConfig {
-  val default: PreferContainerTypeclassesConfig =
-    PreferContainerTypeclassesConfig()
+object PreferPolymorphicCollectionsConfig {
+  val default: PreferPolymorphicCollectionsConfig =
+    PreferPolymorphicCollectionsConfig()
 
-  implicit val decoder: ConfDecoder[PreferContainerTypeclassesConfig] =
+  implicit val decoder: ConfDecoder[PreferPolymorphicCollectionsConfig] =
     ConfDecoder.from { conf =>
       conf
         .getOrElse("rewrite")(default.rewrite)
@@ -34,7 +34,7 @@ object PreferContainerTypeclassesConfig {
         .product(conf.getOrElse("maxConstraints")(default.maxConstraints))
         .product(conf.getOrElse("containers")(default.containers))
         .map { case (((rewrite, widenPublic), maxConstraints), containers) =>
-          PreferContainerTypeclassesConfig(
+          PreferPolymorphicCollectionsConfig(
             rewrite,
             widenPublic,
             maxConstraints,
@@ -73,30 +73,30 @@ final case class ContainerAbstractionDiagnostic(
   * question is answerable from the file scalafix was handed; for a public one
   * it is not, and `docs/RULES.md` forbids deciding it per file.
   */
-final class PreferContainerTypeclasses(
-    config: PreferContainerTypeclassesConfig,
+final class PreferPolymorphicCollections(
+    config: PreferPolymorphicCollectionsConfig,
     crossFile: CrossFileConfig,
     classpath: List[java.nio.file.Path]
-) extends SemanticRule("PreferContainerTypeclasses") {
+) extends SemanticRule("PreferPolymorphicCollections") {
 
-  def this(config: PreferContainerTypeclassesConfig) =
+  def this(config: PreferPolymorphicCollectionsConfig) =
     this(config, CrossFileConfig.default, Nil)
 
-  def this() = this(PreferContainerTypeclassesConfig.default)
+  def this() = this(PreferPolymorphicCollectionsConfig.default)
 
   override def withConfiguration(
       configuration: Configuration
   ): Configured[Rule] =
     configuration.conf
-      .getOrElse("PreferContainerTypeclasses")(
-        PreferContainerTypeclassesConfig.default
+      .getOrElse("PreferPolymorphicCollections")(
+        PreferPolymorphicCollectionsConfig.default
       )
       .product(
         configuration.conf
-          .getOrElse("PreferContainerTypeclasses")(CrossFileConfig.default)
+          .getOrElse("PreferPolymorphicCollections")(CrossFileConfig.default)
       )
       .map { case (config, crossFile) =>
-        new PreferContainerTypeclasses(
+        new PreferPolymorphicCollections(
           config,
           crossFile,
           configuration.scalacClasspath.map(_.toNIO)

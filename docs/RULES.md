@@ -18,6 +18,8 @@
 - The idiom rules are individually idempotent but not confluent in a single pass, so run them to a fixpoint. One rule's output is another's input: `PreferOptionIdioms` turns `opt.map(f).getOrElse(F.unit)` into a `fold`, and that `fold` is what `PreferEffectIdioms` recognises as `traverse_`. Neither sees the other's work within a pass, because both match the text scalafix handed them. `IdiomCrossRule` and `IdiomCrossRuleSecondPass` pin both halves.
 - A rule that consumes another rule's output needs a recompile between them. SemanticDB describes the code as it was compiled; after a signature rewrite the payload is stale, and a rule reading types from it is reasoning about code that no longer exists. `PreferKleisli` → recompile → `PreferArrow` is the pipeline, not one invocation listing both.
 - `PreferCatsFunctions` normalization/preservation/ranking/decline semantics are specified in [Prefer Cats Functions](PREFER_CATS_FUNCTIONS.md); conform to that contract rather than re-deriving equivalence rules ad hoc.
+- Since 0.9.0 the three signature-widening rules are `PreferPolymorphicTypeclasses`, `PreferPolymorphicCollections`, and `PreferPolymorphicCollectionOps` (formerly `PreferHKTTypeclasses`, `PreferContainerTypeclasses`, and `PreferElementTypeclasses`). The old names, old config case classes, and old `rules = [...]` entries stay resolvable as deprecated forwarders (`scalafix/src/fix/DeprecatedPolymorphicAliases.scala`) for one deprecation cycle before removal.
+- `PreferCatsExpressions` is the umbrella for the three rules that rewrite an expression toward the Cats API, each on a different tree shape: `PreferCatsFunctions` (a whole method body, matched against an index of known Cats source functions), `PreferCatsSyntax` (a summoner call, `Typeclass[F].method(fa)` → dot syntax), and `SimplifyCatsExpressions` (a dot-syntax sub-expression already in that shape, collapsed to a tighter combinator). None takes its own configuration.
 
 ## Change Closures
 
@@ -40,15 +42,15 @@ The meaning is not shared, and the difference is not a detail:
   widened body is fatal, because there `S` is universally quantified and cannot
   be instantiated: `Phrase(pitches.map(f), d)` is the failing shape.
 
-Seating `PreferContainerTypeclasses` on the opaque closure was tried and
+Seating `PreferPolymorphicCollections` on the opaque closure was tried and
 reverted: forward reachability leaves the definition through its own return,
 which the closure calls an escape and inference calls ordinary. `ContainerFlow`
 stays syntactic and in-body for that reason, not for want of a graph.
 
 ## Widening and its call sites
 
-`PreferElementTypeclasses`, `PreferContainerTypeclasses` and
-`PreferHKTTypeclasses` each name what they abstract — the element, the
+`PreferPolymorphicCollectionOps`, `PreferPolymorphicCollections` and
+`PreferPolymorphicTypeclasses` each name what they abstract — the element, the
 collection, any other unary constructor — and `PreferTypeParameters` runs all
 three, named for the mechanism they share. Keep new members named after their
 subject: the umbrella is the only place the mechanism is the identity.
@@ -85,7 +87,7 @@ Both repairs read the argument from the payload rather than its spelling: a
 companion it applies.
 
 **What gets widened is configuration, and the default is a list.** Each rule's
-`containers` names the constructors it claims, and `PreferElementTypeclasses`
+`containers` names the constructors it claims, and `PreferPolymorphicCollectionOps`
 additionally names the concrete element types it will assume an instance for.
 `fix.ContainerNames` gives that list one wildcard, `"*"`, meaning every
 candidate: every constructor the Cats index has a theory of. `WidenScope` has no
@@ -104,7 +106,7 @@ arguments only through an *abstract* head, mirroring
 `Ref`, declined for being binary, and no rule ever widens the `Option` inside
 it — descending anyway made every such def a candidate and stripped the type
 arguments off its call sites for nothing. The wildcard is a value rather than the empty list because empty already
-means "widen nothing" here and "cede nothing" in `PreferHKTTypeclasses`, and
+means "widen nothing" here and "cede nothing" in `PreferPolymorphicTypeclasses`, and
 inverting it would change what existing configurations do. The two lists are one
 setting in practice: a wildcard on the container rule wants the same wildcard on
 the HKT rule's cede-list, or both widen one signature.
@@ -130,8 +132,8 @@ by module with dependents first.
 Shapes surveyed and specified, not yet implemented:
 
 - `PreferNonEmpty` — `require(xs.nonEmpty)` on a collection parameter is `NonEmptyList`/`NonEmptyVector`, and a `f(xs: A*)` that reduces its argument is `f(head: A, tail: A*)`. Deletes the runtime check rather than validating it. Signature-changing, so it needs the project-wide call-site verdict.
-- Summon-style bodies. `UsageAnalyzer` attributes a capability to the *receiver* of a call, so `Reducible[NonEmptyList].reduce(xs)` states nothing about `xs` — the container is only an argument — and `PreferHKTTypeclasses` leaves it alone. Reading it would also mean rewriting `Reducible[NonEmptyList]` to `Reducible[G]` in the body, which no rule in `fix.hkt` does today.
-- Result-position containers. `def square[T](count: Int, from: Int): Seq[(T, T)] = Range(...).map(...)` names a container the caller never supplies, so `PreferContainerTypeclasses.isParameter` refuses it: widening the signature alone gives `square[S[_]]: S[(T, T)]` over a body that still returns a `Seq`, which is not a program. Reaching `S` here means *building* it — `Range(...).foldMap(k => (...).pure[S])` under `Applicative` and `MonoidK` — and that is a body rewrite, the same wall as the entry below. Cats has no `Range ~> S`.
+- Summon-style bodies. `UsageAnalyzer` attributes a capability to the *receiver* of a call, so `Reducible[NonEmptyList].reduce(xs)` states nothing about `xs` — the container is only an argument — and `PreferPolymorphicTypeclasses` leaves it alone. Reading it would also mean rewriting `Reducible[NonEmptyList]` to `Reducible[G]` in the body, which no rule in `fix.hkt` does today.
+- Result-position containers. `def square[T](count: Int, from: Int): Seq[(T, T)] = Range(...).map(...)` names a container the caller never supplies, so `PreferPolymorphicCollections.isParameter` refuses it: widening the signature alone gives `square[S[_]]: S[(T, T)]` over a body that still returns a `Seq`, which is not a program. Reaching `S` here means *building* it — `Range(...).foldMap(k => (...).pure[S])` under `Applicative` and `MonoidK` — and that is a body rewrite, the same wall as the entry below. Cats has no `Range ~> S`.
 - Lifting a concrete constructor into `F`. `private def parse(s: String): Try[Int] = Try(s.toInt)` is a `MonadError` in disguise, but reaching `parse[F[_]: MonadError[*, Throwable]]` means rewriting the body to `F.fromTry(Try(...))`. The engine widens signatures; a body rewrite is a second rule.
 - Element-level evidence. Widening `xs: List[B]` to `G[B]` under `Foldable` says nothing about the `Monoid[B]` that `xs.foldMap(identity)` also needs. Today the compiler is the check: if the evidence is absent the widened file does not compile. `DeclineReason.MissingEvidence` exists for the rule that would decline instead.
 

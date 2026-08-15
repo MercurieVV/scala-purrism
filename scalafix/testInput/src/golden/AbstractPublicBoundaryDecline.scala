@@ -1,17 +1,17 @@
 /*
-rules = [PreferHKTTypeclasses]
+rules = [PreferPolymorphicTypeclasses]
 
-PreferHKTTypeclasses.widenPublic = false
+PreferPolymorphicTypeclasses.widenPublic = false
 
-# `List` is `PreferContainerTypeclasses`' by default; the visibility rule under
+# `List` is `PreferPolymorphicCollections`' by default; the visibility rule under
 # test is this one's.
-PreferHKTTypeclasses.containers = []
+PreferPolymorphicTypeclasses.containers = []
  */
 package golden
 
 final case class User(name: String)
 
 object AbstractPublicBoundaryDecline {
-  def names(us: List[User]): List[String] = // assert: PreferHKTTypeclasses
+  def names(us: List[User]): List[String] = // assert: PreferPolymorphicTypeclasses
     us.map(_.name)
 }

@@ -6,11 +6,11 @@ import munit.FunSuite
 
 import scalafix.v1.Symbol
 
-/** Enforces the gap-audit contract from `docs/design/PreferHKTTypeclasses.md`,
-  * item 8: every public indexed Cats typeclass is either supported by
-  * `CapabilitySolver`, or listed in `scalafix/resources/cats-index/gaps.tsv`
-  * with a rationale. Enumerates `index.publicTypeclasses` — no typeclass name
-  * is hard-coded here.
+/** Enforces the gap-audit contract from
+  * `docs/design/PreferPolymorphicTypeclasses.md`, item 8: every public indexed
+  * Cats typeclass is either supported by `CapabilitySolver`, or listed in
+  * `scalafix/resources/cats-index/gaps.tsv` with a rationale. Enumerates
+  * `index.publicTypeclasses` — no typeclass name is hard-coded here.
   */
 final class CatsIndexAuditSuite extends FunSuite {
   private val gapsPath = "scalafix/resources/cats-index/gaps.tsv"
