@@ -70,9 +70,11 @@ Runs `TypeclassWeakening`, `PreferKleisli`, `PreferArrow`,
 `PreferCatsFunctions`, `PreferTypeParameters`, `PreferCatsSyntax`, and
 `SimplifyCatsExpressions`.
 
-```diff
-- rules = [ TypeclassWeakening, PreferKleisli, PreferArrow, PreferCatsSyntax ]
-+ rules = [ TypelevelPurrism ]
+```scala mdoc:passthrough
+print(docs.DocDiff.render(
+  before = "rules = [ TypeclassWeakening, PreferKleisli, PreferArrow, PreferCatsSyntax ]",
+  after = "rules = [ TypelevelPurrism ]"
+))
 ```
 
 Since 0.8.0 the widening member is `PreferTypeParameters` — all three of
@@ -98,10 +100,17 @@ purely at the signature.
 Weakens over-strong effect bounds when the body only needs weaker Cats
 capabilities.
 
-```diff
-- def bump[F[_]: Sync](fa: F[Int]): F[Int] =
-+ def bump[F[_]: Monad](fa: F[Int]): F[Int] =
+```scala mdoc:passthrough
+print(docs.DocDiff.render(
+  before = """
+def bump[F[_]: Sync](fa: F[Int]): F[Int] =
     fa.map(_ + 1)
+""",
+  after = """
+def bump[F[_]: Monad](fa: F[Int]): F[Int] =
+    fa.map(_ + 1)
+"""
+))
 ```
 
 ```scala mdoc:compile-only
@@ -116,11 +125,17 @@ Config: none.
 Turns effectful data-in/data-out methods into `Kleisli` values and re-splits
 direct call sites.
 
-```diff
-- def load[F[_]: Monad](id: Long): F[String] =
--   id.toString.pure[F]
-+ def load[F[_]: Monad]: Kleisli[F, Long, String] =
-+   Kleisli(id => id.toString.pure[F])
+```scala mdoc:passthrough
+print(docs.DocDiff.render(
+  before = """
+def load[F[_]: Monad](id: Long): F[String] =
+  id.toString.pure[F]
+""",
+  after = """
+def load[F[_]: Monad]: Kleisli[F, Long, String] =
+  Kleisli(id => id.toString.pure[F])
+"""
+))
 ```
 
 ```scala mdoc:compile-only
@@ -139,9 +154,11 @@ PreferKleisli.crossFileRoot = "."
 Rewrites hand-threaded `Kleisli` bodies into Arrow composition such as `>>>`,
 `.map`, and `&&&`.
 
-```diff
-- Kleisli { id => load.run(id).map(_.trim) }
-+ load.map(_.trim)
+```scala mdoc:passthrough
+print(docs.DocDiff.render(
+  before = "Kleisli { id => load.run(id).map(_.trim) }",
+  after = "load.map(_.trim)"
+))
 ```
 
 ```scala mdoc:compile-only
@@ -161,11 +178,17 @@ PreferArrow.reportSkips = false
 Matches a project body against indexed Cats source functions and rewrites to
 the winning public Cats function when evidence and evaluation order are safe.
 
-```diff
-- def lifted[F[_]: Applicative, A](a: A): F[A] =
--   Applicative[F].pure(a)
-+ def lifted[F[_]: Applicative, A](a: A): F[A] =
-+   a.pure[F]
+```scala mdoc:passthrough
+print(docs.DocDiff.render(
+  before = """
+def lifted[F[_]: Applicative, A](a: A): F[A] =
+  Applicative[F].pure(a)
+""",
+  after = """
+def lifted[F[_]: Applicative, A](a: A): F[A] =
+  a.pure[F]
+"""
+))
 ```
 
 ```scala mdoc:compile-only
@@ -180,11 +203,17 @@ Config: none.
 Widens a concrete unary constructor in a signature to `G[_]` with the weakest
 Cats constraint used by the body.
 
-```diff
-- private def inspect(xs: Option[Int]): Option[Int] =
--   xs.map(_ + 1)
-+ private def inspect[G[_]: Functor](xs: G[Int]): G[Int] =
-+   xs.map(_ + 1)
+```scala mdoc:passthrough
+print(docs.DocDiff.render(
+  before = """
+private def inspect(xs: Option[Int]): Option[Int] =
+  xs.map(_ + 1)
+""",
+  after = """
+private def inspect[G[_]: Functor](xs: G[Int]): G[Int] =
+  xs.map(_ + 1)
+"""
+))
 ```
 
 ```scala mdoc:compile-only
@@ -205,9 +234,11 @@ PreferHKTTypeclasses.crossFileTargetroots = [ "out" ]
 
 Replaces direct Cats typeclass calls with Cats syntax.
 
-```diff
-- Applicative[F].pure(a)
-+ a.pure[F]
+```scala mdoc:passthrough
+print(docs.DocDiff.render(
+  before = "Applicative[F].pure(a)",
+  after = "a.pure[F]"
+))
 ```
 
 ```scala mdoc:compile-only
@@ -221,9 +252,11 @@ Config: none.
 
 Collapses common Cats expression patterns into existing combinators.
 
-```diff
-- fa.map(_ => ())
-+ fa.void
+```scala mdoc:passthrough
+print(docs.DocDiff.render(
+  before = "fa.map(_ => ())",
+  after = "fa.void"
+))
 ```
 
 ```scala mdoc:compile-only
@@ -238,14 +271,20 @@ Config: none.
 Introduces an opaque type and follows selected SemanticDB seed symbols through
 value flow.
 
-```diff
-- final case class Task(branchName: String)
-+ opaque type BranchName = String
-+ object BranchName:
-+   def apply(value: String): BranchName = value
-+   extension (value: BranchName) def value: String = value
-+
-+ final case class Task(branchName: BranchName)
+```scala mdoc:passthrough
+print(docs.DocDiff.render(
+  before = """
+final case class Task(branchName: String)
+""",
+  after = """
+opaque type BranchName = String
+object BranchName:
+  def apply(value: String): BranchName = value
+  extension (value: BranchName) def value: String = value
+
+final case class Task(branchName: BranchName)
+"""
+))
 ```
 
 ```scala mdoc:compile-only
@@ -276,11 +315,17 @@ PropagateOpaqueType.autoDiscover.enabled = false
 Rewrites decidable effect idioms and reports shapes that need a wider program
 decision.
 
-```diff
-- try work()
-- catch { case _: Throwable => fallback() }
-+ try work()
-+ catch { case scala.util.control.NonFatal(_) => fallback() }
+```scala mdoc:passthrough
+print(docs.DocDiff.render(
+  before = """
+try work()
+catch { case _: Throwable => fallback() }
+""",
+  after = """
+try work()
+catch { case scala.util.control.NonFatal(_) => fallback() }
+"""
+))
 ```
 
 ```scala mdoc:compile-only
@@ -301,9 +346,11 @@ PreferEffectIdioms.refs = true
 
 Rewrites nullable lookup and `Option.map(...).getOrElse(...)` shapes.
 
-```diff
-- option.map(render).getOrElse(default)
-+ option.fold(default)(render)
+```scala mdoc:passthrough
+print(docs.DocDiff.render(
+  before = "option.map(render).getOrElse(default)",
+  after = "option.fold(default)(render)"
+))
 ```
 
 ```scala mdoc:compile-only
@@ -321,9 +368,11 @@ PreferOptionIdioms.mouse = false
 Rewrites index loops to direct collection operations, and effectful left folds
 to `foldM`.
 
-```diff
-- xs.indices.map(i => xs(i).toString)
-+ xs.map(x => x.toString)
+```scala mdoc:passthrough
+print(docs.DocDiff.render(
+  before = "xs.indices.map(i => xs(i).toString)",
+  after = "xs.map(x => x.toString)"
+))
 ```
 
 ```scala mdoc:compile-only
@@ -340,11 +389,17 @@ PreferIndexedMap.rewrite = true
 Widens concrete collection parameters to `S[_]` with the weakest Cats
 collection constraint used by the body.
 
-```diff
-- private def names(users: List[String]): List[String] =
--   users.map(_.toUpperCase)
-+ private def names[S[_]: Functor](users: S[String]): S[String] =
-+   users.map(_.toUpperCase)
+```scala mdoc:passthrough
+print(docs.DocDiff.render(
+  before = """
+private def names(users: List[String]): List[String] =
+  users.map(_.toUpperCase)
+""",
+  after = """
+private def names[S[_]: Functor](users: S[String]): S[String] =
+  users.map(_.toUpperCase)
+"""
+))
 ```
 
 ```scala mdoc:compile-only
@@ -367,9 +422,11 @@ Runs the three signature-widening rules together:
 `PreferElementTypeclasses`, `PreferContainerTypeclasses`, and
 `PreferHKTTypeclasses`.
 
-```diff
-- rules = [ PreferContainerTypeclasses, PreferElementTypeclasses, PreferHKTTypeclasses ]
-+ rules = [ PreferTypeParameters ]
+```scala mdoc:passthrough
+print(docs.DocDiff.render(
+  before = "rules = [ PreferContainerTypeclasses, PreferElementTypeclasses, PreferHKTTypeclasses ]",
+  after = "rules = [ PreferTypeParameters ]"
+))
 ```
 
 ```hocon
@@ -383,11 +440,17 @@ PreferHKTTypeclasses.containers = [ "*" ]
 Rewrites pair-threaded state folds into Cats `State` where the fold only passes
 state forward and collects output.
 
-```diff
-- xs.foldLeft((0, Vector.empty[String])) { case ((s, out), x) =>
--   (s + x, out :+ s"$x")
-- }
-+ xs.traverse(x => State((s: Int) => (s + x, s"$x"))).run(0).value
+```scala mdoc:passthrough
+print(docs.DocDiff.render(
+  before = """
+xs.foldLeft((0, Vector.empty[String])) { case ((s, out), x) =>
+  (s + x, out :+ s"$x")
+}
+""",
+  after = """
+xs.traverse(x => State((s: Int) => (s + x, s"$x"))).run(0).value
+"""
+))
 ```
 
 ```scala mdoc:compile-only
@@ -405,9 +468,11 @@ PreferStateThreading.stateT = false
 Reports side effects that a signature does not mention and rewrites eager
 `pure(effect)` into suspended `delay(effect)` where an effect type supports it.
 
-```diff
-- Sync[F].pure(System.nanoTime())
-+ Sync[F].delay(System.nanoTime())
+```scala mdoc:passthrough
+print(docs.DocDiff.render(
+  before = "Sync[F].pure(System.nanoTime())",
+  after = "Sync[F].delay(System.nanoTime())"
+))
 ```
 
 ```scala mdoc:compile-only
@@ -426,11 +491,17 @@ SuspendSideEffects.effects = [ "IO", "SyncIO", "Resource", "Stream", "Task", "Ei
 Handles collection operations whose Cats spelling depends on evidence for the
 element, such as `mkString` to `mkString_`.
 
-```diff
-- private def rendered(rows: List[String]): String =
--   rows.mkString("[", ",", "]")
-+ private def rendered[S[_]: Foldable](rows: S[String]): String =
-+   rows.mkString_("[", ",", "]")
+```scala mdoc:passthrough
+print(docs.DocDiff.render(
+  before = """
+private def rendered(rows: List[String]): String =
+  rows.mkString("[", ",", "]")
+""",
+  after = """
+private def rendered[S[_]: Foldable](rows: S[String]): String =
+  rows.mkString_("[", ",", "]")
+"""
+))
 ```
 
 ```scala mdoc:compile-only
