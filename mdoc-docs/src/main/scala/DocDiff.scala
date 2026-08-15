@@ -1,6 +1,117 @@
 package docs
 
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.charset.StandardCharsets
+import scala.jdk.CollectionConverters.*
+import scala.sys.process.*
+
 object DocDiff:
+  def renderRule(rule: String, before: String): String =
+    renderRule(rule, before, "")
+
+  def renderRule(rule: String, before: String, config: String): String =
+    val tempDir = Files.createTempDirectory("purrism-docdiff-")
+    try
+      val tempFile = tempDir.resolve("Temp.scala")
+      val outDir = tempDir.resolve("out")
+      Files.createDirectories(outDir)
+
+      val prefix =
+        """package test
+          |import cats.*
+          |import cats.data.*
+          |import cats.effect.*
+          |import cats.syntax.all.*
+          |import java.nio.file.*
+          |import scala.util.control.NonFatal
+          |
+          |// <SEPARATOR>
+          |""".stripMargin
+
+      val fullCode = prefix + before
+      Files.write(tempFile, fullCode.getBytes(StandardCharsets.UTF_8))
+
+      val classpath = System.getProperty("java.class.path")
+      val compilerArgs = Array(
+        "-classpath",
+        classpath,
+        "-d",
+        outDir.toString,
+        "-Ysemanticdb",
+        "-sourceroot",
+        tempDir.toString,
+        tempFile.toString
+      )
+
+      val reporter = dotty.tools.dotc.Main.process(compilerArgs)
+      if reporter.hasErrors then
+        throw new RuntimeException(
+          s"Failed to compile example code:\n$before\nErrors occurred."
+        )
+
+      val confFileOpt = if config.trim.nonEmpty then
+        val confFile = tempDir.resolve("scalafix.conf")
+        Files.write(confFile, config.getBytes(StandardCharsets.UTF_8))
+        Some(confFile)
+      else None
+
+      val scalaVersion = scala.util.Properties.versionNumberString
+      val scalafixVersion = "0.14.7"
+
+      val cmd = List(
+        "coursier",
+        "launch",
+        s"ch.epfl.scala:scalafix-cli_$scalaVersion:$scalafixVersion",
+        "--main",
+        "scalafix.cli.Cli",
+        "--",
+        "--rules",
+        rule,
+        "--classpath",
+        outDir.toString,
+        "--sourceroot",
+        tempDir.toString,
+        "--tool-classpath",
+        classpath,
+        "--scala-version",
+        scalaVersion
+      ) ++ confFileOpt
+        .map(f => List("--config", f.toString))
+        .getOrElse(Nil) ++ List(tempFile.toString)
+
+      val stdout = new java.io.ByteArrayOutputStream()
+      val stderr = new java.io.ByteArrayOutputStream()
+      val exitCode = Process(cmd).!(
+        ProcessLogger(
+          o => { stdout.write(o.getBytes); stdout.write('\n') },
+          e => { stderr.write(e.getBytes); stderr.write('\n') }
+        )
+      )
+
+      if exitCode != 0 then
+        throw new RuntimeException(
+          s"Scalafix failed with exit code $exitCode.\nStderr:\n${stderr.toString("UTF-8")}\nStdout:\n${stdout.toString("UTF-8")}"
+        )
+
+      val rewrittenCode =
+        new String(Files.readAllBytes(tempFile), StandardCharsets.UTF_8)
+      val sepIndex = rewrittenCode.indexOf("// <SEPARATOR>")
+      if sepIndex < 0 then
+        throw new RuntimeException("Could not find separator in rewritten code")
+
+      val after = rewrittenCode
+        .substring(sepIndex + "// <SEPARATOR>".length)
+        .stripPrefix("\n")
+        .stripTrailing()
+
+      render(before, after)
+    finally deleteRecursively(tempDir.toFile)
+
+  private def deleteRecursively(file: java.io.File): Unit =
+    if file.isDirectory then file.listFiles().foreach(deleteRecursively)
+    file.delete()
+
   def render(before: String, after: String): String =
     val beforeLines = sourceLines(before)
     val afterLines = sourceLines(after)

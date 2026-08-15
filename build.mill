@@ -302,7 +302,8 @@ object app extends Module {
 }
 
 object docs extends ScalaModule {
-  def scalaVersion = "3.3.8"
+  def scalaVersion = Versions.scala3
+  def moduleDeps = Seq(scalafix)
   override def sources = Task.Sources(
     mill.api.BuildCtx.workspaceRoot / "mdoc-docs" / "src" / "main" / "scala"
   )
@@ -310,7 +311,10 @@ object docs extends ScalaModule {
     mvn"org.typelevel::laika-io:${Versions.laika}",
     mvn"org.scalameta::mdoc:${Versions.mdoc}",
     mvn"org.typelevel::cats-core:${Versions.catsCore}",
-    mvn"org.typelevel::cats-effect:${Versions.catsEffect}"
+    mvn"org.typelevel::cats-effect:${Versions.catsEffect}",
+    mvn"ch.epfl.scala:scalafix-interfaces:${Versions.scalafix}",
+    mvn"ch.epfl.scala:scalafix-cli_${Versions.scala3}:${Versions.scalafix}",
+    mvn"org.scala-lang::scala3-compiler:${Versions.scala3}"
   )
   def scalacOptions = Seq("-Ysemanticdb", s"-sourceroot:${mill.api.BuildCtx.workspaceRoot}")
 }

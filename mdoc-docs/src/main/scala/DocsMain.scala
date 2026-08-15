@@ -37,6 +37,11 @@ object DocsMain:
 
     Files.createDirectories(siteOut)
     renderSite(mdocOut, siteOut)
+    Files.copy(
+      Paths.get("docs", "purrism.svg"),
+      siteOut.resolve("purrism.svg"),
+      java.nio.file.StandardCopyOption.REPLACE_EXISTING
+    )
 
   private def renderSite(
       input: java.nio.file.Path,
@@ -103,6 +108,23 @@ object DocsMain:
       |
       |#top-bar {
       |  display: none;
+      |}
+      |
+      |.purrism-logo-header {
+      |  display: flex;
+      |  align-items: center;
+      |  gap: 1.25rem;
+      |  margin: 0 0 1.25rem;
+      |}
+      |
+      |.purrism-logo-header img {
+      |  width: min(18rem, 45vw);
+      |  height: auto;
+      |  display: block;
+      |}
+      |
+      |.purrism-logo-header .title {
+      |  margin: 0;
       |}
       |
       |pre.purrism-word-diff code {

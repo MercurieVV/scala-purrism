@@ -1,4 +1,7 @@
-# scala-purrism
+<div class="purrism-logo-header">
+  <img src="purrism.svg" alt="scala-purrism logo">
+  <h1 id="scala-purrism" class="title">scala-purrism</h1>
+</div>
 
 Scalafix semantic rules for teams moving real Scala code toward Typelevel,
 Cats, and Cats Effect idioms.
@@ -113,18 +116,16 @@ rules = [ PreferTypeParameters ] // [required] run all signature-widening rules
 Examples:
 
 ```scala mdoc:passthrough
-print(docs.DocDiff.render(
+print(docs.DocDiff.renderRule(
+  rule = "PreferTypeParameters",
   before = """
 def labels[A](values: List[A]): List[String] =
   values.map(_.toString)
 
 val out = labels[Int](List(1, 2))
 """,
-  after = """
-def labels[S[_]: Functor, A](values: S[A]): S[String] =
-  values.map(_.toString)
-
-val out = labels(List(1, 2))
+  config = """
+PreferPolymorphicCollections.widenPublic = true
 """
 ))
 ```
@@ -159,18 +160,13 @@ the Cats API, each on a different tree shape:
 | `SimplifyCatsExpressions` | a dot-syntax sub-expression already in that shape, e.g. `fa.map(_ => ())` |
 
 ```scala mdoc:passthrough
-print(docs.DocDiff.render(
+print(docs.DocDiff.renderRule(
+  rule = "PreferCatsExpressions",
   before = """
 def lifted[F[_]: Applicative, A](a: A): F[A] =
   Applicative[F].pure(a)
 
 val cleared = lifted[Option, Unit](()).map(_ => ())
-""",
-  after = """
-def lifted[F[_]: Applicative, A](a: A): F[A] =
-  a.pure[F]
-
-val cleared = lifted[Option, Unit](()).void
 """
 ))
 ```
@@ -191,17 +187,20 @@ value flow.
 Examples:
 
 ```scala mdoc:passthrough
-print(docs.DocDiff.render(
+print(docs.DocDiff.renderRule(
+  rule = "PropagateOpaqueType",
   before = """
 final case class Task(branchName: String)
 """,
-  after = """
-opaque type BranchName = String
-object BranchName:
-  def apply(value: String): BranchName = value
-  extension (value: BranchName) def value: String = value
-
-final case class Task(branchName: BranchName)
+  config = """
+PropagateOpaqueType.types = [
+  {
+    name = "BranchName"
+    underlying = "scala/Predef.String#"
+    definitionFile = "Temp.scala"
+    seeds = [ "test/Task#branchName." ]
+  }
+]
 """
 ))
 ```
@@ -209,14 +208,21 @@ final case class Task(branchName: BranchName)
 Examples:
 
 ```scala mdoc:passthrough
-print(docs.DocDiff.render(
+print(docs.DocDiff.renderRule(
+  rule = "PropagateOpaqueType",
   before = """
 def checkout(branchName: String): IO[Unit] =
   IO.println(branchName)
 """,
-  after = """
-def checkout(branchName: BranchName): IO[Unit] =
-  IO.println(branchName.value)
+  config = """
+PropagateOpaqueType.types = [
+  {
+    name = "BranchName"
+    underlying = "scala/Predef.String#"
+    definitionFile = "Temp.scala"
+    seeds = [ "test/checkout().(branchName)" ]
+  }
+]
 """
 ))
 ```
@@ -244,18 +250,24 @@ Rewrites nullable lookup and `Option.map(...).getOrElse(...)` shapes.
 Examples:
 
 ```scala mdoc:passthrough
-print(docs.DocDiff.render(
-  before = "option.map(render).getOrElse(default)",
-  after = "option.fold(default)(render)"
+print(docs.DocDiff.renderRule(
+  rule = "PreferOptionIdioms",
+  before = """
+def test[A, B](option: Option[A], render: A => B, default: B) =
+  option.map(render).getOrElse(default)
+"""
 ))
 ```
 
 Examples:
 
 ```scala mdoc:passthrough
-print(docs.DocDiff.render(
-  before = "if value == null then None else Some(value)",
-  after = "Option(value)"
+print(docs.DocDiff.renderRule(
+  rule = "PreferOptionIdioms",
+  before = """
+def test[A](value: A) =
+  if value == null then None else Some(value)
+"""
 ))
 ```
 
@@ -274,21 +286,23 @@ to `foldM`.
 Examples:
 
 ```scala mdoc:passthrough
-print(docs.DocDiff.render(
-  before = "xs.indices.map(i => xs(i).toString)",
-  after = "xs.map(x => x.toString)"
+print(docs.DocDiff.renderRule(
+  rule = "PreferIndexedMap",
+  before = """
+def test(xs: List[Int]) =
+  xs.indices.map(i => xs(i).toString)
+"""
 ))
 ```
 
 Examples:
 
 ```scala mdoc:passthrough
-print(docs.DocDiff.render(
+print(docs.DocDiff.renderRule(
+  rule = "PreferIndexedMap",
   before = """
-xs.zipWithIndex.map { case (x, i) => s"$i:$x" }
-""",
-  after = """
-xs.mapWithIndex { case (x, i) => s"$i:$x" }
+def test(xs: List[Int]) =
+  xs.zipWithIndex.map { case (x, i) => s"$i:$x" }
 """
 ))
 ```
@@ -315,13 +329,10 @@ capabilities.
 Examples:
 
 ```scala mdoc:passthrough
-print(docs.DocDiff.render(
+print(docs.DocDiff.renderRule(
+  rule = "TypeclassWeakening",
   before = """
 def bump[F[_]: Sync](fa: F[Int]): F[Int] =
-    fa.map(_ + 1)
-""",
-  after = """
-def bump[F[_]: Monad](fa: F[Int]): F[Int] =
     fa.map(_ + 1)
 """
 ))
@@ -330,13 +341,10 @@ def bump[F[_]: Monad](fa: F[Int]): F[Int] =
 Examples:
 
 ```scala mdoc:passthrough
-print(docs.DocDiff.render(
+print(docs.DocDiff.renderRule(
+  rule = "TypeclassWeakening",
   before = """
 def choose[F[_]: Concurrent, A](left: F[A], right: F[A]): F[A] =
-  left.handleErrorWith(_ => right)
-""",
-  after = """
-def choose[F[_]: MonadError[*[_], Throwable], A](left: F[A], right: F[A]): F[A] =
   left.handleErrorWith(_ => right)
 """
 ))
@@ -352,23 +360,23 @@ Reports side effects that a signature does not mention and rewrites eager
 Examples:
 
 ```scala mdoc:passthrough
-print(docs.DocDiff.render(
-  before = "Sync[F].pure(System.nanoTime())",
-  after = "Sync[F].delay(System.nanoTime())"
+print(docs.DocDiff.renderRule(
+  rule = "SuspendSideEffects",
+  before = """
+def test[F[_]: Sync] =
+  Sync[F].pure(System.nanoTime())
+"""
 ))
 ```
 
 Examples:
 
 ```scala mdoc:passthrough
-print(docs.DocDiff.render(
+print(docs.DocDiff.renderRule(
+  rule = "SuspendSideEffects",
   before = """
 def read[F[_]: Sync](path: Path): F[String] =
   Sync[F].pure(Files.readString(path))
-""",
-  after = """
-def read[F[_]: Sync](path: Path): F[String] =
-  Sync[F].delay(Files.readString(path))
 """
 ))
 ```
@@ -389,14 +397,12 @@ decision.
 Examples:
 
 ```scala mdoc:passthrough
-print(docs.DocDiff.render(
+print(docs.DocDiff.renderRule(
+  rule = "PreferEffectIdioms",
   before = """
-try work()
-catch { case _: Throwable => fallback() }
-""",
-  after = """
-try work()
-catch { case NonFatal(_) => fallback() }
+def test[A](work: () => A, fallback: () => A) =
+  try work()
+  catch { case _: Throwable => fallback() }
 """
 ))
 ```
@@ -404,13 +410,12 @@ catch { case NonFatal(_) => fallback() }
 Examples:
 
 ```scala mdoc:passthrough
-print(docs.DocDiff.render(
+print(docs.DocDiff.renderRule(
+  rule = "PreferEffectIdioms",
   before = """
-try open()
-finally close()
-""",
-  after = """
-Resource.make(open())(_ => close()).use(identity)
+def test(open: () => Unit, close: () => Unit) =
+  try open()
+  finally close()
 """
 ))
 ```
@@ -433,18 +438,13 @@ direct call sites.
 Examples:
 
 ```scala mdoc:passthrough
-print(docs.DocDiff.render(
+print(docs.DocDiff.renderRule(
+  rule = "PreferKleisli",
   before = """
 def load[F[_]: Monad](id: Long): F[String] =
   id.toString.pure[F]
 
 val loaded: IO[String] = load[IO](42)
-""",
-  after = """
-def load[F[_]: Monad]: Kleisli[F, Long, String] =
-  Kleisli(id => id.toString.pure[F])
-
-val loaded: IO[String] = load[IO].run(42)
 """
 ))
 ```
@@ -452,18 +452,13 @@ val loaded: IO[String] = load[IO].run(42)
 Examples:
 
 ```scala mdoc:passthrough
-print(docs.DocDiff.render(
+print(docs.DocDiff.renderRule(
+  rule = "PreferKleisli",
   before = """
 def save[F[_]: Monad](name: String): F[Unit] =
   name.trim.pure[F].void
 
 val saved: IO[Unit] = save[IO]("  Ada  ")
-""",
-  after = """
-def save[F[_]: Monad]: Kleisli[F, String, Unit] =
-  Kleisli(name => name.trim.pure[F].void)
-
-val saved: IO[Unit] = save[IO].run("  Ada  ")
 """
 ))
 ```
@@ -484,18 +479,24 @@ Rewrites hand-threaded `Kleisli` bodies into Arrow composition such as `>>>`,
 Examples:
 
 ```scala mdoc:passthrough
-print(docs.DocDiff.render(
-  before = "Kleisli { id => load.run(id).map(_.trim) }",
-  after = "load.map(_.trim)"
+print(docs.DocDiff.renderRule(
+  rule = "PreferArrow",
+  before = """
+def test[F[_]: Functor](load: Kleisli[F, Long, String]) =
+  Kleisli { (id: Long) => load.run(id).map(_.trim) }
+"""
 ))
 ```
 
 Examples:
 
 ```scala mdoc:passthrough
-print(docs.DocDiff.render(
-  before = "Kleisli { id => load.run(id).flatMap(validate.run) }",
-  after = "load >>> validate"
+print(docs.DocDiff.renderRule(
+  rule = "PreferArrow",
+  before = """
+def test[F[_]: Monad](load: Kleisli[F, Long, String], validate: Kleisli[F, String, String]) =
+  Kleisli { (id: Long) => load.run(id).flatMap(validate.run) }
+"""
 ))
 ```
 
@@ -528,7 +529,8 @@ One file, one method per rule, run through the umbrella `PreferTypeParameters`:
 Examples:
 
 ```scala mdoc:passthrough
-print(docs.DocDiff.render(
+print(docs.DocDiff.renderRule(
+  rule = "PreferTypeParameters",
   before = """
 final class Summary {
   private def names(users: List[String]): List[String] =
@@ -538,18 +540,6 @@ final class Summary {
     rows.mkString("[", ",", "]")
 
   private def duplicate(e: Eval[Int]): Eval[Int] =
-    e.coflatMap(w => w.extract + 1)
-}
-""",
-  after = """
-final class Summary {
-  private def names[S[_]: Functor](users: S[String]): S[String] =
-    users.map(user => user.toUpperCase)
-
-  private def rendered[S[_]: Foldable](rows: S[String]): String =
-    rows.mkString_("[", ",", "]")
-
-  private def duplicate[G[_]: Comonad](e: G[Int]): G[Int] =
     e.coflatMap(w => w.extract + 1)
 }
 """
