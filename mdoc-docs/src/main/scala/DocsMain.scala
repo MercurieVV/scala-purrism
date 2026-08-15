@@ -46,7 +46,7 @@ object DocsMain:
       .metadata(
         title = Some("scala-purrism"),
         description = Some(
-          "Scalafix semantic rules for refactoring Typelevel Scala toward pure, polymorphic Cats style."
+          "Semantic Scalafix rules that help Typelevel Scala teams migrate real Cats and Cats Effect code toward polymorphic, pure, maintainable APIs."
         ),
         language = Some("en")
       )

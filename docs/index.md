@@ -1,20 +1,41 @@
-# scala-purrism Rules
+# scala-purrism
 
-This page is compiled with **mdoc**. The examples below are intentionally small:
-the diff blocks show what each Scalafix rule rewrites, and the mdoc blocks keep
-the after-shapes type-checked against Cats and Cats Effect.
+Scalafix semantic rules for teams moving real Scala code toward Typelevel,
+Cats, and Cats Effect idioms.
 
-```scala mdoc
+It is for codebases that already use `cats`, `cats-effect`, or tagless-final
+style, but still carry concrete collection types, hand-written effect plumbing,
+manual `Either`/`Option` branches, or local helpers that duplicate Cats APIs.
+The rules make those migrations repeatable: they rewrite code, type-check the
+result through SemanticDB, and avoid broad signature changes unless the
+configured rule can see enough call-site context.
+
+Use it when you need to:
+
+- weaken concrete effect constraints such as `Sync` to the smallest Cats
+  typeclass that the method actually needs
+- generalize `List`/`Vector`/`Option` signatures into polymorphic collection or
+  typeclass APIs
+- replace local boilerplate with standard Cats syntax and functions
+- reshape callback-style and environment-threading code into `Kleisli` or
+  `Arrow` forms where that improves the program shape
+- propagate opaque domain types from selected seed fields through assignments
+  and calls
+
+It is intentionally conservative. Rules decline when the rewrite would require
+unsafe public API changes, unseen cross-file call-site edits, missing Cats
+evidence, or behavior changes that are not explicitly enabled.
+
+```scala mdoc:invisible
 import cats.*
 import cats.data.Kleisli
 import cats.effect.{IO, Sync}
 import cats.syntax.all.*
 ```
 
-```scala mdoc
-val docsBuild = "mdoc compiles and runs the docs examples"
-println(docsBuild)
-```
+The examples below are compiled with **mdoc**. Diff blocks show the exact code
+shape each rule rewrites, and the resulting examples are type-checked against
+Cats and Cats Effect.
 
 ## Setup
 
