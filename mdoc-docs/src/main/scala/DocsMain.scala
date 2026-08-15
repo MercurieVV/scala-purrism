@@ -64,7 +64,7 @@ object DocsMain:
           "https://github.com/MercurieVV/scala-purrism/tree/master/docs"
         ),
         sourceLinkText = "Source",
-        keepOnSmallScreens = true
+        keepOnSmallScreens = false
       )
       .site
       .baseURL("https://mercurievv.github.io/scala-purrism/")
@@ -99,6 +99,10 @@ object DocsMain:
       |  background: #f6f8fa;
       |  color: #24292f;
       |  border: 1px solid #d8dee4;
+      |}
+      |
+      |#top-bar {
+      |  display: none;
       |}
       |
       |pre.purrism-word-diff code {
