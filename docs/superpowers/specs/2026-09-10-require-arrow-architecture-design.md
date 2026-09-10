@@ -2,104 +2,131 @@
 
 ## Purpose
 
-A new, standalone scalafix lint rule that enforces a restricted architectural
-style on selected packages/directories: definitions there may only express
-themselves in terms of **abstract arrow slots** (a binary type parameter or
-abstract type member bounded by `cats.arrow.Arrow`/`Compose`/`Category` or a
-subtypeclass of one), **compositions** of values of that slot, plain
-**abstract type members**, and **modules** (`trait`/`case class`) that hold
-only those things. No concrete arrow implementation (`Function1`, `Kleisli`,
-or any other named type) may ever be written inside a scoped file — the
-whole point is that this code stays polymorphic over *which* arrow it uses.
-It is diagnostic-only — it never rewrites code, only reports violations —
-because there is no safe automatic rewrite from arbitrary logic into arrow
-form.
+A standalone scalafix lint rule enforcing a restricted vocabulary on selected
+packages/directories: in-scope files may only *name* types from a configured
+whitelist and may not use a configured set of syntactic constructs. It is
+diagnostic-only — it never rewrites code — because there is no safe
+automatic rewrite from arbitrary logic into arrow form.
 
 Unlike this project's other rules, it does not migrate code toward a style;
 it is a boundary/gate that keeps already-conforming code from drifting, on
-whichever packages/directories a team opts in. A concrete arrow
-(`Kleisli[IO, *, *]`, say) only ever gets named at the composition root
-*outside* the scoped packages, where the abstract slot is finally
-instantiated.
+whichever packages/directories a team opts in.
 
-## Scope configuration
+The default configuration reproduces an "arrow architecture" layer: code may
+only name `cats.arrow.*` types, `Either`, `Option`, `Tuple`, and its own
+package's types — and may not use `if`/`match`/`var`/`for`/`while`/`try`. A
+concrete effect/arrow implementation (`Function1`, `Kleisli`, `IO`, ...)
+never gets named inside such a file; only assembled and composed from
+already-abstract pieces. But the engine itself has no arrow-specific
+knowledge — it is a generic "restricted vocabulary" checker. A team can
+reuse it to gate any other architecture layer by pointing `scope`/`classes`
+at a different package and a different whitelist.
+
+This replaces an earlier design (see git history) that modeled "arrow slot"
+as a typeclass-bound-resolution problem (`Arrow`/`Compose`/`Category`
+instance search, `given`-chain walking, a special-cased `ArrowConvert`
+shape, a monomorphism rule, a companion-object-only evidence carve-out).
+That machinery is dropped entirely: everything it was trying to prevent
+falls out for free once *any* named type must come from a fixed whitelist —
+there is no separate case left to special-case.
+
+## Configuration
 
 ```hocon
 RequireArrowArchitecture {
   severity = warning   // or error
-  maxArrowConversions = 1
-  packages = [
-    "com.foo.wiring.**"
+  scope = [
+    "com\\.foo\\.wiring\\..*"
   ]
-  paths = [
-    "core/src/architecture/**"
+  classes = [
+    "cats\\.arrow\\..*",
+    "scala\\.Either",
+    "scala\\.Option",
+    "scala\\.Tuple.*"
   ]
+  bannedConstructs = [
+    "scala.meta.Term.If",
+    "scala.meta.Term.Match",
+    "scala.meta.Defn.Var",
+    "scala.meta.Term.For",
+    "scala.meta.Term.While",
+    "scala.meta.Term.Try"
+  ]
+  budgetedTypeclasses = ["ArrowConvert"]
+  maxInstantiations = 1
 }
 ```
 
-A file is in scope if it matches `packages` OR `paths`. Both empty (the
-default) means the rule matches nothing — no accidental whole-project scans.
-Module-level scoping falls out of the existing setup for free: a Mill module
-opts in simply by listing this rule in its own `.scalafix.conf`; `packages`/
-`paths` give finer-grained scoping *within* a module for teams that don't
-want to scope by a whole package.
+Every list entry (`scope`, `classes`) is either a full class name (matched
+exactly against a symbol's FQCN) or a regexp (matched against it) — one
+syntax, no separate glob dialect. Empty `scope` (the default) means the rule
+matches nothing — no accidental whole-project scans.
 
-`severity` defaults to `warning`, matching `docs/RULES.md`'s convention that
-diagnostics default to `LintSeverity.Warning`; a team can promote it to
-`error` per-module once a package is fully conformant.
+`severity` defaults to `warning`, matching `docs/RULES.md`'s convention;
+promote to `error` per-module once a package is fully conformant.
 
-`maxArrowConversions` (default `1`) caps how many *distinct*
-`ArrowConvert[P, Q]` requirements — counted by their `(P, Q)` type pair, not
-by call site — a trait/case-class and its companion object may together
-require. See Cross-slot conversion below for what's counted and why it's
-combined across template and companion; exceeding it reuses the same
-`severity` setting rather than a separate knob.
+## Scope
 
-## Allowed-construct grammar
+A file is in scope if its own top-level package/class is matched by any
+`scope` entry. `scope` entries are also implicitly part of the type
+whitelist (see below) — a scoped file can always reference its own
+package's other types without repeating the pattern in `classes`.
 
-Everything in an in-scope file that isn't one of the following is a
-violation.
+## Type whitelist
 
-### Arrow slots
+Every *named* type appearing in a scoped file's declarations — member
+types, parameter/return types, `extends`/`with` clauses, type arguments —
+must resolve to a symbol matched by `scope` or `classes`. This is a single
+provenance check, nothing more: no typeclass-bound resolution, no instance
+search.
 
-An **arrow slot** is a binary type (kind `(*, *) => *`) that is abstract at
-the point it's used — never a named concrete type — and is bounded or
-required to have an instance of `cats.arrow.Arrow`, `Compose`, `Category`,
-or a subtypeclass of one of those. It's declared one of two ways (both
-allowed, pick whichever fits):
+Type parameters and abstract type members are always exempt from this
+check: they have no external provenance to test, so ordinary genericity
+(`trait Pipeline[Step[_, _]]`, `def make[Step[_, _]](...)`) is unrestricted
+— a generic method or type doesn't *name* anything, it only ever
+*receives* whatever the caller supplies. Naming a concrete type outside the
+whitelist is the only thing this check forbids, e.g. writing `Kleisli[IO,
+Int, Int]` directly, or importing and naming `scala.concurrent.Future`.
 
-- a **type parameter with a context bound** on the enclosing
-  trait/case class/def: `trait Pipeline[Step[_, _]: Arrow]`,
-- an **abstract type member with a separate instance requirement**:
-  `trait Pipeline { type Step[_, _]; given Arrow[Step] }` (or an equivalent
-  context-bound/implicit-parameter form requiring `Arrow[Step]`).
+Because `cats.arrow.*` is on the default whitelist, ordinary uses like
+`Step[_, _]: Arrow` (naming the `Arrow` typeclass itself as a context
+bound) are fine — that's a whitelisted type, named in the ordinary way.
+What stays forbidden is naming a *concrete arrow implementation*, since
+nothing implements one inside `cats.arrow.*`, the current package, or
+`Either`/`Option`/`Tuple`.
 
-A member's declared type qualifies as an arrow only if it is that slot
-applied to two concrete-or-abstract types, e.g. `Step[Int, Either[Error,
-Int]]`. **Naming a concrete arrow implementation directly — `Int => Int`,
-`Kleisli[F, A, B]`, or any other type with its own name rather than the
-slot's — is a violation**, even though such a type would itself satisfy
-`Arrow`/`Compose`/`Category`. The rule doesn't care whether a type is
-*capable* of being an arrow; it cares whether the scoped code ever commits
-to *which* one it is, and naming one concretely is exactly that commitment.
+Imports are unrestricted (a tooling concern, not an architectural one) —
+importing `cats.data.Kleisli` doesn't itself violate anything; only
+*naming* it in a declaration does.
 
-A structural binary type constructor used as a slot must carry a real
-`Arrow`/`Compose`/`Category`(-family) bound — a bare `T[_, _]` with no such
-bound doesn't qualify, for the same reason as before: closed and
-semantically grounded, not shape-guessed.
+## Banned constructs
 
-Arrow slot members must be **monomorphic** in every type parameter other
-than the slot's own two holes: `def step[G[_]: Sync]: Step[G[A], B]` is not
-allowed. Only plain, non-generic (beyond the slot itself) arrow-typed
-members qualify — genericity beyond the slot is a step toward "logic", not
-wiring.
+`bannedConstructs` names Scalameta tree classes (e.g. `scala.meta.Term.If`).
+A node in a scoped file is a violation if its runtime type `isInstanceOf`
+any configured class — subtype-inclusive, so a single entry naming a common
+supertype (where Scalameta's hierarchy has one) disables every subtype at
+once, rather than needing one entry per concrete node kind.
 
-### Cross-slot conversion
+Default set bans `if`, `match`, `var`, `for`, `while`, `try` — the
+imperative/branching vocabulary that isn't "compose already-existing
+values." A lambda literal with a non-trivial body is banned the same way
+by naming the relevant `Term.Function` shape; a bare eta-expanded reference
+(`step _` or point-free) isn't a `Term.Function` and isn't touched by this
+check.
 
-Converting a value from one arrow slot to a different one (`Step1` to
-`Step2`) needs evidence, since Cats has no built-in typeclass for
-"natural transformation between two binary arrows." This rule's own
-vocabulary supplies one, itself fully abstract and single-method:
+## Conversion budget
+
+`budgetedTypeclasses` (default `["ArrowConvert"]`) names typeclass symbols
+this rule counts requirements for. For each configured typeclass and each
+trait/case-class + companion-object pair, the rule counts the number of
+*distinct* type-argument tuples for which that pair requires evidence
+(context bound or `given`/implicit parameter) anywhere across the two
+templates. Requiring the same tuple twice (e.g. in two different companion
+constructors) counts once. Exceeding `maxInstantiations` (default `1`) is
+reported once per trait/case-class pair, at the configured `severity`.
+
+`ArrowConvert` itself is not special-cased by the engine — it's an ordinary
+trait a team defines in its own scoped package:
 
 ```scala
 trait ArrowConvert[P[_, _], Q[_, _]] {
@@ -107,147 +134,26 @@ trait ArrowConvert[P[_, _], Q[_, _]] {
 }
 ```
 
-A composition expression may call `.apply` on a value of this typeclass
-(summoned via context bound or `given`, never a concretely-constructed
-instance) to move between slots. Where the two slots are actually the same
-type at the instantiation site, this is a no-op; the scoped code never
-knows or cares.
-
-`ArrowConvert` itself is a **special-cased shape** in the trait grammar, not
-a general opening for per-method type parameters: the rule recognizes
-exactly this pattern — a single abstract method whose only type parameters
-(`A`, `B`) are consumed by applying the trait's own two slot type
-parameters (`P`, `A`, `B` → `P[A, B]`; likewise for `Q`) — and no other. A
-trait declaring any other per-method-generic abstract method is still a
-violation; this carve-out exists solely so cross-slot conversion has
-somewhere to live without loosening the monomorphic-member rule generally.
-
-**Conversion budget.** `maxArrowConversions` counts the number of
-*distinct* `(P, Q)` pairs for which a trait/case-class and its companion
-object, taken together, require `ArrowConvert[P, Q]` evidence — as a
-context bound or `given`/implicit parameter anywhere in that pair of
-templates. Requiring `ArrowConvert[Step1, Step2]` in two different
-companion-object constructors still counts once; requiring both
-`ArrowConvert[Step1, Step2]` and `ArrowConvert[Step2, Step3]` counts as two.
-Exceeding the configured max (default `1`) is reported once per
-trait/case-class pair, at the `severity` configured for the rule as a
-whole. The premise: bridging exactly two slots at one boundary is ordinary
-wiring; a module quietly accumulating several such bridges is usually
-doing real translation logic dressed up as composition.
-
-### Traits / abstract classes
-
-May declare only:
-
-- abstract `type` members (including an arrow-slot type member, per above),
-- abstract `val`/`def` members of (monomorphic) arrow-slot type,
-- type parameters bounded by `Arrow`/`Compose`/`Category` (arrow slots) or
-  otherwise unconstrained (ordinary type parameters used inside slot
-  applications, e.g. the `A`/`B` in `Step[A, B]`),
-- `extends`/`with` of a supertype that is itself **conforming**: either it
-  contributes zero members (a marker/tag trait — e.g. `Serializable`,
-  `Product`), or every member it declares independently satisfies this same
-  grammar (checked structurally via the semantic index, not by whether the
-  supertype happens to live in the configured scope — a supertype built on
-  the same principle is fine wherever it lives). When the supertype's shape
-  cannot be determined (e.g. a binary dependency with hidden bodies and
-  non-abstract members), decline with a diagnostic rather than guess; a team
-  hitting this in practice should narrow the rule to run per-module so most
-  supertypes stay locally checkable.
-
-### Case classes
-
-Constructor params may only be arrow-slot-typed (monomorphic) or abstract
-types — no plain data params (`String`, `Int`, `Boolean`, ...), even
-config-flavored ones, and no concretely-named arrow type either (see Arrow
-slots above). A case class may also declare extra `val`/`def` members;
-those are held to the composition-expression rule below, same as an
-object's.
-
-### Objects
-
-May contain only `val`/`def` members that satisfy the composition-expression
-rule below — no other member kinds. A `def` here may be generic in an arrow
-slot (e.g. `def combined[Step[_, _]](p: Pipeline[Step]): Step[Int, Int] =
-p.handle`), but may **not** carry a typeclass bound/evidence requirement on
-that slot (no `: Arrow`, no `given` parameter) — plain genericity that only
-forwards or selects an already-existing value is fine; genericity that
-needs evidence to actually *compose* something is reserved for
-companion-object constructors (see below), because that's where the
-grammar allows the resulting evidence-bearing call in the first place.
-
-### Composition expressions
-
-The only allowed body for a non-abstract `val`/`def` member (in a case class
-or object; traits have no bodies at all here). A composition expression is:
-
-- a bare reference to an in-scope arrow-slot-typed identifier — a param, a
-  `val`, an abstract member, or an eta-expanded reference to another
-  arrow-slot-typed `def`,
-- a combinator application of one such expression against another, limited
-  to a fixed set resolved on the slot's `Arrow`/`Compose`/`Category`(-family)
-  instance: `andThen`, `compose`, `>>>`, `<<<`, `first`, `second`, `split`,
-  `&&&`, `|||`, `id`,
-- a block of one or more local `val`s (each itself a valid composition
-  expression, naming an intermediate step) followed by exactly one final
-  composition expression. This is purely for readability of long chains; it
-  does not widen what's allowed inside each local `val`,
-- a call to `.apply` on an `ArrowConvert[P, Q]` instance, summoned
-  abstractly, to move a value from one arrow slot to another (see
-  Cross-slot conversion above).
-
-Explicitly **not** allowed anywhere in a composition expression: naming a
-concrete arrow type, a lambda literal with a body (`x => f(g(x)) + 1`),
-`if`/`match`/`for`/`while`, `var`, direct side-effecting calls, or any other
-plain-data logic. The rule's premise is that leaf-level arrows are
-*implemented*, and concrete arrow types are only ever *named*, outside the
-scoped architecture packages; this module only *wires* already-existing,
-still-abstract arrows together.
-
-### Companion-object constructors
-
-A companion object of an in-scope trait or case class may additionally
-declare `def`s that are generic and carry context-bound typeclass evidence
-— most commonly exactly the `Arrow`/`Compose`/`Category` bound an arrow slot
-itself needs, e.g.:
-
-```scala
-def make[Step[_, _]: Arrow](
-  normalize: Step[Int, Int],
-  validateStep: Step[Int, Either[String, Int]]
-): Pipeline[Step] =
-  Pipeline(normalize andThen validateStep)
-```
-
-Genericity is allowed here specifically because such a `def` assembles a
-module or an arrow value, it is not itself a fixed arrow-slot-typed member.
-Its body is still a composition expression per the grammar above, and its
-return type must be either the enclosing module type or an arrow-slot type.
-This exists so that assembling a module needing extra evidence (beyond what
-a bare `apply` call provides) doesn't force loosening the monomorphic-member
-rule for traits/case classes themselves. Outside of a companion object, a
-generic/evidence-carrying `def` is still a violation — a plain
-(non-companion) object stays restricted to the plain composition-expression
-rule with no type parameters at all.
-
-### Imports
-
-Unrestricted — a tooling concern, not an architectural one. (Importing
-`cats.data.Kleisli` to instantiate a slot happens outside scope; nothing
-stops the import itself from appearing in a scoped file, only *naming* the
-type in a declaration does.)
+It passes the type/construct checks like any other in-scope declaration (a
+generic method that only ever applies its own enclosing type's parameters
+names nothing outside the whitelist); the budget check is the only place
+its symbol is referenced by name, purely to know what to count.
 
 ## Diagnostics
 
 One `LintSeverity` diagnostic per violating declaration, anchored on the
 member/definition whose shape breaks (not per sub-expression token), per
 `docs/RULES.md`'s "report at the granularity of the decision, not of the
-evidence." Message names which grammar rule was violated and what was found,
-e.g.:
+evidence." Message names which check failed and what was found:
 
-> member `run` names a concrete type `Kleisli[F, Int, Int]`; only an
-> abstract arrow slot (a type parameter or type member bounded by
-> `Arrow`/`Compose`/`Category`) applied to two types is allowed here
+> member `run` names `cats.data.Kleisli[cats.effect.IO, Int, Int]`; only
+> types matching this file's configured scope/classes whitelist may be
+> named here
+
+> `if` is a banned construct in this scope
+
+> trait/case-class pair `LivePipeline` requires 2 distinct instantiations
+> of `ArrowConvert`, exceeding the configured max of 1
 
 ## Examples
 
@@ -262,15 +168,12 @@ trait ArrowConvert[P[_, _], Q[_, _]] {
   def apply[A, B](p: P[A, B]): Q[A, B]
 }
 
-// interface: abstract type + abstract arrow-slot members only
 trait Pipeline[Step[_, _]: Arrow] {
   type Error
   def validate: Step[Int, Either[Error, Int]]
   def handle: Step[Int, Int]
 }
 
-// holder: concrete arrow-slot members only, no plain data params, no
-// concretely-named arrow type anywhere
 final case class LivePipeline[Step[_, _]: Arrow](
   validateStep: Step[Int, Either[String, Int]],
   handleStep: Step[Int, Int]
@@ -281,8 +184,6 @@ final case class LivePipeline[Step[_, _]: Arrow](
 }
 
 object LivePipeline {
-  // companion smart constructor: generic + evidence (the slot's own Arrow
-  // bound) allowed here only
   def make[Step[_, _]: Arrow](
     normalize: Step[Int, Int],
     validateStep: Step[Int, Either[String, Int]],
@@ -293,8 +194,6 @@ object LivePipeline {
   }
 }
 
-// object holding only composition expressions — no type params, no
-// evidence, just wiring together already-abstract, already-typed arrows
 object PipelineWiring {
   def combined[Step[_, _]](p: Pipeline[Step]): Step[Int, Int] =
     p.handle
@@ -308,82 +207,71 @@ package com.foo.wiring
 
 import cats.arrow.Arrow
 import cats.data.Kleisli
-import cats.effect.Sync
-
-trait BadInterface[Step[_, _]: Arrow] {
-  def name: String                    // ✗ non-arrow member type
-  def step[G[_]: Sync]: Step[G[Int], Int] // ✗ generic beyond the slot's own holes
-}
+import cats.effect.IO
 
 final case class BadHolder[Step[_, _]: Arrow](
-  retries: Int,                       // ✗ plain data param
   step: Step[Int, Int]
 ) {
-  var cache: Map[Int, Int] = Map.empty // ✗ var
+  var cache: Map[Int, Int] = Map.empty   // ✗ banned construct: var
 
   def run(x: Int): Int =
-    if (cache.contains(x)) cache(x) else x // ✗ if, direct logic
-
-  def compute: Step[Int, Int] =
-    step andThen step // this line alone would be fine; shown only for context
+    if (cache.contains(x)) cache(x) else x   // ✗ banned construct: if
 }
 
 final case class NamesConcreteArrow(
-  step: Kleisli[cats.effect.IO, Int, Int] // ✗ names a concrete arrow type
-                                            // directly instead of using an
-                                            // abstract slot
+  step: Kleisli[IO, Int, Int]   // ✗ Kleisli/IO not in scope/classes whitelist
 ) {}
 
-object PlainWiring {
-  def make[Step[_, _]: Arrow](s: Step[Int, Int]): Step[Int, Int] = s
-  // ✗ carries an Arrow evidence bound in a plain (non-companion) object —
-  // being generic in Step alone would be fine (see PipelineWiring.combined
-  // above), but the evidence bound is reserved for companion-object
-  // constructors; this exact def would be fine inside LivePipeline's
-  // companion object above
-}
+final case class TooManyConversions[P[_, _], Q[_, _], R[_, _]](
+  p: P[Int, Int]
+)(implicit
+  pq: ArrowConvert[P, Q],   // 2 distinct ArrowConvert instantiations —
+  qr: ArrowConvert[Q, R]    // ✗ exceeds default maxInstantiations = 1
+)
 ```
 
 ## Implementation approach
 
-Single-pass structural walk (over the two-pass project-wide-closure approach
-used by `KleisliLiftScope`/`WidenScope`): for each in-scope template
-(`trait`/`class`/`case class`/`object`), classify every member declaration
-and every expression against the grammar above, using per-file semantic
-resolution to decide (a) whether a type is an abstract arrow slot with a
-resolvable `Arrow`/`Compose`/`Category`(-family) bound, and (b) whether a
-member's declared type names a concrete type instead of applying that slot.
-No cross-file/project-wide state is needed, because a referenced symbol's
-slot-ness is decided from its own declared signature, not derived
-transitively — the same reason `KleisliLiftScope`'s two-pass design exists
-for signature-*changing* rules doesn't apply to a rule that only *reports*.
+Single-pass structural + syntactic walk over each in-scope file (no
+project-wide closure needed, since every check resolves from the reference
+site's own symbol, not derived transitively):
+
+1. **Scope**: match the file's top-level package/class FQCN against `scope`.
+2. **Type whitelist**: for every named type in a declaration, resolve its
+   symbol (SemanticDB) and match its FQCN against `scope` ∪ `classes`; skip
+   type parameters and abstract type members (no symbol to resolve outside
+   the declaring template).
+3. **Banned constructs**: syntactic tree traversal; for each node, check
+   `isInstanceOf` against every configured Scalameta class.
+4. **Budget**: for each `budgetedTypeclasses` symbol, collect required
+   type-argument tuples (context bounds / `given`/implicit params) across
+   each trait/case-class + companion pair, dedupe, compare to
+   `maxInstantiations`.
+
+Checks 2–4 are independent and can run in one traversal; nothing needs
+`Arrow`/`Compose`/`Category` instance resolution or `given`-chain walking.
 
 ## Registration & testing
 
-- New file `scalafix/src/fix/RequireArrowArchitecture.scala`.
+- File: `scalafix/src/fix/RequireArrowArchitecture.scala`.
 - Registered in `scalafix/resources/META-INF/services/scalafix.v1.Rule`
   alongside the existing rules.
 - Executed fixtures under `scalafix/testInput`/`testOutput`, per
-  `docs/GOLDEN_FIXTURES.md` — for a diagnostic-only rule this means fixtures
-  that assert the emitted lint messages/positions (input and output source
-  are identical, since nothing is rewritten).
-- Cases to cover: a conforming trait/case-class/object built on an abstract
-  arrow slot (both the type-parameter and abstract-type-member declaration
-  forms); each grammar violation individually (non-arrow member, generic
-  member beyond the slot's holes, `var`, `if`/`match` in a composition body,
-  plain data param, a member naming a concrete arrow type like `Kleisli`
-  directly); an out-of-scope file with the same violations (must produce no
-  diagnostics); inheritance from a conforming marker trait and from a
-  conforming same-principle trait outside the configured scope; inheritance
-  from a non-conforming supertype whose shape can't be determined; a
-  companion-object smart constructor with a generic slot type param and its
-  `Arrow` bound (conforming) and the same generic/evidence `def` placed
-  outside a companion object (violation); a plain object `def` generic in
-  an arrow slot with no evidence bound, just forwarding a value
-  (conforming) versus the same shape with an `Arrow` bound added
-  (violation); an `ArrowConvert[P, Q].apply` call moving between two slots
-  (conforming) versus a hand-written conversion that names a concrete
-  arrow type to bridge them (violation); a class/companion pair requiring
-  exactly `maxArrowConversions` distinct `(P, Q)` pairs (conforming), one
-  more than the configured max (violation), and the same `(P, Q)` pair
-  required twice across template and companion counting once, not twice.
+  `docs/GOLDEN_FIXTURES.md` — diagnostic-only, so input and output source
+  are identical; fixtures assert emitted lint messages/positions.
+- Cases to cover: conforming file exercising the default arrow-layer
+  configuration end to end; each banned construct individually (`if`,
+  `match`, `var`, `for`, `while`, `try`); a named type outside
+  `scope`/`classes` (both a random unrelated type and a plausible
+  near-miss like `Function1`); an out-of-scope file with the same
+  violations producing no diagnostics; self-reference to another type in
+  the same scoped package (conforming, no need to list it in `classes`);
+  a type matched by regex vs. by exact FQCN in `classes`; `bannedConstructs`
+  entry naming a Scalameta supertype disabling multiple concrete node kinds
+  at once (if the hierarchy allows it) vs. one entry per concrete kind;
+  `budgetedTypeclasses` at exactly `maxInstantiations` (conforming), one
+  over (violation), and the same `(P, Q)` pair required twice across
+  template and companion counting once, not twice; a second
+  `RequireArrowArchitecture` instance configured for an unrelated layer
+  (different `scope`/`classes`) in the same project, to demonstrate the
+  engine's reuse beyond the arrow use case.
