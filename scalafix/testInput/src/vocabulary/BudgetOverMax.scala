@@ -2,9 +2,10 @@
 rules = [RequireArrowArchitecture]
 
 RequireArrowArchitecture.scope = ["vocabulary\\.budgetovermax.*"]
-RequireArrowArchitecture.classes = ["scala\\.Int"]
-RequireArrowArchitecture.budgetedTypeclasses = ["vocabulary.budgetovermax.ArrowConvert"]
-RequireArrowArchitecture.maxInstantiations = 1
+RequireArrowArchitecture.profile = "default"
+RequireArrowArchitecture.profiles.default.classes = ["scala\\.Int"]
+RequireArrowArchitecture.profiles.default.budgetedTypeclasses = ["vocabulary.budgetovermax.ArrowConvert"]
+RequireArrowArchitecture.profiles.default.maxInstantiations = 1
  */
 package vocabulary.budgetovermax
 

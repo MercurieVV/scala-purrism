@@ -20,13 +20,26 @@ object TypeWhitelistCheck {
       case _             => false
     }
 
+  /** A class/trait/object/type's own name, at its definition site, is a
+    * declaration -- not a reference to a named type. `final case class
+    * Holder(...)` doesn't "name" `Holder`, it brings it into existence.
+    */
+  private def isOwnDefinitionName(node: Tree): Boolean =
+    node.parent.exists {
+      case c: Defn.Class  => c.name eq node
+      case t: Defn.Trait  => t.name eq node
+      case o: Defn.Object => o.name eq node
+      case dt: Defn.Type  => dt.name eq node
+      case _              => false
+    }
+
   private def namedTypesIn(tree: Tree): List[Type] =
     tree
       .collect {
         case t: Type.Name   => t
         case t: Type.Select => t
       }
-      .filterNot(isTypeAliasBinding)
+      .filterNot(t => isTypeAliasBinding(t) || isOwnDefinitionName(t))
 
   def violations(tree: Tree, allowed: PatternList)(implicit
       doc: SemanticDocument

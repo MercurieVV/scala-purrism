@@ -2,8 +2,9 @@
 rules = [RequireArrowArchitecture]
 
 RequireArrowArchitecture.scope = ["vocabulary\\.bannedwhile.*"]
-RequireArrowArchitecture.classes = ["scala\\.Int"]
-RequireArrowArchitecture.bannedConstructs = ["scala.meta.Term.While"]
+RequireArrowArchitecture.profile = "default"
+RequireArrowArchitecture.profiles.default.classes = ["scala\\.Int"]
+RequireArrowArchitecture.profiles.default.bannedConstructs = ["scala.meta.Term.While"]
  */
 package vocabulary.bannedwhile
 

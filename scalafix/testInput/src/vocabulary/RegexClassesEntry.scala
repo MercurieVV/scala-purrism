@@ -2,7 +2,8 @@
 rules = [RequireArrowArchitecture]
 
 RequireArrowArchitecture.scope = ["vocabulary\\.regexclasses.*"]
-RequireArrowArchitecture.classes = ["scala.Option", "cats\\.arrow\\..*", "scala\\.Int"]
+RequireArrowArchitecture.profile = "default"
+RequireArrowArchitecture.profiles.default.classes = ["scala.Option", "cats\\.arrow\\..*", "scala\\.Int"]
  */
 package vocabulary.regexclasses
 

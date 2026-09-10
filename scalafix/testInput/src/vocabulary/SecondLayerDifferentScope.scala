@@ -2,8 +2,9 @@
 rules = [RequireArrowArchitecture]
 
 RequireArrowArchitecture.scope = ["vocabulary\\.otherlayer.*"]
-RequireArrowArchitecture.classes = ["scala\\.Int", "scala\\.Predef\\.String"]
-RequireArrowArchitecture.bannedConstructs = ["scala.meta.Defn.Var"]
+RequireArrowArchitecture.profile = "otherLayer"
+RequireArrowArchitecture.profiles.otherLayer.classes = ["scala\\.Int", "scala\\.Predef\\.String"]
+RequireArrowArchitecture.profiles.otherLayer.bannedConstructs = ["scala.meta.Defn.Var"]
  */
 package vocabulary.otherlayer
 

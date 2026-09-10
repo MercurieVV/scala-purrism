@@ -2,7 +2,8 @@
 rules = [RequireArrowArchitecture]
 
 RequireArrowArchitecture.scope = ["golden\\.architecture\\.concretetypes.*"]
-RequireArrowArchitecture.classes = ["cats\\.arrow\\..*", "scala\\.Int", "scala\\.package\\.Either", "scala\\.Tuple2"]
+RequireArrowArchitecture.profile = "default"
+RequireArrowArchitecture.profiles.default.classes = ["cats\\.arrow\\..*", "scala\\.Int", "scala\\.package\\.Either", "scala\\.Tuple2"]
  */
 package golden.architecture.concretetypes
 

@@ -5,6 +5,7 @@ import scala.util.matching.Regex
 
 final class PatternList private (compiled: List[Regex]) {
   def matches(fqcn: String): Boolean = compiled.exists(_.matches(fqcn))
+  def isEmpty: Boolean = compiled.isEmpty
 }
 
 object PatternList {
@@ -21,7 +22,7 @@ object PatternList {
   }
 
   /** `cats/arrow/Arrow#` -> `cats.arrow.Arrow`; SemanticDB terminates every
-    * segment with `#` (type/class), `.` (term/object) or `().` (method) —
+    * segment with `#` (type/class), `.` (term/object) or `().` (method) --
     * collapse all three to `.`, replace path separators with dots, and drop the
     * resulting trailing dot.
     */

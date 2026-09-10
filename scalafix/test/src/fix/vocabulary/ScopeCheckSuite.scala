@@ -20,4 +20,9 @@ class ScopeCheckSuite extends FunSuite {
     assert(ScopeCheck.inScope("com.foo.wiring", scope))
     assert(!ScopeCheck.inScope("com.foo.other", scope))
   }
+
+  test("empty scope means the whole module is in scope") {
+    assert(ScopeCheck.inScope("com.foo.wiring", PatternList.empty))
+    assert(ScopeCheck.inScope("anything.at.all", PatternList.empty))
+  }
 }

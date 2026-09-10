@@ -32,38 +32,60 @@ there is no separate case left to special-case.
 
 ## Configuration
 
+Configuration splits into two layers: a **profile** — a reusable, named
+bundle of the actual vocabulary rules (what's allowed, what's banned) — and
+the **per-module settings** that pick a profile and narrow where it applies.
+A profile is defined once and referenced by name, so multiple modules (or
+multiple scopes within one module) can share the same vocabulary without
+repeating its `classes`/`bannedConstructs`/etc. lists.
+
 ```hocon
 RequireArrowArchitecture {
-  severity = warning   // or error
-  scope = [
+  severity = warning        // or error
+  scope = [                 // empty (the default) = the whole module
     "com\\.foo\\.wiring\\..*"
   ]
-  classes = [
-    "cats\\.arrow\\..*",
-    "scala\\.Either",
-    "scala\\.Option",
-    "scala\\.Tuple.*"
-  ]
-  bannedConstructs = [
-    "scala.meta.Term.If",
-    "scala.meta.Term.Match",
-    "scala.meta.Defn.Var",
-    "scala.meta.Term.For",
-    "scala.meta.Term.While",
-    "scala.meta.Term.Try"
-  ]
-  budgetedTypeclasses = ["ArrowConvert"]
-  maxInstantiations = 1
+  profile = "arrow"
+  profiles {
+    arrow {
+      classes = [
+        "cats\\.arrow\\..*",
+        "scala\\.Either",
+        "scala\\.Option",
+        "scala\\.Tuple.*"
+      ]
+      bannedConstructs = [
+        "scala.meta.Term.If",
+        "scala.meta.Term.Match",
+        "scala.meta.Defn.Var",
+        "scala.meta.Term.For",
+        "scala.meta.Term.While",
+        "scala.meta.Term.Try"
+      ]
+      budgetedTypeclasses = ["ArrowConvert"]
+      maxInstantiations = 1
+    }
+  }
 }
 ```
 
-Every list entry (`scope`, `classes`) is either a full class name (matched
-exactly against a symbol's FQCN) or a regexp (matched against it) — one
-syntax, no separate glob dialect. Empty `scope` (the default) means the rule
-matches nothing — no accidental whole-project scans.
+Every list entry (`scope`, a profile's `classes`) is either a full class
+name (matched exactly against a symbol's FQCN) or a regexp (matched against
+it) — one syntax, no separate glob dialect.
 
 `severity` defaults to `warning`, matching `docs/RULES.md`'s convention;
 promote to `error` per-module once a package is fully conformant.
+
+`profile` names which entry in `profiles` supplies the vocabulary; an
+unresolvable name (empty `profiles`, or a name not among its keys) fails
+config validation loudly rather than silently falling back to an empty
+(fully permissive) profile.
+
+`scope` empty means the *whole module* is in scope — this is the opposite
+of the old "empty means nothing" default; a module already opts into the
+rule by listing it, so an empty `scope` narrows nothing further. A
+non-empty `scope` restricts to files whose own package matches one of the
+patterns, same as before.
 
 ## Scope
 

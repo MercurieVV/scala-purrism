@@ -2,7 +2,8 @@
 rules = [RequireArrowArchitecture]
 
 RequireArrowArchitecture.scope = ["vocabulary\\.nearmiss.*"]
-RequireArrowArchitecture.classes = ["cats\\.arrow\\..*"]
+RequireArrowArchitecture.profile = "default"
+RequireArrowArchitecture.profiles.default.classes = ["cats\\.arrow\\..*"]
  */
 package vocabulary.nearmiss
 

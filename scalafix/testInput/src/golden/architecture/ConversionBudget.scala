@@ -2,9 +2,10 @@
 rules = [RequireArrowArchitecture]
 
 RequireArrowArchitecture.scope = ["golden\\.architecture\\.budget.*"]
-RequireArrowArchitecture.classes = ["cats\\.arrow\\..*", "scala\\.Int"]
-RequireArrowArchitecture.budgetedTypeclasses = ["golden.architecture.budget.ArrowConvert"]
-RequireArrowArchitecture.maxInstantiations = 1
+RequireArrowArchitecture.profile = "default"
+RequireArrowArchitecture.profiles.default.classes = ["cats\\.arrow\\..*", "scala\\.Int"]
+RequireArrowArchitecture.profiles.default.budgetedTypeclasses = ["golden.architecture.budget.ArrowConvert"]
+RequireArrowArchitecture.profiles.default.maxInstantiations = 1
  */
 package golden.architecture.budget
 

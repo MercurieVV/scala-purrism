@@ -2,9 +2,10 @@
 rules = [RequireArrowArchitecture]
 
 RequireArrowArchitecture.scope = ["vocabulary\\.budgetsametwice.*"]
-RequireArrowArchitecture.classes = ["scala\\.Int"]
-RequireArrowArchitecture.budgetedTypeclasses = ["vocabulary.budgetsametwice.ArrowConvert"]
-RequireArrowArchitecture.maxInstantiations = 1
+RequireArrowArchitecture.profile = "default"
+RequireArrowArchitecture.profiles.default.classes = ["scala\\.Int"]
+RequireArrowArchitecture.profiles.default.budgetedTypeclasses = ["vocabulary.budgetsametwice.ArrowConvert"]
+RequireArrowArchitecture.profiles.default.maxInstantiations = 1
  */
 package vocabulary.budgetsametwice
 

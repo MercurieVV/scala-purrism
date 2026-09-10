@@ -2,7 +2,8 @@
 rules = [RequireArrowArchitecture]
 
 RequireArrowArchitecture.scope = ["golden\\.architecture\\.conversion.*"]
-RequireArrowArchitecture.classes = ["cats\\.arrow\\..*", "scala\\.Int"]
+RequireArrowArchitecture.profile = "default"
+RequireArrowArchitecture.profiles.default.classes = ["cats\\.arrow\\..*", "scala\\.Int"]
  */
 package golden.architecture.conversion
 

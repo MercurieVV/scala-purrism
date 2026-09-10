@@ -2,7 +2,8 @@
 rules = [RequireArrowArchitecture]
 
 RequireArrowArchitecture.scope = ["vocabulary\\.inscopeonly.*"]
-RequireArrowArchitecture.bannedConstructs = ["scala.meta.Term.If"]
+RequireArrowArchitecture.profile = "default"
+RequireArrowArchitecture.profiles.default.bannedConstructs = ["scala.meta.Term.If"]
  */
 package vocabulary.notinscope
 

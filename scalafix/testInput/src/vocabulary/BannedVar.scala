@@ -2,8 +2,9 @@
 rules = [RequireArrowArchitecture]
 
 RequireArrowArchitecture.scope = ["vocabulary\\.bannedvar.*"]
-RequireArrowArchitecture.classes = ["scala\\.Int"]
-RequireArrowArchitecture.bannedConstructs = ["scala.meta.Defn.Var"]
+RequireArrowArchitecture.profile = "default"
+RequireArrowArchitecture.profiles.default.classes = ["scala\\.Int"]
+RequireArrowArchitecture.profiles.default.bannedConstructs = ["scala.meta.Defn.Var"]
  */
 package vocabulary.bannedvar
 

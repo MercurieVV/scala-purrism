@@ -2,8 +2,9 @@
 rules = [RequireArrowArchitecture]
 
 RequireArrowArchitecture.scope = ["golden\\.architecture\\.composition.*"]
-RequireArrowArchitecture.classes = ["cats\\.arrow\\..*", "scala\\.Function1", "scala\\.Int", "scala\\.package\\.Either", "scala\\.Predef\\.String"]
-RequireArrowArchitecture.bannedConstructs = ["scala.meta.Term.If", "scala.meta.Term.Function"]
+RequireArrowArchitecture.profile = "default"
+RequireArrowArchitecture.profiles.default.classes = ["cats\\.arrow\\..*", "scala\\.Function1", "scala\\.Int", "scala\\.package\\.Either", "scala\\.Predef\\.String"]
+RequireArrowArchitecture.profiles.default.bannedConstructs = ["scala.meta.Term.If", "scala.meta.Term.Function"]
  */
 package golden.architecture.composition
 

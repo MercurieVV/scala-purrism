@@ -2,6 +2,8 @@
 rules = [RequireArrowArchitecture]
 
 RequireArrowArchitecture.scope = ["vocabulary\\.outofwhitelist.*"]
+RequireArrowArchitecture.profile = "default"
+RequireArrowArchitecture.profiles.default = {}
  */
 package vocabulary.outofwhitelist
 

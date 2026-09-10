@@ -2,8 +2,9 @@
 rules = [RequireArrowArchitecture]
 
 RequireArrowArchitecture.scope = ["golden\\.architecture\\.caseclass.*"]
-RequireArrowArchitecture.classes = ["cats\\.arrow\\..*", "scala\\.Unit", "scala\\.Int", "scala\\.package\\.Either", "scala\\.Predef\\.String"]
-RequireArrowArchitecture.bannedConstructs = ["scala.meta.Defn.Var"]
+RequireArrowArchitecture.profile = "default"
+RequireArrowArchitecture.profiles.default.classes = ["cats\\.arrow\\..*", "scala\\.Unit", "scala\\.Int", "scala\\.package\\.Either", "scala\\.Predef\\.String"]
+RequireArrowArchitecture.profiles.default.bannedConstructs = ["scala.meta.Defn.Var"]
  */
 package golden.architecture.caseclass
 

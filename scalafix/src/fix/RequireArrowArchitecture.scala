@@ -37,6 +37,16 @@ final case class ConversionBudgetDiagnostic(
     s"requires $count distinct instantiations of '$typeclass', exceeding the configured max of $max"
 }
 
+final case class UnknownProfileDiagnostic(
+    override val position: scala.meta.inputs.Position,
+    reason: String
+) extends Diagnostic {
+  override def categoryID: String = "unknownProfile"
+  override def severity: scalafix.lint.LintSeverity =
+    scalafix.lint.LintSeverity.Error
+  override def message: String = reason
+}
+
 private object BudgetCollector {
 
   /** The nearest enclosing class/trait/object definition, for anchoring a
@@ -96,8 +106,9 @@ final class RequireArrowArchitecture(config: VocabularyConfig)
       .andThen { cfg =>
         val validated = for {
           scope <- PatternList.compile(cfg.scope)
-          classes <- PatternList.compile(cfg.classes)
-          constructs <- ConstructMatcher.compile(cfg.bannedConstructs)
+          profile <- cfg.resolveProfile
+          classes <- PatternList.compile(profile.classes)
+          constructs <- ConstructMatcher.compile(profile.bannedConstructs)
         } yield (scope, classes, constructs)
         validated match {
           case Right(_)  => Configured.ok(new RequireArrowArchitecture(cfg))
@@ -105,60 +116,65 @@ final class RequireArrowArchitecture(config: VocabularyConfig)
         }
       }
 
-  override def fix(implicit doc: SemanticDocument): Patch = {
-    val filePackage = ScopeCheck.filePackage(doc.tree)
-    val scope = PatternList.compile(config.scope).getOrElse(PatternList.empty)
-    if (!ScopeCheck.inScope(filePackage, scope)) Patch.empty
-    else {
-      val allowed =
-        PatternList
-          .compile(config.scope ++ config.classes)
-          .getOrElse(PatternList.empty)
-      val constructs =
-        ConstructMatcher
-          .compile(config.bannedConstructs)
-          .getOrElse(ConstructMatcher.empty)
+  override def fix(implicit doc: SemanticDocument): Patch =
+    config.resolveProfile match {
+      case Left(err) =>
+        Patch.lint(UnknownProfileDiagnostic(doc.tree.pos, err))
+      case Right(profile) =>
+        val filePackage = ScopeCheck.filePackage(doc.tree)
+        val scope =
+          PatternList.compile(config.scope).getOrElse(PatternList.empty)
+        if (!ScopeCheck.inScope(filePackage, scope)) Patch.empty
+        else {
+          val allowed =
+            PatternList
+              .compile(config.scope ++ profile.classes)
+              .getOrElse(PatternList.empty)
+          val constructs =
+            ConstructMatcher
+              .compile(profile.bannedConstructs)
+              .getOrElse(ConstructMatcher.empty)
 
-      val typeViolations = TypeWhitelistCheck.violations(doc.tree, allowed)
-      val constructViolations = constructs.findAll(doc.tree)
-      val budgetOverages = ConversionBudget.overages(
-        BudgetCollector
-          .typeArgTuples(doc.tree, config.budgetedTypeclasses.toSet),
-        config.budgetedTypeclasses.toSet,
-        config.maxInstantiations
-      )
+          val typeViolations = TypeWhitelistCheck.violations(doc.tree, allowed)
+          val constructViolations = constructs.findAll(doc.tree)
+          val budgetOverages = ConversionBudget.overages(
+            BudgetCollector
+              .typeArgTuples(doc.tree, profile.budgetedTypeclasses.toSet),
+            profile.budgetedTypeclasses.toSet,
+            profile.maxInstantiations
+          )
 
-      Patch.fromIterable(
-        typeViolations.map(v =>
-          Patch.lint(
-            TypeWhitelistDiagnostic(
-              v.position,
-              v.foundFqcn,
-              config.lintSeverity
-            )
-          )
-        ) ++
-          constructViolations.map(n =>
-            Patch.lint(
-              BannedConstructDiagnostic(
-                n.pos,
-                n.getClass.getName,
-                config.lintSeverity
+          Patch.fromIterable(
+            typeViolations.map(v =>
+              Patch.lint(
+                TypeWhitelistDiagnostic(
+                  v.position,
+                  v.foundFqcn,
+                  config.lintSeverity
+                )
               )
-            )
-          ) ++
-          budgetOverages.map(o =>
-            Patch.lint(
-              ConversionBudgetDiagnostic(
-                o.typeAtOrClassPos,
-                o.typeclass,
-                o.count,
-                o.max,
-                config.lintSeverity
+            ) ++
+              constructViolations.map(n =>
+                Patch.lint(
+                  BannedConstructDiagnostic(
+                    n.pos,
+                    n.getClass.getName,
+                    config.lintSeverity
+                  )
+                )
+              ) ++
+              budgetOverages.map(o =>
+                Patch.lint(
+                  ConversionBudgetDiagnostic(
+                    o.typeAtOrClassPos,
+                    o.typeclass,
+                    o.count,
+                    o.max,
+                    config.lintSeverity
+                  )
+                )
               )
-            )
           )
-      )
+        }
     }
-  }
 }
