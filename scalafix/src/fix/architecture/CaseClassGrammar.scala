@@ -11,7 +11,8 @@ import scalafix.v1._
 object CaseClassGrammar {
 
   def findings(
-      defn: Defn.Class
+      defn: Defn.Class,
+      allowedConcreteTypePatterns: List[String]
   )(implicit doc: SemanticDocument): List[ArchitectureFinding] = {
     val stats = defn.templ.body.stats
     val slots =
@@ -19,7 +20,7 @@ object CaseClassGrammar {
         .declaredAsAbstractMember(stats)
     val paramFindings = defn.ctor.paramClauses
       .flatMap(_.values)
-      .flatMap(checkParam(_, slots))
+      .flatMap(checkParam(_, slots, allowedConcreteTypePatterns))
       .toList
     val varFindings = stats.collect { case v: Defn.Var =>
       ArchitectureFinding(
@@ -46,12 +47,25 @@ object CaseClassGrammar {
 
   private def checkParam(
       param: Term.Param,
-      slots: List[ArrowSlot]
+      slots: List[ArrowSlot],
+      allowedConcreteTypePatterns: List[String]
   )(implicit doc: SemanticDocument): Option[ArchitectureFinding] =
     param.decltpe.flatMap { tpe =>
-      if (ArrowSlot.isSlotApplication(tpe, slots)) None
+      if (ArrowSlot.isSlotApplication(tpe, slots, allowedConcreteTypePatterns))
+        None
       else if (ArrowSlot.isArrowConvertApplication(tpe)) None
       else if (isAbstractTypeReference(tpe)) None
+      else if (ArrowSlot.isSlotShape(tpe, slots))
+        Some(
+          ArchitectureFinding(
+            param,
+            s"constructor param `${param.name.value}` applies its arrow slot " +
+              s"to a concrete type not covered by `allowedConcreteTypePatterns` " +
+              s"in `${tpe.syntax}`; only abstract type parameters, " +
+              "Either/Option/tuples, or a configured pattern are allowed as " +
+              "slot arguments"
+          )
+        )
       else if (ArrowSlot.namesConcreteArrow(tpe))
         Some(
           ArchitectureFinding(

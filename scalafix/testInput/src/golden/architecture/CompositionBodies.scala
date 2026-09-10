@@ -2,6 +2,7 @@
 rules = [RequireArrowArchitecture]
 
 RequireArrowArchitecture.packages = ["golden.architecture.composition.**"]
+RequireArrowArchitecture.allowedConcreteTypePatterns = ["^scala/Int#$", "^scala/Predef\\.String#$"]
  */
 package golden.architecture.composition
 

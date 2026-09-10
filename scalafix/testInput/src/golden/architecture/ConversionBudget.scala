@@ -3,6 +3,7 @@ rules = [RequireArrowArchitecture]
 
 RequireArrowArchitecture.packages = ["golden.architecture.budget.**"]
 RequireArrowArchitecture.maxArrowConversions = 1
+RequireArrowArchitecture.allowedConcreteTypePatterns = ["^scala/Int#$"]
  */
 package golden.architecture.budget
 

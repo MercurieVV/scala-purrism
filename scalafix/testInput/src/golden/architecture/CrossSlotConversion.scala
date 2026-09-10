@@ -2,6 +2,7 @@
 rules = [RequireArrowArchitecture]
 
 RequireArrowArchitecture.packages = ["golden.architecture.conversion.**"]
+RequireArrowArchitecture.allowedConcreteTypePatterns = ["^scala/Int#$"]
  */
 package golden.architecture.conversion
 

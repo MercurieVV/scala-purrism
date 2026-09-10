@@ -77,16 +77,99 @@ object ArrowSlot {
     sym != Symbol.None && ArrowFamily.isArrowFamily(sym)
   }
 
-  /** Whether `tpe` is exactly `Step[A, B]` for one of `slots` -- the only shape
-    * a member's declared type is allowed to take.
+  /** Whether `tpe` is exactly `Step[A, B]` for one of `slots`, with both `A`
+    * and `B` themselves allowed per [[isAllowedArgument]] -- the only shape a
+    * member's declared type is allowed to take.
     */
-  def isSlotApplication(tpe: Type, slots: List[ArrowSlot]): Boolean =
+  def isSlotApplication(
+      tpe: Type,
+      slots: List[ArrowSlot],
+      allowedConcreteTypePatterns: List[String]
+  )(implicit doc: SemanticDocument): Boolean =
+    slotArguments(tpe, slots).exists(
+      _.forall(isAllowedArgument(_, allowedConcreteTypePatterns))
+    )
+
+  /** Whether `tpe` has the right shape and head to be a slot application --
+    * `Step[_, _]` for one of `slots` -- without checking the arguments
+    * themselves. Used to give a precise diagnostic: "this is a slot application
+    * with a disallowed argument" reads differently from "this isn't a slot
+    * application at all".
+    */
+  def isSlotShape(tpe: Type, slots: List[ArrowSlot]): Boolean =
+    slotArguments(tpe, slots).isDefined
+
+  private def slotArguments(
+      tpe: Type,
+      slots: List[ArrowSlot]
+  ): Option[List[Type]] =
     tpe match {
       case apply: Type.Apply =>
         Type.Apply.After_4_6_0.unapply(apply) match {
-          case Some((Type.Name(n), args)) if args.values.size == 2 =>
-            slots.exists(_.name == n)
-          case _ => false
+          case Some((Type.Name(n), args))
+              if args.values.size == 2 && slots.exists(_.name == n) =>
+            Some(args.values)
+          case _ => None
+        }
+      case _ => None
+    }
+
+  /** Whether `sym` is a type parameter, an abstract type member, or a type
+    * alias -- anything whose semanticdb signature is a `TypeSignature` rather
+    * than a `ClassSignature`. `isAbstract`/`isTypeParameter` don't reliably
+    * flag a bare `type X` declaration (Scala has no `abstract` keyword for
+    * types), so the signature shape is the robust signal: a real
+    * class/trait/object like `Int` or `Either` always has a `ClassSignature`.
+    */
+  private def isAbstractTypeSlot(sym: Symbol)(implicit
+      doc: SemanticDocument
+  ): Boolean =
+    doc.info(sym).exists(_.signature.isInstanceOf[TypeSignature])
+
+  /** The types the standard library provides purely as a product/sum-type
+    * wrapper, with no leaf types of their own -- allowed by default as a slot
+    * argument, unlike other concrete types, which need an explicit
+    * `allowedConcreteTypePatterns` entry.
+    */
+  private val structuralWrappers: Set[String] = Set(
+    "scala/util/Either#",
+    "scala/package.Either#",
+    "scala/Option#"
+  )
+
+  /** Whether `tpe` is allowed as one of the two types a slot is applied to (the
+    * `A`/`B` in `Step[A, B]`). Recursive: every concrete type name found
+    * anywhere inside `tpe` must be allowed, not just the outermost one. Allowed
+    * are: an abstract type parameter or abstract type member (in scope wherever
+    * `tpe` is written); a Scala 3 literal tuple of any arity, each element
+    * itself checked; `Either`/`Option`, whose own type arguments are still
+    * checked; or a type whose fully-qualified symbol matches one of
+    * `allowedConcreteTypePatterns` (each entry a regex).
+    */
+  def isAllowedArgument(
+      tpe: Type,
+      allowedConcreteTypePatterns: List[String]
+  )(implicit doc: SemanticDocument): Boolean =
+    tpe match {
+      case tuple: Type.Tuple =>
+        tuple.args.forall(isAllowedArgument(_, allowedConcreteTypePatterns))
+      case name: Type.Name =>
+        val sym = name.symbol
+        sym != Symbol.None &&
+        (isAbstractTypeSlot(sym) ||
+          structuralWrappers(sym.value) ||
+          allowedConcreteTypePatterns.exists(sym.value.matches))
+      case apply: Type.Apply =>
+        Type.Apply.After_4_6_0.unapply(apply) match {
+          case Some((head, args)) =>
+            val sym = head.symbol
+            val headAllowed = sym != Symbol.None &&
+              (structuralWrappers(sym.value) ||
+                allowedConcreteTypePatterns.exists(sym.value.matches))
+            headAllowed && args.values.forall(
+              isAllowedArgument(_, allowedConcreteTypePatterns)
+            )
+          case None => false
         }
       case _ => false
     }

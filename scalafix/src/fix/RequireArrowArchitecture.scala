@@ -41,11 +41,11 @@ final class RequireArrowArchitecture(config: RequireArrowArchitectureConfig)
     else {
       val suppression = Suppression.forDocument
       val traitFindings = doc.tree.collect { case t: Defn.Trait =>
-        TraitGrammar.findings(t)
+        TraitGrammar.findings(t, config.allowedConcreteTypePatterns)
       }.flatten
       val caseClassFindings = doc.tree.collect {
         case c: Defn.Class if c.mods.exists(_.is[Mod.Case]) =>
-          CaseClassGrammar.findings(c)
+          CaseClassGrammar.findings(c, config.allowedConcreteTypePatterns)
       }.flatten
       val moduleNames = doc.tree.collect {
         case c: Defn.Class if c.mods.exists(_.is[Mod.Case]) => c.name.value

@@ -2,6 +2,7 @@
 rules = [RequireArrowArchitecture]
 
 RequireArrowArchitecture.packages = ["golden.architecture.slotforms.**"]
+RequireArrowArchitecture.allowedConcreteTypePatterns = ["^scala/Int#$", "^scala/Predef\\.String#$"]
  */
 package golden.architecture.slotforms
 

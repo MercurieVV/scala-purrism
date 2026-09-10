@@ -8,7 +8,8 @@ final case class RequireArrowArchitectureConfig(
     severity: LintSeverity = LintSeverity.Warning,
     maxArrowConversions: Int = 1,
     packages: List[String] = Nil,
-    paths: List[String] = Nil
+    paths: List[String] = Nil,
+    allowedConcreteTypePatterns: List[String] = Nil
 )
 
 object RequireArrowArchitectureConfig {
@@ -31,13 +32,23 @@ object RequireArrowArchitectureConfig {
         )
         .product(conf.getOrElse("packages")(default.packages))
         .product(conf.getOrElse("paths")(default.paths))
-        .map { case (((severity, maxConversions), packages), paths) =>
-          RequireArrowArchitectureConfig(
-            severity,
-            maxConversions,
-            packages,
-            paths
+        .product(
+          conf.getOrElse("allowedConcreteTypePatterns")(
+            default.allowedConcreteTypePatterns
           )
+        )
+        .map {
+          case (
+                (((severity, maxConversions), packages), paths),
+                allowedConcreteTypePatterns
+              ) =>
+            RequireArrowArchitectureConfig(
+              severity,
+              maxConversions,
+              packages,
+              paths,
+              allowedConcreteTypePatterns
+            )
         }
     }
 }

@@ -10,12 +10,15 @@ import scalafix.v1._
 object TraitGrammar {
 
   def findings(
-      defn: Defn.Trait
+      defn: Defn.Trait,
+      allowedConcreteTypePatterns: List[String]
   )(implicit doc: SemanticDocument): List[ArchitectureFinding] =
-    if (isArrowConvertShape(defn)) Nil else memberFindings(defn)
+    if (isArrowConvertShape(defn)) Nil
+    else memberFindings(defn, allowedConcreteTypePatterns)
 
   private def memberFindings(
-      defn: Defn.Trait
+      defn: Defn.Trait,
+      allowedConcreteTypePatterns: List[String]
   )(implicit doc: SemanticDocument): List[ArchitectureFinding] = {
     val stats = defn.templ.body.stats
     val slots =
@@ -34,13 +37,15 @@ object TraitGrammar {
       case decl: Decl.Def
           if ArrowSlot.requiresArrowInstanceForOneOf(slotNames, decl) =>
         None // the instance-requirement declaration for a form-2 slot
-      case decl: Decl.Def => checkMember(decl.decltpe, decl, slots)
+      case decl: Decl.Def =>
+        checkMember(decl.decltpe, decl, slots, allowedConcreteTypePatterns)
       case decl: Decl.Val
           if ArrowSlot.requiresArrowInstanceForOneOf(slotNames, decl) =>
         None
-      case decl: Decl.Val => checkMember(decl.decltpe, decl, slots)
-      case _: Decl.Type   => None // abstract type members are always allowed
-    }.flatten ++ supertypeFindings(defn)
+      case decl: Decl.Val =>
+        checkMember(decl.decltpe, decl, slots, allowedConcreteTypePatterns)
+      case _: Decl.Type => None // abstract type members are always allowed
+    }.flatten ++ supertypeFindings(defn, allowedConcreteTypePatterns)
   }
 
   /** Whether each `extends`/`with` supertype is conforming: either a marker
@@ -51,7 +56,8 @@ object TraitGrammar {
     * explicit fallback.
     */
   private def supertypeFindings(
-      defn: Defn.Trait
+      defn: Defn.Trait,
+      allowedConcreteTypePatterns: List[String]
   )(implicit doc: SemanticDocument): List[ArchitectureFinding] =
     defn.templ.inits.flatMap { init =>
       val sym = init.tpe.symbol
@@ -59,7 +65,7 @@ object TraitGrammar {
       else
         sameFileTrait(sym) match {
           case Some(superTrait) =>
-            if (findings(superTrait).isEmpty) Nil
+            if (findings(superTrait, allowedConcreteTypePatterns).isEmpty) Nil
             else List(nonConformingFinding(init, sym.displayName))
           case None if knownMarkerTraits(sym.value) => Nil
           case None                                 =>
@@ -182,9 +188,22 @@ object TraitGrammar {
   private def checkMember(
       decltpe: Type,
       member: Tree,
-      slots: List[ArrowSlot]
+      slots: List[ArrowSlot],
+      allowedConcreteTypePatterns: List[String]
   )(implicit doc: SemanticDocument): Option[ArchitectureFinding] =
-    if (ArrowSlot.isSlotApplication(decltpe, slots)) None
+    if (
+      ArrowSlot.isSlotApplication(decltpe, slots, allowedConcreteTypePatterns)
+    ) None
+    else if (ArrowSlot.isSlotShape(decltpe, slots))
+      Some(
+        ArchitectureFinding(
+          member,
+          s"member applies its arrow slot to a concrete type not covered by " +
+            s"`allowedConcreteTypePatterns` in `${decltpe.syntax}`; only " +
+            "abstract type parameters, Either/Option/tuples, or a " +
+            "configured pattern are allowed as slot arguments"
+        )
+      )
     else if (ArrowSlot.namesConcreteArrow(decltpe))
       Some(
         ArchitectureFinding(
