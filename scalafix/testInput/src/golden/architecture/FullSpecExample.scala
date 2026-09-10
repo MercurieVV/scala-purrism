@@ -1,9 +1,9 @@
 /*
-rules = [RequireArrowArchitecture]
+rules = [RestrictVocabulary]
 
-RequireArrowArchitecture.scope = ["golden\\.architecture\\.fullexample.*"]
-RequireArrowArchitecture.profile = "default"
-RequireArrowArchitecture.profiles.default.classes = ["cats\\.arrow\\..*", "scala\\.Int", "scala\\.package\\.Either", "scala\\.Predef\\.String"]
+RestrictVocabulary.scope = ["golden\\.architecture\\.fullexample.*"]
+RestrictVocabulary.profile = "default"
+RestrictVocabulary.profiles.default.classes = ["cats\\.arrow\\..*", "scala\\.Int", "scala\\.package\\.Either", "scala\\.Predef\\.String"]
  */
 package golden.architecture.fullexample
 

@@ -1,9 +1,9 @@
 /*
-rules = [RequireArrowArchitecture]
+rules = [RestrictVocabulary]
 
-RequireArrowArchitecture.scope = ["golden\\.architecture\\.concretetypes.*"]
-RequireArrowArchitecture.profile = "default"
-RequireArrowArchitecture.profiles.default.classes = ["cats\\.arrow\\..*", "scala\\.Int", "scala\\.package\\.Either", "scala\\.Tuple2"]
+RestrictVocabulary.scope = ["golden\\.architecture\\.concretetypes.*"]
+RestrictVocabulary.profile = "default"
+RestrictVocabulary.profiles.default.classes = ["cats\\.arrow\\..*", "scala\\.Int", "scala\\.package\\.Either", "scala\\.Tuple2"]
  */
 package golden.architecture.concretetypes
 
@@ -30,11 +30,11 @@ trait WithStructuralWrappers[Step[_, _]: Arrow, A] {
 
 // String is not in the whitelist above, unlike Int
 trait WithDisallowedConcrete[Step[_, _]: Arrow] {
-  def run: Step[Int, String] // assert: RequireArrowArchitecture.typeWhitelist
+  def run: Step[Int, String] // assert: RestrictVocabulary.typeWhitelist
 }
 
 // nested inside an otherwise-allowed Either: still checked recursively,
 // no matter how deep
 trait WithDisallowedNested[Step[_, _]: Arrow] {
-  def run: Step[Int, Either[String, Int]] // assert: RequireArrowArchitecture.typeWhitelist
+  def run: Step[Int, Either[String, Int]] // assert: RestrictVocabulary.typeWhitelist
 }

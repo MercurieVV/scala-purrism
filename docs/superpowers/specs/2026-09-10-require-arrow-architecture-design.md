@@ -1,4 +1,4 @@
-# RequireArrowArchitecture — Design
+# RestrictVocabulary — Design
 
 ## Purpose
 
@@ -40,7 +40,7 @@ multiple scopes within one module) can share the same vocabulary without
 repeating its `classes`/`bannedConstructs`/etc. lists.
 
 ```hocon
-RequireArrowArchitecture {
+RestrictVocabulary {
   severity = warning        // or error
   scope = [                 // empty (the default) = the whole module
     "com\\.foo\\.wiring\\..*"
@@ -275,7 +275,7 @@ Checks 2–4 are independent and can run in one traversal; nothing needs
 
 ## Registration & testing
 
-- File: `scalafix/src/fix/RequireArrowArchitecture.scala`.
+- File: `scalafix/src/fix/RestrictVocabulary.scala`.
 - Registered in `scalafix/resources/META-INF/services/scalafix.v1.Rule`
   alongside the existing rules.
 - Executed fixtures under `scalafix/testInput`/`testOutput`, per
@@ -294,6 +294,6 @@ Checks 2–4 are independent and can run in one traversal; nothing needs
   `budgetedTypeclasses` at exactly `maxInstantiations` (conforming), one
   over (violation), and the same `(P, Q)` pair required twice across
   template and companion counting once, not twice; a second
-  `RequireArrowArchitecture` instance configured for an unrelated layer
+  `RestrictVocabulary` instance configured for an unrelated layer
   (different `scope`/`classes`) in the same project, to demonstrate the
   engine's reuse beyond the arrow use case.

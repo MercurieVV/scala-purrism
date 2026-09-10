@@ -1,9 +1,9 @@
 /*
-rules = [RequireArrowArchitecture]
+rules = [RestrictVocabulary]
 
-RequireArrowArchitecture.scope = ["golden\\.architecture\\.supertypes\\.inscope.*"]
-RequireArrowArchitecture.profile = "default"
-RequireArrowArchitecture.profiles.default = {}
+RestrictVocabulary.scope = ["golden\\.architecture\\.supertypes\\.inscope.*"]
+RestrictVocabulary.profile = "default"
+RestrictVocabulary.profiles.default = {}
  */
 package golden.architecture.supertypes
 

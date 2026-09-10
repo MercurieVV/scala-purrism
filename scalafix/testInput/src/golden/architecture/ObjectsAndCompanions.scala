@@ -1,9 +1,9 @@
 /*
-rules = [RequireArrowArchitecture]
+rules = [RestrictVocabulary]
 
-RequireArrowArchitecture.scope = ["golden\\.architecture\\.objects.*"]
-RequireArrowArchitecture.profile = "default"
-RequireArrowArchitecture.profiles.default.classes = ["cats\\.arrow\\..*", "scala\\.Int"]
+RestrictVocabulary.scope = ["golden\\.architecture\\.objects.*"]
+RestrictVocabulary.profile = "default"
+RestrictVocabulary.profiles.default.classes = ["cats\\.arrow\\..*", "scala\\.Int"]
  */
 package golden.architecture.objects
 
@@ -39,5 +39,5 @@ object PlainWiring {
     s
 
   // what's still caught: naming a disallowed concrete type, companion or not
-  val label: String = "wiring" // assert: RequireArrowArchitecture.typeWhitelist
+  val label: String = "wiring" // assert: RestrictVocabulary.typeWhitelist
 }

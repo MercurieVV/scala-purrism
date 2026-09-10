@@ -1,9 +1,9 @@
 /*
-rules = [RequireArrowArchitecture]
+rules = [RestrictVocabulary]
 
-RequireArrowArchitecture.scope = ["golden\\.architecture\\.inscope.*"]
-RequireArrowArchitecture.profile = "default"
-RequireArrowArchitecture.profiles.default.classes = ["cats\\.arrow\\..*", "scala\\.Int", "scala\\.package\\.Either"]
+RestrictVocabulary.scope = ["golden\\.architecture\\.inscope.*"]
+RestrictVocabulary.profile = "default"
+RestrictVocabulary.profiles.default.classes = ["cats\\.arrow\\..*", "scala\\.Int", "scala\\.package\\.Either"]
  */
 package golden.architecture.inscope
 
@@ -15,5 +15,5 @@ trait InScopeConforming[Step[_, _]: Arrow] {
 }
 
 trait InScopeViolating[Step[_, _]: Arrow] {
-  def name: String // assert: RequireArrowArchitecture.typeWhitelist
+  def name: String // assert: RestrictVocabulary.typeWhitelist
 }

@@ -1,11 +1,11 @@
 /*
-rules = [RequireArrowArchitecture]
+rules = [RestrictVocabulary]
 
-RequireArrowArchitecture.severity = warning
-RequireArrowArchitecture.scope = ["vocabulary\\.conforming.*"]
-RequireArrowArchitecture.profile = "arrow"
-RequireArrowArchitecture.profiles.arrow.classes = ["cats\\.arrow\\..*", "scala\\.Int", "scala\\.package\\.Either", "scala\\.Option", "scala\\.Tuple.*", "scala\\.Predef\\.String"]
-RequireArrowArchitecture.profiles.arrow.bannedConstructs = ["scala.meta.Term.If", "scala.meta.Term.Match", "scala.meta.Defn.Var", "scala.meta.Term.For", "scala.meta.Term.While", "scala.meta.Term.Try"]
+RestrictVocabulary.severity = warning
+RestrictVocabulary.scope = ["vocabulary\\.conforming.*"]
+RestrictVocabulary.profile = "arrow"
+RestrictVocabulary.profiles.arrow.classes = ["cats\\.arrow\\..*", "scala\\.Int", "scala\\.package\\.Either", "scala\\.Option", "scala\\.Tuple.*", "scala\\.Predef\\.String"]
+RestrictVocabulary.profiles.arrow.bannedConstructs = ["scala.meta.Term.If", "scala.meta.Term.Match", "scala.meta.Defn.Var", "scala.meta.Term.For", "scala.meta.Term.While", "scala.meta.Term.Try"]
  */
 package vocabulary.conforming
 

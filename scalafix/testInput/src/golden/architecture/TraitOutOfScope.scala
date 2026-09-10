@@ -1,9 +1,9 @@
 /*
-rules = [RequireArrowArchitecture]
+rules = [RestrictVocabulary]
 
-RequireArrowArchitecture.scope = ["golden\\.architecture\\.inscope.*"]
-RequireArrowArchitecture.profile = "default"
-RequireArrowArchitecture.profiles.default = {}
+RestrictVocabulary.scope = ["golden\\.architecture\\.inscope.*"]
+RestrictVocabulary.profile = "default"
+RestrictVocabulary.profiles.default = {}
  */
 package golden.architecture.outofscope
 

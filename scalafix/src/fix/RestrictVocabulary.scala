@@ -91,8 +91,8 @@ private object BudgetCollector {
     }.flatten
 }
 
-final class RequireArrowArchitecture(config: VocabularyConfig)
-    extends SemanticRule("RequireArrowArchitecture") {
+final class RestrictVocabulary(config: VocabularyConfig)
+    extends SemanticRule("RestrictVocabulary") {
 
   def this() = this(VocabularyConfig.default)
 
@@ -100,7 +100,7 @@ final class RequireArrowArchitecture(config: VocabularyConfig)
       configuration: Configuration
   ): Configured[Rule] =
     configuration.conf
-      .getOrElse("RequireArrowArchitecture")(VocabularyConfig.default)(using
+      .getOrElse("RestrictVocabulary")(VocabularyConfig.default)(using
         VocabularyConfig.decoder
       )
       .andThen { cfg =>
@@ -111,7 +111,7 @@ final class RequireArrowArchitecture(config: VocabularyConfig)
           constructs <- ConstructMatcher.compile(profile.bannedConstructs)
         } yield (scope, classes, constructs)
         validated match {
-          case Right(_)  => Configured.ok(new RequireArrowArchitecture(cfg))
+          case Right(_)  => Configured.ok(new RestrictVocabulary(cfg))
           case Left(err) => Configured.error(err)
         }
       }

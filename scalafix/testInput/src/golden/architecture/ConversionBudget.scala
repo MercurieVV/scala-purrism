@@ -1,11 +1,11 @@
 /*
-rules = [RequireArrowArchitecture]
+rules = [RestrictVocabulary]
 
-RequireArrowArchitecture.scope = ["golden\\.architecture\\.budget.*"]
-RequireArrowArchitecture.profile = "default"
-RequireArrowArchitecture.profiles.default.classes = ["cats\\.arrow\\..*", "scala\\.Int"]
-RequireArrowArchitecture.profiles.default.budgetedTypeclasses = ["golden.architecture.budget.ArrowConvert"]
-RequireArrowArchitecture.profiles.default.maxInstantiations = 1
+RestrictVocabulary.scope = ["golden\\.architecture\\.budget.*"]
+RestrictVocabulary.profile = "default"
+RestrictVocabulary.profiles.default.classes = ["cats\\.arrow\\..*", "scala\\.Int"]
+RestrictVocabulary.profiles.default.budgetedTypeclasses = ["golden.architecture.budget.ArrowConvert"]
+RestrictVocabulary.profiles.default.maxInstantiations = 1
  */
 package golden.architecture.budget
 
@@ -19,6 +19,6 @@ final case class OneConversion[P[_, _]: Arrow, Q[_, _]: Arrow](
   step: P[Int, Int]
 )(implicit ev: ArrowConvert[P, Q])
 
-final case class TwoConversions[P[_, _]: Arrow, Q[_, _]: Arrow, R[_, _]: Arrow]( // assert: RequireArrowArchitecture.conversionBudget
+final case class TwoConversions[P[_, _]: Arrow, Q[_, _]: Arrow, R[_, _]: Arrow]( // assert: RestrictVocabulary.conversionBudget
   step: P[Int, Int]
 )(implicit ev1: ArrowConvert[P, Q], ev2: ArrowConvert[Q, R])

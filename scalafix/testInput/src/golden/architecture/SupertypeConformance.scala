@@ -1,9 +1,9 @@
 /*
-rules = [RequireArrowArchitecture]
+rules = [RestrictVocabulary]
 
-RequireArrowArchitecture.scope = ["golden\\.architecture\\.supertypes\\.inscope.*"]
-RequireArrowArchitecture.profile = "default"
-RequireArrowArchitecture.profiles.default.classes = ["cats\\.arrow\\..*", "scala\\.package\\.Serializable", "scala\\.Int"]
+RestrictVocabulary.scope = ["golden\\.architecture\\.supertypes\\.inscope.*"]
+RestrictVocabulary.profile = "default"
+RestrictVocabulary.profiles.default.classes = ["cats\\.arrow\\..*", "scala\\.package\\.Serializable", "scala\\.Int"]
  */
 package golden.architecture.supertypes.inscope
 
@@ -23,4 +23,4 @@ trait Base[Step[_, _]: Arrow] {
 
 trait Derived[Step[_, _]: Arrow] extends Base[Step] with Marker // conforming
 
-trait BadDerived extends NonConformingBase // assert: RequireArrowArchitecture.typeWhitelist
+trait BadDerived extends NonConformingBase // assert: RestrictVocabulary.typeWhitelist

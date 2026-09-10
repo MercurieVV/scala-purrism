@@ -1,9 +1,9 @@
 /*
-rules = [RequireArrowArchitecture]
+rules = [RestrictVocabulary]
 
-RequireArrowArchitecture.scope = ["golden\\.architecture\\.conversion.*"]
-RequireArrowArchitecture.profile = "default"
-RequireArrowArchitecture.profiles.default.classes = ["cats\\.arrow\\..*", "scala\\.Int"]
+RestrictVocabulary.scope = ["golden\\.architecture\\.conversion.*"]
+RestrictVocabulary.profile = "default"
+RestrictVocabulary.profiles.default.classes = ["cats\\.arrow\\..*", "scala\\.Int"]
  */
 package golden.architecture.conversion
 
@@ -26,7 +26,7 @@ trait NotArrowConvertShape[P[_, _], Q[_, _]] {
 // What's still caught under the new model: naming a disallowed concrete
 // type, regardless of how generic the surrounding method is.
 trait NamesDisallowedConcreteType[P[_, _], Q[_, _]] {
-  def apply[A, B](p: P[A, B], label: String): Q[A, B] // assert: RequireArrowArchitecture.typeWhitelist
+  def apply[A, B](p: P[A, B], label: String): Q[A, B] // assert: RestrictVocabulary.typeWhitelist
 }
 
 final case class Bridge[P[_, _]: Arrow, Q[_, _]: Arrow](

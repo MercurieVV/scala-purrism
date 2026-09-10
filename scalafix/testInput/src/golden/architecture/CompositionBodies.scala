@@ -1,10 +1,10 @@
 /*
-rules = [RequireArrowArchitecture]
+rules = [RestrictVocabulary]
 
-RequireArrowArchitecture.scope = ["golden\\.architecture\\.composition.*"]
-RequireArrowArchitecture.profile = "default"
-RequireArrowArchitecture.profiles.default.classes = ["cats\\.arrow\\..*", "scala\\.Function1", "scala\\.Int", "scala\\.package\\.Either", "scala\\.Predef\\.String"]
-RequireArrowArchitecture.profiles.default.bannedConstructs = ["scala.meta.Term.If", "scala.meta.Term.Function"]
+RestrictVocabulary.scope = ["golden\\.architecture\\.composition.*"]
+RestrictVocabulary.profile = "default"
+RestrictVocabulary.profiles.default.classes = ["cats\\.arrow\\..*", "scala\\.Function1", "scala\\.Int", "scala\\.package\\.Either", "scala\\.Predef\\.String"]
+RestrictVocabulary.profiles.default.bannedConstructs = ["scala.meta.Term.If", "scala.meta.Term.Function"]
  */
 package golden.architecture.composition
 
@@ -21,8 +21,8 @@ final case class Wiring[Step[_, _]: Arrow](
   }
 
   def broken: Step[Int, Int] =
-    if (true) handleStep else handleStep // assert: RequireArrowArchitecture.bannedConstruct
+    if (true) handleStep else handleStep // assert: RestrictVocabulary.bannedConstruct
 
   def lambdaLogic: Int => Int =
-    x => x + 1 // assert: RequireArrowArchitecture.bannedConstruct
+    x => x + 1 // assert: RestrictVocabulary.bannedConstruct
 }

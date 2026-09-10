@@ -1,9 +1,9 @@
 /*
-rules = [RequireArrowArchitecture]
+rules = [RestrictVocabulary]
 
-RequireArrowArchitecture.scope = ["golden\\.architecture\\.slotforms.*"]
-RequireArrowArchitecture.profile = "default"
-RequireArrowArchitecture.profiles.default.classes = ["cats\\.arrow\\..*", "scala\\.Int", "scala\\.package\\.Either", "scala\\.Predef\\.String"]
+RestrictVocabulary.scope = ["golden\\.architecture\\.slotforms.*"]
+RestrictVocabulary.profile = "default"
+RestrictVocabulary.profiles.default.classes = ["cats\\.arrow\\..*", "scala\\.Int", "scala\\.package\\.Either", "scala\\.Predef\\.String"]
  */
 package golden.architecture.slotforms
 
@@ -23,5 +23,5 @@ trait AbstractMemberSlot {
 // context bound) isn't a whitelisted type, same as any other disallowed
 // concrete reference.
 trait GenericMemberViolation[Step[_, _]: Arrow] {
-  def step[G[_]: Sync]: Step[G[Int], Int] // assert: RequireArrowArchitecture.typeWhitelist
+  def step[G[_]: Sync]: Step[G[Int], Int] // assert: RestrictVocabulary.typeWhitelist
 }

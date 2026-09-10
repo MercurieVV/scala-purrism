@@ -1,19 +1,19 @@
 /*
-rules = [RequireArrowArchitecture]
+rules = [RestrictVocabulary]
 
-RequireArrowArchitecture.scope = ["vocabulary\\.otherlayer.*"]
-RequireArrowArchitecture.profile = "otherLayer"
-RequireArrowArchitecture.profiles.otherLayer.classes = ["scala\\.Int", "scala\\.Predef\\.String"]
-RequireArrowArchitecture.profiles.otherLayer.bannedConstructs = ["scala.meta.Defn.Var"]
+RestrictVocabulary.scope = ["vocabulary\\.otherlayer.*"]
+RestrictVocabulary.profile = "otherLayer"
+RestrictVocabulary.profiles.otherLayer.classes = ["scala\\.Int", "scala\\.Predef\\.String"]
+RestrictVocabulary.profiles.otherLayer.bannedConstructs = ["scala.meta.Defn.Var"]
  */
 package vocabulary.otherlayer
 
 final case class Config(name: String, retries: Int)
 
 final case class BadConfig(name: String) {
-  var mutableName: String = name // assert: RequireArrowArchitecture.bannedConstruct
+  var mutableName: String = name // assert: RestrictVocabulary.bannedConstruct
 }
 
 final case class NamesForeignType(
-  other: cats.effect.IO[Int] // assert: RequireArrowArchitecture.typeWhitelist
+  other: cats.effect.IO[Int] // assert: RestrictVocabulary.typeWhitelist
 )
