@@ -47,7 +47,14 @@ final class RequireArrowArchitecture(config: RequireArrowArchitectureConfig)
         case c: Defn.Class if c.mods.exists(_.is[Mod.Case]) =>
           CaseClassGrammar.findings(c)
       }.flatten
-      val findings = traitFindings ++ caseClassFindings
+      val moduleNames = doc.tree.collect {
+        case c: Defn.Class if c.mods.exists(_.is[Mod.Case]) => c.name.value
+        case t: Defn.Trait                                  => t.name.value
+      }.toSet
+      val objectFindings = doc.tree.collect { case o: Defn.Object =>
+        ObjectGrammar.findings(o, moduleNames(o.name.value))
+      }.flatten
+      val findings = traitFindings ++ caseClassFindings ++ objectFindings
       findings
         .filterNot(f => suppression.suppresses(f.tree))
         .map(f =>
