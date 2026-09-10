@@ -91,6 +91,24 @@ object ArrowSlot {
       case _ => false
     }
 
+  /** Whether `tpe` is `ArrowConvert[P, Q]` for two type names -- the
+    * sanctioned, fully-abstract cross-slot conversion evidence (see the spec's
+    * "Cross-slot conversion" section). Recognised by name: it's this rule's own
+    * shared vocabulary type, not a general two-hole shape.
+    */
+  def isArrowConvertApplication(tpe: Type): Boolean = tpe match {
+    case apply: Type.Apply =>
+      Type.Apply.After_4_6_0.unapply(apply) match {
+        case Some((Type.Name("ArrowConvert"), args)) =>
+          args.values match {
+            case List(Type.Name(_), Type.Name(_)) => true
+            case _                                => false
+          }
+        case _ => false
+      }
+    case _ => false
+  }
+
   /** Whether `tpe` names a concrete type with its own resolvable Arrow- family
     * instance (`Kleisli`, a plain `A => B`, or a custom Arrow instance) rather
     * than applying an abstract slot -- the specific violation the spec calls

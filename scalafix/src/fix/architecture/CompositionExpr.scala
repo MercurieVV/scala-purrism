@@ -58,6 +58,13 @@ object CompositionExpr {
             )
           case Some((Term.Name(n), args)) if moduleNames(n) =>
             args.values.forall(argIsValid(_, slots, moduleNames))
+          case Some((Term.Select(recv, Term.Name("apply")), args))
+              if args.values.size == 1 =>
+            isValid(recv, slots, moduleNames) && isValid(
+              args.values.head,
+              slots,
+              moduleNames
+            )
           case _ => false
         }
       case Term.Block(stats) =>

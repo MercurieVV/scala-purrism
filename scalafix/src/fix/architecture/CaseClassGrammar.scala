@@ -50,6 +50,7 @@ object CaseClassGrammar {
   )(implicit doc: SemanticDocument): Option[ArchitectureFinding] =
     param.decltpe.flatMap { tpe =>
       if (ArrowSlot.isSlotApplication(tpe, slots)) None
+      else if (ArrowSlot.isArrowConvertApplication(tpe)) None
       else if (isAbstractTypeReference(tpe)) None
       else if (ArrowSlot.namesConcreteArrow(tpe))
         Some(
