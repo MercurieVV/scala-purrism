@@ -35,9 +35,29 @@ final case class ConversionBudgetDiagnostic(
 }
 
 private object BudgetCollector {
+
+  /** The nearest enclosing class/trait/object definition's position, for
+    * anchoring a budget diagnostic on the declaration whose shape breaks (per
+    * docs/RULES.md) rather than on the typeclass usage buried inside it.
+    */
+  private def enclosingDefnPos(tree: Tree): scala.meta.inputs.Position = {
+    @scala.annotation.tailrec
+    def loop(t: Tree): scala.meta.inputs.Position = t match {
+      case c: Defn.Class  => c.pos
+      case t2: Defn.Trait => t2.pos
+      case o: Defn.Object => o.pos
+      case other =>
+        other.parent match {
+          case Some(p) => loop(p)
+          case None    => tree.pos
+        }
+    }
+    loop(tree)
+  }
+
   def typeArgTuples(tree: Tree, budgeted: Set[String])(implicit
       doc: SemanticDocument
-  ): List[(String, List[String])] =
+  ): List[(String, List[String], scala.meta.inputs.Position)] =
     tree.collect {
       case app: Type.Apply if app.argClause.values.size == 2 =>
         val symbol = app.tpe.symbol
@@ -45,7 +65,9 @@ private object BudgetCollector {
         else {
           val fqcn = PatternList.normalize(symbol.value)
           if (budgeted.contains(fqcn))
-            Some(fqcn -> app.argClause.values.map(_.syntax))
+            Some(
+              (fqcn, app.argClause.values.map(_.syntax), enclosingDefnPos(app))
+            )
           else None
         }
     }.flatten
@@ -92,7 +114,6 @@ final class RequireArrowArchitecture(config: VocabularyConfig)
       val typeViolations = TypeWhitelistCheck.violations(doc.tree, allowed)
       val constructViolations = constructs.findAll(doc.tree)
       val budgetOverages = ConversionBudget.overages(
-        doc.tree.pos,
         BudgetCollector
           .typeArgTuples(doc.tree, config.budgetedTypeclasses.toSet),
         config.budgetedTypeclasses.toSet,

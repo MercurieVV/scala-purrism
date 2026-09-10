@@ -10,14 +10,21 @@ final case class BudgetOverage(
 )
 
 object ConversionBudget {
+
+  /** `typeArgTuples`: one entry per typeclass requirement found anywhere in
+    * scope -- the typeclass FQCN, its two type-argument renderings, and the
+    * position to anchor a diagnostic on for that occurrence (the nearest
+    * enclosing class/trait/object definition, per `docs/RULES.md`'s "report at
+    * the granularity of the decision"). The anchor of a reported overage is the
+    * first occurrence's position for that typeclass.
+    */
   def overages(
-      classPos: Position,
-      typeArgTuples: List[(String, List[String])],
+      typeArgTuples: List[(String, List[String], Position)],
       budgeted: Set[String],
       maxInstantiations: Int
   ): List[BudgetOverage] =
     typeArgTuples
-      .filter { case (typeclass, _) => budgeted.contains(typeclass) }
+      .filter { case (typeclass, _, _) => budgeted.contains(typeclass) }
       .groupBy(_._1)
       .toList
       .flatMap { case (typeclass, entries) =>
@@ -25,7 +32,7 @@ object ConversionBudget {
         if (distinctTuples.size > maxInstantiations)
           List(
             BudgetOverage(
-              classPos,
+              entries.head._3,
               typeclass,
               distinctTuples.size,
               maxInstantiations
