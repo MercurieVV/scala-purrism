@@ -9,6 +9,6 @@ package vocabulary.bannedtry
 
 final case class Holder(x: Int) {
   def run =
-    try x / 0 // assert: RequireArrowArchitecture
+    try x / 0 // assert: RequireArrowArchitecture.bannedConstruct
     catch { case _ => 0 }
 }

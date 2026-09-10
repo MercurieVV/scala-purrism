@@ -22,4 +22,4 @@ trait Base[Step[_, _]: Arrow] {
 
 trait Derived[Step[_, _]: Arrow] extends Base[Step] with Marker // conforming
 
-trait BadDerived extends NonConformingBase // assert: RequireArrowArchitecture
+trait BadDerived extends NonConformingBase // assert: RequireArrowArchitecture.typeWhitelist

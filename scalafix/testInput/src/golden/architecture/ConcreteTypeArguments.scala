@@ -35,5 +35,5 @@ trait WithNestedStructuralWrappers[Step[_, _]: Arrow, A] {
 // one. This is where a disallowed concrete type actually gets caught.
 trait WithBareDisallowedConcrete[Step[_, _]: Arrow] {
   def run: Step[Int, Int]
-  def label: String // assert: RequireArrowArchitecture
+  def label: String // assert: RequireArrowArchitecture.typeWhitelist
 }

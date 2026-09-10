@@ -20,8 +20,8 @@ final case class Wiring[Step[_, _]: Arrow](
   }
 
   def broken: Step[Int, Int] =
-    if (true) handleStep else handleStep // assert: RequireArrowArchitecture
+    if (true) handleStep else handleStep // assert: RequireArrowArchitecture.bannedConstruct
 
   def lambdaLogic: Int => Int =
-    x => x + 1 // assert: RequireArrowArchitecture
+    x => x + 1 // assert: RequireArrowArchitecture.bannedConstruct
 }

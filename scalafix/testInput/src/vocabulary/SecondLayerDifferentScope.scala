@@ -10,9 +10,9 @@ package vocabulary.otherlayer
 final case class Config(name: String, retries: Int)
 
 final case class BadConfig(name: String) {
-  var mutableName: String = name // assert: RequireArrowArchitecture
+  var mutableName: String = name // assert: RequireArrowArchitecture.bannedConstruct
 }
 
 final case class NamesForeignType(
-  other: cats.effect.IO[Int] // assert: RequireArrowArchitecture
+  other: cats.effect.IO[Int] // assert: RequireArrowArchitecture.typeWhitelist
 )

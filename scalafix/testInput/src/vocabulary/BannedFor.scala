@@ -9,5 +9,5 @@ package vocabulary.bannedfor
 
 final case class Holder(x: Int) {
   def run =
-    for (i <- 1 to x) println(i) // assert: RequireArrowArchitecture
+    for (i <- 1 to x) println(i) // assert: RequireArrowArchitecture.bannedConstruct
 }

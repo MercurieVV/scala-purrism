@@ -38,5 +38,5 @@ object PlainWiring {
     s
 
   // what's still caught: naming a disallowed concrete type, companion or not
-  val label: String = "wiring" // assert: RequireArrowArchitecture
+  val label: String = "wiring" // assert: RequireArrowArchitecture.typeWhitelist
 }

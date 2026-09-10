@@ -2,7 +2,7 @@
 rules = [RequireArrowArchitecture]
 
 RequireArrowArchitecture.scope = ["golden\\.architecture\\.caseclass.*"]
-RequireArrowArchitecture.classes = ["cats\\.arrow\\..*"]
+RequireArrowArchitecture.classes = ["cats\\.arrow\\..*", "scala\\.Unit"]
 RequireArrowArchitecture.bannedConstructs = ["scala.meta.Defn.Var"]
  */
 package golden.architecture.caseclass
@@ -14,10 +14,10 @@ final case class Conforming[Step[_, _]: Arrow](
 )
 
 final case class PlainDataParam[Step[_, _]: Arrow](
-  retries: Int, // assert: RequireArrowArchitecture
+  retries: Int, // assert: RequireArrowArchitecture.typeWhitelist
   step: Step[Int, Int]
 )
 
 final case class MutableField[Step[_, _]: Arrow](step: Step[Int, Int]) {
-  var cache: Int = 0 // assert: RequireArrowArchitecture
+  var cache: Unit = () // assert: RequireArrowArchitecture.bannedConstruct
 }

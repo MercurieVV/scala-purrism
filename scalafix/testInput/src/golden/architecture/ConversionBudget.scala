@@ -18,6 +18,6 @@ final case class OneConversion[P[_, _]: Arrow, Q[_, _]: Arrow](
   step: P[Int, Int]
 )(implicit ev: ArrowConvert[P, Q])
 
-final case class TwoConversions[P[_, _]: Arrow, Q[_, _]: Arrow, R[_, _]: Arrow]( // assert: RequireArrowArchitecture
+final case class TwoConversions[P[_, _]: Arrow, Q[_, _]: Arrow, R[_, _]: Arrow]( // assert: RequireArrowArchitecture.conversionBudget
   step: P[Int, Int]
 )(implicit ev1: ArrowConvert[P, Q], ev2: ArrowConvert[Q, R])

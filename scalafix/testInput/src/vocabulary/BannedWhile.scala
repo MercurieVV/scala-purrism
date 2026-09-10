@@ -10,6 +10,6 @@ package vocabulary.bannedwhile
 final case class Holder(x: Int) {
   def run = {
     var i: Int = 0
-    while (i < x) { i = i + 1 } // assert: RequireArrowArchitecture
+    while (i < x) { i = i + 1 } // assert: RequireArrowArchitecture.bannedConstruct
   }
 }

@@ -14,5 +14,5 @@ trait InScopeConforming[Step[_, _]: Arrow] {
 }
 
 trait InScopeViolating[Step[_, _]: Arrow] {
-  def name: String // assert: RequireArrowArchitecture
+  def name: String // assert: RequireArrowArchitecture.typeWhitelist
 }

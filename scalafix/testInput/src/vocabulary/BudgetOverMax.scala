@@ -11,7 +11,7 @@ trait ArrowConvert[P[_, _], Q[_, _]] {
   def apply[A, B](p: P[A, B]): Q[A, B]
 }
 
-final case class TooManyConversions[P[_, _], Q[_, _], R[_, _]]( // assert: RequireArrowArchitecture
+final case class TooManyConversions[P[_, _], Q[_, _], R[_, _]]( // assert: RequireArrowArchitecture.conversionBudget
   p: P[Int, Int]
 )(implicit
   pq: ArrowConvert[P, Q],

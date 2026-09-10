@@ -10,6 +10,7 @@ final case class TypeWhitelistDiagnostic(
     foundFqcn: String,
     override val severity: scalafix.lint.LintSeverity
 ) extends Diagnostic {
+  override def categoryID: String = "typeWhitelist"
   override def message: String =
     s"names '$foundFqcn'; only types matching this file's configured scope/classes whitelist may be named here"
 }
@@ -19,6 +20,7 @@ final case class BannedConstructDiagnostic(
     constructClass: String,
     override val severity: scalafix.lint.LintSeverity
 ) extends Diagnostic {
+  override def categoryID: String = "bannedConstruct"
   override def message: String =
     s"'$constructClass' is a banned construct in this scope"
 }
@@ -30,6 +32,7 @@ final case class ConversionBudgetDiagnostic(
     max: Int,
     override val severity: scalafix.lint.LintSeverity
 ) extends Diagnostic {
+  override def categoryID: String = "conversionBudget"
   override def message: String =
     s"requires $count distinct instantiations of '$typeclass', exceeding the configured max of $max"
 }

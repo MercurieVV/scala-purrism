@@ -25,7 +25,7 @@ trait NotArrowConvertShape[P[_, _], Q[_, _]] {
 // What's still caught under the new model: naming a disallowed concrete
 // type, regardless of how generic the surrounding method is.
 trait NamesDisallowedConcreteType[P[_, _], Q[_, _]] {
-  def apply[A, B](p: P[A, B], label: String): Q[A, B] // assert: RequireArrowArchitecture
+  def apply[A, B](p: P[A, B], label: String): Q[A, B] // assert: RequireArrowArchitecture.typeWhitelist
 }
 
 final case class Bridge[P[_, _]: Arrow, Q[_, _]: Arrow](
