@@ -8,21 +8,9 @@ io.github.mercurievv:scala-purrism-scalafix_3:<version>
 
 Publishing uses Mill's Sonatype Central publisher.
 
-## Required Setup
+## Setup (done)
 
-1. Rename the GitHub repository to `scala-purrism` or update `Project.repositoryName` in `build.mill`.
-2. Verify the `io.github.mercurievv` namespace in Sonatype Central.
-3. Confirm the project license before the first immutable release. The current POM metadata declares Apache-2.0.
-4. Add these GitHub Actions secrets:
-
-```text
-MILL_PGP_PASSPHRASE
-MILL_PGP_SECRET_BASE64
-MILL_SONATYPE_PASSWORD
-MILL_SONATYPE_USERNAME
-```
-
-`MILL_SONATYPE_USERNAME` and `MILL_SONATYPE_PASSWORD` should be a Sonatype Central portal token username/password pair.
+Repo is `scala-purrism`, matching `Project.repositoryName` in `build.mill`. License is Apache-2.0. The `io.github.mercurievv` Sonatype Central namespace is verified. GitHub Actions secrets (`MILL_PGP_PASSPHRASE`, `MILL_PGP_SECRET_BASE64`, `MILL_SONATYPE_USERNAME`/`PASSWORD` as a Sonatype Central portal token pair) are set.
 
 ## Local Checks
 

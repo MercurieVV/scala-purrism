@@ -1,5 +1,6 @@
 package fix
 
+import fix.opaque.SemanticdbIndex
 import fix.vocabulary._
 import metaconfig.Configured
 import scala.meta._
@@ -73,28 +74,32 @@ private object BudgetCollector {
     loop(tree)
   }
 
-  def typeArgTuples(tree: Tree, budgeted: Set[String])(implicit
-      doc: SemanticDocument
+  def typeArgTuples(
+      tree: Tree,
+      budgeted: Set[String],
+      resolver: TypeResolver
   ): List[(String, List[String], String, scala.meta.inputs.Position)] =
     tree.collect {
       case app: Type.Apply if app.argClause.values.size == 2 =>
-        val symbol = app.tpe.symbol
-        if (symbol == Symbol.None) None
-        else {
-          val fqcn = PatternList.normalize(symbol.value)
-          if (budgeted.contains(fqcn))
-            enclosingDefn(app).map { case (ownerName, ownerPos) =>
-              (fqcn, app.argClause.values.map(_.syntax), ownerName, ownerPos)
-            }
-          else None
+        resolver.resolve(app.tpe) match {
+          case None => None
+          case Some(fqcn) =>
+            if (budgeted.contains(fqcn))
+              enclosingDefn(app).map { case (ownerName, ownerPos) =>
+                (fqcn, app.argClause.values.map(_.syntax), ownerName, ownerPos)
+              }
+            else None
         }
     }.flatten
 }
 
-final class RestrictVocabulary(config: VocabularyConfig)
-    extends SemanticRule("RestrictVocabulary") {
+final class RestrictVocabulary(
+    config: VocabularyConfig,
+    classpath: List[java.nio.file.Path]
+) extends SyntacticRule("RestrictVocabulary") {
 
-  def this() = this(VocabularyConfig.default)
+  def this() = this(VocabularyConfig.default, Nil)
+  def this(config: VocabularyConfig) = this(config, Nil)
 
   override def withConfiguration(
       configuration: Configuration
@@ -111,12 +116,23 @@ final class RestrictVocabulary(config: VocabularyConfig)
           constructs <- ConstructMatcher.compile(profile.bannedConstructs)
         } yield (scope, classes, constructs)
         validated match {
-          case Right(_)  => Configured.ok(new RestrictVocabulary(cfg))
+          case Right(_) =>
+            Configured.ok(
+              new RestrictVocabulary(
+                cfg,
+                configuration.scalacClasspath.map(_.toNIO)
+              )
+            )
           case Left(err) => Configured.error(err)
         }
       }
 
-  override def fix(implicit doc: SemanticDocument): Patch =
+  // No `SemanticDocument` reaches a `SyntacticRule`, so this is built once
+  // from whatever compiled payload the classpath carries; `VocabularyResolvers`
+  // falls back to `ImportTableResolver` per file when it isn't current.
+  private lazy val index: SemanticdbIndex = SemanticdbIndex.load(classpath)
+
+  override def fix(implicit doc: SyntacticDocument): Patch =
     config.resolveProfile match {
       case Left(err) =>
         Patch.lint(UnknownProfileDiagnostic(doc.tree.pos, err))
@@ -135,11 +151,24 @@ final class RestrictVocabulary(config: VocabularyConfig)
               .compile(profile.bannedConstructs)
               .getOrElse(ConstructMatcher.empty)
 
-          val typeViolations = TypeWhitelistCheck.violations(doc.tree, allowed)
+          // `doc.tree` is always the whole file's `Source` at this top-level
+          // entry point; the empty fallback is unreachable in practice.
+          val source = doc.tree match {
+            case src: Source => src
+            case _           => Source(Nil)
+          }
+          val resolver =
+            VocabularyResolvers.forSource(source, doc.input.text, index)
+
+          val typeViolations =
+            TypeWhitelistCheck.violations(doc.tree, allowed, resolver)
           val constructViolations = constructs.findAll(doc.tree)
           val budgetOverages = ConversionBudget.overages(
-            BudgetCollector
-              .typeArgTuples(doc.tree, profile.budgetedTypeclasses.toSet),
+            BudgetCollector.typeArgTuples(
+              doc.tree,
+              profile.budgetedTypeclasses.toSet,
+              resolver
+            ),
             profile.budgetedTypeclasses.toSet,
             profile.maxInstantiations
           )

@@ -1,5 +1,8 @@
 # RequireArrowArchitecture Implementation Plan
 
+**Status: implemented and shipped as `RestrictVocabulary`** (renamed post-plan
+— see `docs/RULES.md`). Kept as the implementation record.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Implement `RequireArrowArchitecture`, a diagnostic-only scalafix rule that restricts an in-scope file to a configured type-provenance whitelist and bans a configured set of syntactic constructs — a generic "restricted vocabulary" engine whose default configuration reproduces an arrow-architecture layer.

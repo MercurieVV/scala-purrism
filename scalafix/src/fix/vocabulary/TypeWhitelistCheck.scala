@@ -1,7 +1,6 @@
 package fix.vocabulary
 
 import scala.meta._
-import scalafix.v1._
 
 final case class WhitelistViolation(
     position: scala.meta.inputs.Position,
@@ -41,23 +40,20 @@ object TypeWhitelistCheck {
       }
       .filterNot(t => isTypeAliasBinding(t) || isOwnDefinitionName(t))
 
-  def violations(tree: Tree, allowed: PatternList)(implicit
-      doc: SemanticDocument
+  def violations(
+      tree: Tree,
+      allowed: PatternList,
+      resolver: TypeResolver
   ): List[WhitelistViolation] = {
     val namedViolations = namedTypesIn(tree).flatMap { tpe =>
-      val symbol = tpe.symbol
-      if (symbol == Symbol.None) Nil
-      else {
-        val info = symbol.info
-        val exempt =
-          info.exists(i => i.isTypeParameter || (i.isType && i.isAbstract))
-        if (exempt) Nil
-        else {
-          val fqcn = PatternList.normalize(symbol.value)
-          if (allowed.matches(fqcn)) Nil
-          else List(WhitelistViolation(tpe.pos, fqcn))
+      if (resolver.isExempt(tpe)) Nil
+      else
+        resolver.resolve(tpe) match {
+          case None => Nil
+          case Some(fqcn) =>
+            if (allowed.matches(fqcn)) Nil
+            else List(WhitelistViolation(tpe.pos, fqcn))
         }
-      }
     }
     val functionViolations =
       tree.collect { case t: Type.Function => t }.flatMap { tf =>

@@ -1,3 +1,5 @@
+<img src="docs/purrism.svg" alt="scala-purrism logo" width="160">
+
 # scala-purrism
 
 Scalafix semantic rules for refactoring Typelevel Scala code toward pure,

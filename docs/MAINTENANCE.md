@@ -13,7 +13,7 @@ Scala Steward expects `repos.md` entries in hosted forge form:
 - owner/repository:branch
 ```
 
-After this repository has a git remote, create a repos file with the hosted slug and run:
+Repo slug: `MercurieVV/scala-purrism`. To run Steward, create a repos file with that slug and run:
 
 ```bash
 rtk coursier launch org.scala-steward:scala-steward-core_2.13:latest.release -- \

@@ -158,41 +158,16 @@ This section is copied verbatim into the GitHub issue body under
   are enumerated with input intent, expected outcome, and the erasure/
   preservation/decline/ranking rule each one pins.
 
-## Corpus run
+## Status
 
-## Deferred fixtures
+`PreferCatsFunctions` is implemented (`scalafix/src/fix/PreferCatsFunctions.scala`).
+The 9 negative/safety fixtures from §5 are landed under `scalafix/testInput/src/golden`
++ `testOutput/src/golden`. The 8 positive fixtures remain deferred: the checked-in
+Cats index doesn't yet cover the normalizer axes (E5 self-call/syntax-spelling
+erasure, product/traverse shapes) those fixtures need. Extending the index is
+tracked against #34; this doc's contract (§1–4) does not change when it lands.
 
-- `CatsEquivalentMapIdentity`: deferred because the checked-in Cats index has no public `map` identity entry.
-- `CatsEquivalentVoid`: deferred because the landed normalizer does not yet erase the Cats index's unqualified self-call versus syntax spelling (unsupported normalizer axis E5).
-- `CatsEquivalentAs`: deferred because the landed normalizer does not yet erase the Cats index's unqualified self-call versus syntax spelling (unsupported normalizer axis E5).
-- `CatsEquivalentFoldMap`: deferred because the landed normalizer does not yet erase the Cats index's unqualified self-call versus syntax spelling (unsupported normalizer axis E5).
-- `CatsEquivalentProduct`: deferred because the checked-in index exposes only `productL`/`productR`, while the requested independent pair shape requires the unsupported product normalizer axis.
-- `CatsEquivalentTraverse`: deferred because the checked-in index has `Traverse.sequence` but no `traverse` entry, and the manual accumulation shape is not a supported normalizer axis (E2 does not erase collection accumulation).
-- `CatsEquivalentForComprehension`: deferred because the landed normalizer does not support the requested for-comprehension combinator axis (E2 only equates a for-comprehension with its direct flatMap/map desugaring).
-- `CatsEquivalentLocalHelperMethod`: deferred by decline rule D2: a user-local helper is not a public Cats candidate, and the index has no public candidate with the required normalized body.
-
-The corpus run was attempted on 2026-07-27, but could not execute: this checkout
-does not contain a `PreferCatsFunctions` rule (no implementation or Scalafix
-service registration), so there is no runnable rule to apply and no proposed
-rewrite to audit. The local rule build was also blocked before compilation by
-Coursier's cache lock permission error at
-`/Users/viktorskalinins/Library/Caches/Coursier/v1/.structure.lock`.
-
-All four repositories were attempted and skipped for the same reason:
-
-| Repository | Proposed rewrites | Declines | Audit |
-| --- | ---: | --- | --- |
-| `gh-tasks-llm-executor` | n/a | n/a — rule unavailable | no proposed rewrites |
-| `arrowstep` | n/a | n/a — rule unavailable | no proposed rewrites |
-| `cctv-analyzer-scala` | n/a | n/a — rule unavailable | no proposed rewrites |
-| `ScalaSemanticMCP` | n/a | n/a — rule unavailable | no proposed rewrites |
-
-No false-positive follow-up can be filed from this run because no rewrite was
-proposed. Once the rule is available, rerun this audit and file any false
-positive as a follow-up to #34.
-
-No source files were changed in the corpus repositories. They contained
-pre-existing working-tree changes, which were left untouched.
-
-ScalaSemantic MCP was unavailable for this audit: the required
-`set_workspace_root` call was rejected as `user cancelled MCP tool call`.
+A corpus run against the reference repositories (`gh-tasks-llm-executor`,
+`arrowstep`, `cctv-analyzer-scala`, `ScalaSemanticMCP`) has not yet been done
+against the current implementation. Run it and file any false positive as a
+follow-up to #34.

@@ -1,5 +1,10 @@
 # PreferPolymorphicTypeclasses — design
 
+**Status: implemented.** The rule shipped (named `PreferHKTTypeclasses` at the
+time this was written, renamed since — see `docs/RULES.md`). Kept as the
+design record; for current behavior and config see `docs/index.md`. Code
+signatures below with `???` are the original plan, not the shipped source.
+
 Design of record for [#33](https://github.com/MercurieVV/scala-purrism/issues/33)
 ("Prefer HKT typeclasses over concrete containers"), produced by
 [#36](https://github.com/MercurieVV/scala-purrism/issues/36).

@@ -277,9 +277,21 @@ object SemanticdbIndex {
       .distinctBy(_.uri)
 
   @nowarn("cat=deprecation")
-  private def md5(file: Path): String = {
+  private def md5(file: Path): String = md5Bytes(Files.readAllBytes(file))
+
+  /** The same digest the compiler recorded in `TextDocument.md5`, computed from
+    * a source's current text rather than a file on disk -- so a rule that has
+    * only a `SyntacticDocument`'s text can still tell whether a compiled
+    * payload is still current for it.
+    */
+  @nowarn("cat=deprecation")
+  def md5(text: String): String =
+    md5Bytes(text.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+
+  @nowarn("cat=deprecation")
+  private def md5Bytes(bytes: Array[Byte]): String = {
     val digest = java.security.MessageDigest.getInstance("MD5")
-    digest.digest(Files.readAllBytes(file)).map(b => f"$b%02X").mkString
+    digest.digest(bytes).map(b => f"$b%02X").mkString
   }
 
   private implicit val pathOrdering: Ordering[Path] =

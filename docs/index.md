@@ -113,8 +113,6 @@ Configs:
 rules = [ PreferTypeParameters ] // [required] run all signature-widening rules
 ```
 
-Examples:
-
 ```scala mdoc:passthrough
 print(docs.DocDiff.renderRule(
   rule = "PreferTypeParameters",
@@ -205,8 +203,6 @@ PropagateOpaqueType.types = [
 ))
 ```
 
-Examples:
-
 ```scala mdoc:passthrough
 print(docs.DocDiff.renderRule(
   rule = "PropagateOpaqueType",
@@ -259,8 +255,6 @@ def test[A, B](option: Option[A], render: A => B, default: B) =
 ))
 ```
 
-Examples:
-
 ```scala mdoc:passthrough
 print(docs.DocDiff.renderRule(
   rule = "PreferOptionIdioms",
@@ -294,8 +288,6 @@ def test(xs: List[Int]) =
 """
 ))
 ```
-
-Examples:
 
 ```scala mdoc:passthrough
 print(docs.DocDiff.renderRule(
@@ -338,8 +330,6 @@ def bump[F[_]: Sync](fa: F[Int]): F[Int] =
 ))
 ```
 
-Examples:
-
 ```scala mdoc:passthrough
 print(docs.DocDiff.renderRule(
   rule = "TypeclassWeakening",
@@ -368,8 +358,6 @@ def test[F[_]: Sync] =
 """
 ))
 ```
-
-Examples:
 
 ```scala mdoc:passthrough
 print(docs.DocDiff.renderRule(
@@ -406,8 +394,6 @@ def test[A](work: () => A, fallback: () => A) =
 """
 ))
 ```
-
-Examples:
 
 ```scala mdoc:passthrough
 print(docs.DocDiff.renderRule(
@@ -449,8 +435,6 @@ val loaded: IO[String] = load[IO](42)
 ))
 ```
 
-Examples:
-
 ```scala mdoc:passthrough
 print(docs.DocDiff.renderRule(
   rule = "PreferKleisli",
@@ -487,8 +471,6 @@ def test[F[_]: Functor](load: Kleisli[F, Long, String]) =
 """
 ))
 ```
-
-Examples:
 
 ```scala mdoc:passthrough
 print(docs.DocDiff.renderRule(
@@ -567,6 +549,229 @@ PreferPolymorphicCollectionOps.rewrite = true // [optional] also rewrite affecte
 
 All three also take `rewrite`, `crossFile`, and `crossFileTargetroots`.
 
+## Architecture Boundaries
+
+Unlike the rules above, this rule never rewrites code — it's a
+diagnostic-only gate a team opts a package or directory into, to keep
+already-conforming code from drifting rather than to migrate it.
+
+### Vocabulary Restriction
+
+#### RestrictVocabulary
+
+**What.** A diagnostic-only gate: every *named* type in scope (member types,
+parameter/return types, `extends` clauses, type arguments, however deeply
+nested) must resolve to a symbol on an allow-list, an optional set of
+syntactic constructs (`if`, `match`, `var`, ... as Scalameta tree classes) is
+banned outright, and an optional per-typeclass "conversion budget" caps how
+many distinct instantiations of a named typeclass a class/trait and its
+companion may together require. Type parameters and abstract type members are
+always exempt from the type check, since they never name a concrete type. The
+vocabulary itself lives in a named **profile**, so a module picks one by name
+rather than repeating the whole shape, and several independently-scoped
+modules can share one profile.
+
+**Why.** This is the odd one out among these rules: it never rewrites
+anything. Everything else here migrates code *toward* a style; this one keeps
+code that already conforms from drifting back out of it, by refusing to
+compile-clean-but-review-quietly slip a disallowed type or construct into a
+package a team has locked down.
+
+**Ways to use it:**
+
+- **The built-in arrow-architecture layer** — the default profile shape,
+  restricting a package to `cats.arrow.*`/`Either`/`Option`/`Tuple` and
+  banning imperative constructs, so a boundary package only ever assembles
+  already-abstract pieces.
+- **Any other layer boundary** — the engine has no arrow-specific knowledge;
+  point `scope`/`classes` at a different package and a different whitelist to
+  gate anything else the same way (a domain layer that may not name
+  infrastructure types, a public API surface that may not leak an internal
+  one, ...).
+- **A pure syntax gate, no whitelist at all** — an empty `classes` with only
+  `bannedConstructs` set just enforces a coding-style rule (no `var`, no
+  `if`) without restricting which types a file may name.
+- **A promotion path** — start a package at `severity = warning` while
+  cleaning it up, then flip to `error` once it's conforming, with no other
+  config change.
+- **Mid-edit, before anything compiles** — see "Runs without a successful
+  compile" below; the same rule entry checks a file that doesn't type-check
+  yet, just with one fewer signal available (the conversion budget) and one
+  approximated instead of resolved exactly (the type whitelist).
+
+Examples:
+
+```scala mdoc:passthrough
+print(docs.DocDiff.renderRule(
+  rule = "RestrictVocabulary",
+  before = """
+import cats.arrow.Arrow
+
+trait Pipeline[Step[_, _]: Arrow] {
+  def handle: Step[Int, Int]
+}
+
+final case class LivePipeline[Step[_, _]: Arrow](handleStep: Step[Int, Int])
+    extends Pipeline[Step] {
+  def handle: Step[Int, Int] = handleStep
+}
+""",
+  config = """
+RestrictVocabulary.scope = ["test.*"]
+RestrictVocabulary.profile = "arrow"
+RestrictVocabulary.profiles.arrow.classes = ["cats\\.arrow\\..*", "scala\\.Int"]
+"""
+))
+```
+
+```scala mdoc:passthrough
+print(docs.DocDiff.renderRule(
+  rule = "RestrictVocabulary",
+  before = """
+class Router[F[_]](step: Kleisli[F, Int, Int]) {
+  def route(x: Int): Kleisli[F, Int, Int] =
+    if x > 0 then step else step
+}
+""",
+  config = """
+RestrictVocabulary.scope = ["test.*"]
+RestrictVocabulary.profile = "arrow"
+RestrictVocabulary.profiles.arrow.classes = ["cats\\.arrow\\..*", "scala\\.Int"]
+RestrictVocabulary.profiles.arrow.bannedConstructs = ["scala.meta.Term.If"]
+"""
+))
+```
+
+This is diagnostic-only, so a conforming file like the first example above
+never changes shape — the profile decides what's *allowed* to be named, not
+what gets rewritten. The second example names `Kleisli` directly, which isn't
+in `classes`, and uses a banned `if` — `RestrictVocabulary` reports two
+diagnostics at those declarations and still emits no patch, so the code comes
+back unchanged either way.
+
+**More examples, straight from the executed fixtures.** Every shape below is
+a real `scalafix/testInput/src/golden/architecture/*.scala` fixture —
+`SemanticFixtureSuite` compiles and runs it on every test run, and the
+`// assert: ...` comments are the actual assertions, not decoration. Reused
+verbatim here rather than re-typed, so the doc can't drift from what the rule
+actually does.
+
+*Purpose: catch a disallowed type, including one buried inside an otherwise-
+whitelisted wrapper.* Config:
+
+```hocon
+RestrictVocabulary.scope = ["golden\\.architecture\\.inscope.*"]
+RestrictVocabulary.profile = "default"
+RestrictVocabulary.profiles.default.classes = ["cats\\.arrow\\..*", "scala\\.Int", "scala\\.package\\.Either"]
+```
+
+`scalafix/testInput/src/golden/architecture/TraitInScope.scala`:
+
+```scala
+trait InScopeConforming[Step[_, _]: Arrow] {
+  type Error
+  def validate: Step[Int, Either[Error, Int]]
+}
+
+trait InScopeViolating[Step[_, _]: Arrow] {
+  def name: String // assert: RestrictVocabulary.typeWhitelist
+}
+```
+
+*Purpose: ban imperative constructs (`var`) alongside the type check, and
+show that a plain constructor parameter's type is checked the same as any
+other named type.* Config:
+
+```hocon
+RestrictVocabulary.scope = ["golden\\.architecture\\.caseclass.*"]
+RestrictVocabulary.profile = "default"
+RestrictVocabulary.profiles.default.classes = ["cats\\.arrow\\..*", "scala\\.Unit", "scala\\.Int", "scala\\.package\\.Either", "scala\\.Predef\\.String"]
+RestrictVocabulary.profiles.default.bannedConstructs = ["scala.meta.Defn.Var"]
+```
+
+`scalafix/testInput/src/golden/architecture/CaseClassMembers.scala`:
+
+```scala
+final case class Conforming[Step[_, _]: Arrow](
+  validateStep: Step[Int, Either[String, Int]]
+)
+
+final case class PlainDataParam[Step[_, _]: Arrow](
+  retries: Boolean, // assert: RestrictVocabulary.typeWhitelist
+  step: Step[Int, Int]
+)
+
+final case class MutableField[Step[_, _]: Arrow](step: Step[Int, Int]) {
+  var cache: Unit = () // assert: RestrictVocabulary.bannedConstruct
+}
+```
+
+*Purpose: cap how many distinct `(P, Q)` pairs may require an `ArrowConvert`
+instance across a class and its companion — one conversion is an integration
+seam, several is a sign the boundary itself needs rethinking.* Config:
+
+```hocon
+RestrictVocabulary.scope = ["golden\\.architecture\\.budget.*"]
+RestrictVocabulary.profile = "default"
+RestrictVocabulary.profiles.default.classes = ["cats\\.arrow\\..*", "scala\\.Int"]
+RestrictVocabulary.profiles.default.budgetedTypeclasses = ["golden.architecture.budget.ArrowConvert"]
+RestrictVocabulary.profiles.default.maxInstantiations = 1
+```
+
+`scalafix/testInput/src/golden/architecture/ConversionBudget.scala`:
+
+```scala
+trait ArrowConvert[P[_, _], Q[_, _]] {
+  def apply[A, B](p: P[A, B]): Q[A, B]
+}
+
+final case class OneConversion[P[_, _]: Arrow, Q[_, _]: Arrow](
+  step: P[Int, Int]
+)(implicit ev: ArrowConvert[P, Q])
+
+final case class TwoConversions[P[_, _]: Arrow, Q[_, _]: Arrow, R[_, _]: Arrow]( // assert: RestrictVocabulary.conversionBudget
+  step: P[Int, Int]
+)(implicit ev1: ArrowConvert[P, Q], ev2: ArrowConvert[Q, R])
+```
+
+See `scalafix/testInput/src/golden/architecture/` for the rest — recursive
+checking into type arguments (`ConcreteTypeArguments.scala`), scope
+narrowing (`TraitOutOfScope.scala`), and shared-profile reuse across modules
+(`FullSpecExample.scala`) each have their own fixture in the same style.
+
+**Runs without a successful compile.** Unlike this project's other rules,
+`RestrictVocabulary` never needs SemanticDB: run it against a file that
+doesn't type-check yet — mid-edit, or before the rest of the module compiles
+— and it still checks banned constructs, and approximates the type
+whitelist from the file's own `import` statements (plain, multi-, and
+renamed imports, plus a fully-qualified reference written out inline). A
+wildcard import or a same-package reference with no import is left
+unchecked rather than guessed at, and the per-typeclass conversion budget is
+skipped entirely, since neither has a sound approximation without a
+compiled payload. Once the module does compile, later runs read the real
+SemanticDB and check everything, including the budget — no configuration
+changes either way; it's the same `rules = [ RestrictVocabulary ]` entry.
+This path has no executed fixture of its own — `SemanticFixtureSuite`
+compiles every fixture before running it, which is exactly the state this
+mode exists for when there's nothing else to compile against — so it's
+covered instead by plain unit tests against the resolver directly
+(`ImportTableResolverSuite`, `VocabularyResolversSuite`).
+
+Configs:
+
+```hocon
+RestrictVocabulary.severity = warning // [optional] or error
+RestrictVocabulary.scope = [ "com\\.foo\\.wiring\\..*" ] // [optional] empty = the whole module
+RestrictVocabulary.profile = "arrow" // [required] which entry in profiles to use
+RestrictVocabulary.profiles.arrow.classes = [ "cats\\.arrow\\..*", "scala\\.Either", "scala\\.Option", "scala\\.Tuple.*" ] // [optional] whitelisted type FQCNs/regexes
+RestrictVocabulary.profiles.arrow.bannedConstructs = [ "scala.meta.Term.If", "scala.meta.Defn.Var" ] // [optional] banned Scalameta tree classes
+RestrictVocabulary.profiles.arrow.budgetedTypeclasses = [ "ArrowConvert" ] // [optional] typeclasses to budget
+RestrictVocabulary.profiles.arrow.maxInstantiations = 1 // [optional] max distinct instantiations per class/companion pair
+```
+
+See [the design spec](https://github.com/MercurieVV/scala-purrism/blob/master/docs/superpowers/specs/2026-09-10-require-arrow-architecture-design.md)
+for the full grammar and worked examples, including violating shapes.
+
 ## Cross-File Keys
 
 The signature-widening rules read these keys from their own config block:
@@ -587,5 +792,6 @@ for Mill-style output. Compile first; stale SemanticDB means stale decisions.
 - [Engineering rules](https://github.com/MercurieVV/scala-purrism/blob/master/docs/RULES.md)
 - [Golden fixtures](https://github.com/MercurieVV/scala-purrism/blob/master/docs/GOLDEN_FIXTURES.md)
 - [Prefer Cats Functions contract](https://github.com/MercurieVV/scala-purrism/blob/master/docs/PREFER_CATS_FUNCTIONS.md)
+- [RestrictVocabulary design spec](https://github.com/MercurieVV/scala-purrism/blob/master/docs/superpowers/specs/2026-09-10-require-arrow-architecture-design.md)
 - [Kleisli to Arrow catalogue](https://github.com/MercurieVV/scala-purrism/blob/master/docs/ARROW_PATTERNS.md)
 - [Publishing](https://github.com/MercurieVV/scala-purrism/blob/master/docs/PUBLISHING.md)

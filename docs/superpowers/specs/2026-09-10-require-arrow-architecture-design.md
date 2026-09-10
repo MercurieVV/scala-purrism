@@ -1,5 +1,8 @@
 # RestrictVocabulary — Design
 
+**Status: implemented and shipped as `RestrictVocabulary`.** Kept as the
+design record; for current behavior and config see `docs/index.md`.
+
 ## Purpose
 
 A standalone scalafix lint rule enforcing a restricted vocabulary on selected
