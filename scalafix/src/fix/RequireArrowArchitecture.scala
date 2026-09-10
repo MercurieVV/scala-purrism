@@ -40,9 +40,14 @@ final class RequireArrowArchitecture(config: RequireArrowArchitectureConfig)
       Patch.empty
     else {
       val suppression = Suppression.forDocument
-      val findings = doc.tree.collect { case t: Defn.Trait =>
+      val traitFindings = doc.tree.collect { case t: Defn.Trait =>
         TraitGrammar.findings(t)
       }.flatten
+      val caseClassFindings = doc.tree.collect {
+        case c: Defn.Class if c.mods.exists(_.is[Mod.Case]) =>
+          CaseClassGrammar.findings(c)
+      }.flatten
+      val findings = traitFindings ++ caseClassFindings
       findings
         .filterNot(f => suppression.suppresses(f.tree))
         .map(f =>
