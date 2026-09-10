@@ -27,7 +27,21 @@ object CaseClassGrammar {
         "`var` is not allowed; only arrow-slot-typed vals/defs are"
       )
     }
-    paramFindings ++ varFindings
+    val bodyFindings = stats.collect {
+      case d: Defn.Def if !CompositionExpr.isValid(d.body, slots) =>
+        ArchitectureFinding(
+          d.body,
+          s"body of `${d.name.value}` is not a valid composition expression " +
+            "(only arrow-slot references, whitelisted combinators, and " +
+            "local vals ending in one final composition are allowed)"
+        )
+      case d: Defn.Val if !CompositionExpr.isValid(d.rhs, slots) =>
+        ArchitectureFinding(
+          d.rhs,
+          "val body is not a valid composition expression"
+        )
+    }
+    paramFindings ++ varFindings ++ bodyFindings
   }
 
   private def checkParam(
