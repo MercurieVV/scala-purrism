@@ -18,3 +18,4 @@ fix.PreferPolymorphicCollectionOps
 fix.PreferHKTTypeclasses
 fix.PreferContainerTypeclasses
 fix.PreferElementTypeclasses
+fix.RequireArrowArchitecture
