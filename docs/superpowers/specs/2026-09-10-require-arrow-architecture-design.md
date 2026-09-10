@@ -106,6 +106,16 @@ or object; traits have no bodies at all here). A composition expression is:
   expression, naming an intermediate step) followed by exactly one final
   composition expression. This is purely for readability of long chains; it
   does not widen what's allowed inside each local `val`.
+- a call to a method on a resolved `Arrow`/`Compose`/`Category`/
+  `ArrowChoice`-family instance, summoned abstractly (via a context bound,
+  `implicitly`, or a `given`) rather than named concretely — e.g.
+  `Arrow[F].lift(g)`, `F.first(step)`. This is how one arrow type converts
+  to or combines with another, and it keeps architecture code from ever
+  naming a concrete arrow implementation. A call to a conversion
+  constructor tied to one concrete implementation (`Kleisli.liftF`,
+  `Kleisli.local`, etc.) is **not** allowed for the same reason: it leaks a
+  concrete type into code that's meant to stay abstract over which arrow it
+  uses.
 
 Explicitly **not** allowed anywhere in a composition expression: a lambda
 literal with a body (`x => f(g(x)) + 1`), `if`/`match`/`for`/`while`, `var`,
@@ -113,6 +123,22 @@ direct side-effecting calls, or any other plain-data logic. The rule's
 premise is that leaf-level arrows are *implemented* elsewhere (outside the
 scoped architecture packages); this module only *wires* already-existing
 arrows together.
+
+### Companion-object constructors
+
+A companion object of an in-scope trait or case class may additionally
+declare `def`s that are generic and carry context-bound typeclass evidence
+(e.g. `def make[F[_]: Sync](s1: Kleisli[F, A, B], s2: Kleisli[F, B, C]):
+Pipeline[F] = Pipeline(s1 andThen s2)`) — genericity is allowed here
+specifically because such a `def` assembles a module or an arrow, it is not
+itself a fixed arrow-typed member. Its body is still a composition
+expression per the grammar above, and its return type must be either the
+enclosing module type or an arrow type. This exists so that assembling a
+module needing extra evidence (beyond what a bare `apply` call provides)
+doesn't force loosening the monomorphic-member rule for traits/case
+classes themselves. Outside of a companion object, a generic/evidence-
+carrying `def` is still a violation — a plain (non-companion) object stays
+restricted to the plain composition-expression rule.
 
 ### Imports
 
@@ -157,4 +183,9 @@ for signature-*changing* rules doesn't apply to a rule that only *reports*.
   file with the same violations (must produce no diagnostics); inheritance
   from a conforming marker trait and from a conforming same-principle trait
   outside the configured scope; inheritance from a non-conforming supertype
-  whose shape can't be determined.
+  whose shape can't be determined; a companion-object smart constructor
+  with a generic type param and context-bound evidence (conforming) and
+  the same generic/evidence `def` placed outside a companion object
+  (violation); an abstract-instance conversion call (`Arrow[F].lift(...)`,
+  conforming) versus a concrete-implementation conversion call
+  (`Kleisli.liftF(...)`, violation).
