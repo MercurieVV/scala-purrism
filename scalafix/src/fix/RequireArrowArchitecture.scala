@@ -36,20 +36,25 @@ final case class ConversionBudgetDiagnostic(
 
 private object BudgetCollector {
 
-  /** The nearest enclosing class/trait/object definition's position, for
-    * anchoring a budget diagnostic on the declaration whose shape breaks (per
-    * docs/RULES.md) rather than on the typeclass usage buried inside it.
+  /** The nearest enclosing class/trait/object definition, for anchoring a
+    * budget diagnostic on the declaration whose shape breaks (per
+    * docs/RULES.md) and for grouping a typeclass requirement with its owner: a
+    * trait/case-class and its companion object share a simple name, so grouping
+    * by that name merges exactly that pair, per the spec, without merging two
+    * unrelated classes in the same file.
     */
-  private def enclosingDefnPos(tree: Tree): scala.meta.inputs.Position = {
+  private def enclosingDefn(
+      tree: Tree
+  ): Option[(String, scala.meta.inputs.Position)] = {
     @scala.annotation.tailrec
-    def loop(t: Tree): scala.meta.inputs.Position = t match {
-      case c: Defn.Class  => c.pos
-      case t2: Defn.Trait => t2.pos
-      case o: Defn.Object => o.pos
+    def loop(t: Tree): Option[(String, scala.meta.inputs.Position)] = t match {
+      case c: Defn.Class  => Some((c.name.value, c.pos))
+      case t2: Defn.Trait => Some((t2.name.value, t2.pos))
+      case o: Defn.Object => Some((o.name.value, o.pos))
       case other =>
         other.parent match {
           case Some(p) => loop(p)
-          case None    => tree.pos
+          case None    => None
         }
     }
     loop(tree)
@@ -57,7 +62,7 @@ private object BudgetCollector {
 
   def typeArgTuples(tree: Tree, budgeted: Set[String])(implicit
       doc: SemanticDocument
-  ): List[(String, List[String], scala.meta.inputs.Position)] =
+  ): List[(String, List[String], String, scala.meta.inputs.Position)] =
     tree.collect {
       case app: Type.Apply if app.argClause.values.size == 2 =>
         val symbol = app.tpe.symbol
@@ -65,9 +70,9 @@ private object BudgetCollector {
         else {
           val fqcn = PatternList.normalize(symbol.value)
           if (budgeted.contains(fqcn))
-            Some(
-              (fqcn, app.argClause.values.map(_.syntax), enclosingDefnPos(app))
-            )
+            enclosingDefn(app).map { case (ownerName, ownerPos) =>
+              (fqcn, app.argClause.values.map(_.syntax), ownerName, ownerPos)
+            }
           else None
         }
     }.flatten
