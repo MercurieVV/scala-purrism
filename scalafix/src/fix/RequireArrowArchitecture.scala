@@ -54,7 +54,34 @@ final class RequireArrowArchitecture(config: RequireArrowArchitectureConfig)
       val objectFindings = doc.tree.collect { case o: Defn.Object =>
         ObjectGrammar.findings(o, moduleNames(o.name.value))
       }.flatten
-      val findings = traitFindings ++ caseClassFindings ++ objectFindings
+      val companionStats = doc.tree.collect { case o: Defn.Object =>
+        o.name.value -> o.templ.body.stats
+      }.toMap
+      val templates: List[(Tree, List[Stat], List[Term.Param])] =
+        doc.tree.collect {
+          case c: Defn.Class if c.mods.exists(_.is[Mod.Case]) =>
+            (
+              c: Tree,
+              c.templ.body.stats ++ companionStats.getOrElse(c.name.value, Nil),
+              c.ctor.paramClauses.flatMap(_.values).toList
+            )
+          case t: Defn.Trait =>
+            (
+              t: Tree,
+              t.templ.body.stats ++ companionStats.getOrElse(t.name.value, Nil),
+              Nil
+            )
+        }
+      val budgetFindings = templates.flatMap { case (anchor, members, params) =>
+        ConversionBudget.violations(
+          anchor,
+          members,
+          params,
+          config.maxArrowConversions
+        )
+      }
+      val findings =
+        traitFindings ++ caseClassFindings ++ objectFindings ++ budgetFindings
       findings
         .filterNot(f => suppression.suppresses(f.tree))
         .map(f =>

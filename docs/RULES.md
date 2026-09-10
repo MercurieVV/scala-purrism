@@ -7,6 +7,7 @@
 - Rules must be deterministic, idempotent, and safe to run repeatedly.
 - Every automatic rewrite must have an executed fixture under `scalafix/testInput` and `scalafix/testOutput`. See [Golden Fixtures](GOLDEN_FIXTURES.md).
 - `PreferCatsFunctions` normalization/preservation/ranking/decline semantics are specified in [Prefer Cats Functions](PREFER_CATS_FUNCTIONS.md); conform to that contract rather than re-deriving equivalence rules ad hoc.
+- `RequireArrowArchitecture` enforces a fully-abstract arrow-slot style (arrows, compositions, abstract types, and modules of only those) on configured `packages`/`paths`; diagnostic-only, own design doc at `docs/superpowers/specs/2026-09-10-require-arrow-architecture-design.md`.
 - Checks that cannot be safely rewritten should report diagnostics instead of producing partial edits.
 - Report at the granularity of the decision, not of the evidence. A method that calls `out.write` twenty times poses one question — should it be `F[Unit]` — so it gets one diagnostic, anchored on the signature that would change. Twenty diagnostics bury the question under its evidence.
 - A rewrite must preserve the expression's type. `try e catch { case _: Throwable => () }` has type `Unit`; `Either.catchNonFatal(e).void` has type `Either[Throwable, Unit]`, so the tidier form is a different program. Narrow the pattern instead. Where the type-preserving form needs a fact the expression does not carry — that a body is already in `F`, that every use of a reference is — report it.
