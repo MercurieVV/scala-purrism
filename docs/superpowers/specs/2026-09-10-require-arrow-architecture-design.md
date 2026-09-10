@@ -156,6 +156,96 @@ e.g.:
 > (`Function1`, `Kleisli`, or a type with a resolvable `Arrow`/`Compose`/
 > `Category` instance) or abstract types are allowed here
 
+## Examples
+
+### Conforming
+
+```scala
+package com.foo.wiring
+
+import cats.arrow.Arrow
+import cats.data.Kleisli
+import cats.effect.Sync
+
+// interface: abstract type + abstract arrow members only
+trait Pipeline[F[_]] {
+  type Error
+  def validate: Kleisli[F, Int, Either[Error, Int]]
+  def handle: Kleisli[F, Int, Int]
+}
+
+// holder: concrete arrow members only, no plain data params
+final case class LivePipeline[F[_]](
+  validateStep: Kleisli[F, Int, Either[String, Int]],
+  handleStep: Kleisli[F, Int, Int]
+) extends Pipeline[F] {
+  type Error = String
+  def validate: Kleisli[F, Int, Either[Error, Int]] = validateStep
+  def handle: Kleisli[F, Int, Int] = handleStep
+}
+
+object LivePipeline {
+  // companion smart constructor: generic + evidence allowed here only.
+  // Composes a lifted Function1 (via the resolved Arrow instance, not a
+  // concrete Kleisli constructor) with an existing Kleisli step.
+  def make[F[_]: Sync](
+    normalize: Int => Int, // a plain Function1 is itself an arrow
+    validateStep: Kleisli[F, Int, Either[String, Int]],
+    handleStep: Kleisli[F, Int, Int]
+  ): LivePipeline[F] = {
+    val normalized = Arrow[Kleisli[F, *, *]].lift(normalize) andThen validateStep
+    LivePipeline(handleStep = handleStep, validateStep = normalized)
+  }
+}
+
+// object holding only composition expressions — no type params, no
+// evidence, just wiring together already-built, already-typed arrows
+object PipelineWiring {
+  def combined[F[_]](p: Pipeline[F]): Kleisli[F, Int, Int] =
+    p.handle
+}
+```
+
+### Violating
+
+```scala
+package com.foo.wiring
+
+import cats.data.Kleisli
+import cats.effect.Sync
+
+trait BadInterface {
+  def name: String                           // ✗ non-arrow member type
+  def step[G[_]: Sync]: Kleisli[G, Int, Int] // ✗ generic arrow member
+}
+
+final case class BadHolder(
+  retries: Int,                              // ✗ plain data param
+  step: Int => Int
+) {
+  var cache: Map[Int, Int] = Map.empty       // ✗ var
+
+  def run(x: Int): Int =
+    if (cache.contains(x)) cache(x) else step(x) // ✗ if, direct logic
+
+  def compute: Int => Int =
+    x => step(x) + 1                         // ✗ lambda literal with a body
+}
+
+object BadHolder {
+  def liftedUnit[F[_]: Sync]: Kleisli[F, Int, Int] =
+    Kleisli.liftF(Sync[F].unit).map(_ => identity[Int]) // ✗ names a concrete
+    // implementation constructor (Kleisli.liftF) instead of going through a
+    // resolved Arrow/Compose instance abstractly
+}
+
+object PlainWiring {
+  def make[F[_]: Sync](s: Kleisli[F, Int, Int]): Kleisli[F, Int, Int] = s
+  // ✗ generic + evidence in a plain (non-companion) object — this exact
+  // def would be fine inside LivePipeline's companion object above
+}
+```
+
 ## Implementation approach
 
 Single-pass structural walk (over the two-pass project-wide-closure approach
