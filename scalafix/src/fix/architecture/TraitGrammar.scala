@@ -40,8 +40,88 @@ object TraitGrammar {
         None
       case decl: Decl.Val => checkMember(decl.decltpe, decl, slots)
       case _: Decl.Type   => None // abstract type members are always allowed
-    }.flatten
+    }.flatten ++ supertypeFindings(defn)
   }
+
+  /** Whether each `extends`/`with` supertype is conforming: either a marker
+    * trait contributing zero members (e.g. `Serializable`), or the same
+    * arrow-slot principle applied elsewhere. Re-verifying the full grammar from
+    * a bare symbol isn't possible (no source tree to re-walk), so a non-marker
+    * supertype declines with a diagnostic rather than guessing, per the spec's
+    * explicit fallback.
+    */
+  private def supertypeFindings(
+      defn: Defn.Trait
+  )(implicit doc: SemanticDocument): List[ArchitectureFinding] =
+    defn.templ.inits.flatMap { init =>
+      val sym = init.tpe.symbol
+      if (sym == Symbol.None) Nil
+      else
+        sameFileTrait(sym) match {
+          case Some(superTrait) =>
+            if (findings(superTrait).isEmpty) Nil
+            else List(nonConformingFinding(init, sym.displayName))
+          case None if knownMarkerTraits(sym.value) => Nil
+          case None                                 =>
+            // A symbol from another file or library can't reliably be
+            // re-verified through this single-document API (this codebase's
+            // own convention for genuine cross-file analysis is a
+            // project-wide payload scan, per KleisliLiftScope -- see
+            // docs/RULES.md, and `doc.info` doesn't resolve external
+            // symbols here either). So anything we can't positively prove
+            // is a zero-member marker declines, rather than silently
+            // passing an unresolved or non-conforming supertype.
+            doc.info(sym) match {
+              case Some(info) if declaresNoMembers(info) => Nil
+              case _ => List(cantVerifyFinding(init, sym.displayName))
+            }
+        }
+    }
+
+  private def sameFileTrait(sym: Symbol)(implicit
+      doc: SemanticDocument
+  ): Option[Defn.Trait] =
+    doc.tree.collect { case t: Defn.Trait if t.symbol == sym => t }.headOption
+
+  private def nonConformingFinding(
+      init: Init,
+      name: String
+  ): ArchitectureFinding =
+    ArchitectureFinding(
+      init,
+      s"supertype `$name` does not itself conform to this grammar; a " +
+        "trait may only extend a marker trait (contributing zero members) " +
+        "or another trait built on the same arrow-slot principle"
+    )
+
+  private def cantVerifyFinding(init: Init, name: String): ArchitectureFinding =
+    ArchitectureFinding(
+      init,
+      s"supertype `$name`'s shape can't be verified from here; extend " +
+        "only marker traits (contributing zero members) or traits defined " +
+        "in the same file, or narrow the rule to run per-module so " +
+        "supertypes stay locally checkable"
+    )
+
+  /** Well-known zero-member marker traits, curated the same way `ArrowFamily`'s
+    * typeclass set is: `doc.info` doesn't resolve external (library) symbols
+    * reliably in this single-document API, so these are recognized by symbol
+    * name rather than by re-deriving "zero members" from an unavailable
+    * signature.
+    */
+  private val knownMarkerTraits: Set[String] =
+    Set(
+      "scala/package.Serializable#",
+      "java/io/Serializable#",
+      "scala/Product#",
+      "scala/Equals#"
+    )
+
+  private def declaresNoMembers(info: SymbolInformation): Boolean =
+    info.signature match {
+      case cs: ClassSignature => cs.declarations.forall(_.isConstructor)
+      case _                  => true
+    }
 
   private def hasOwnTypeParams(decl: Decl.Def): Boolean =
     decl.paramClauseGroups.exists(_.tparamClause.values.nonEmpty)
