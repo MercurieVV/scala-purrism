@@ -2,7 +2,7 @@
 rules = [RequireArrowArchitecture]
 
 RequireArrowArchitecture.scope = ["golden\\.architecture\\.supertypes\\.inscope.*"]
-RequireArrowArchitecture.classes = ["cats\\.arrow\\..*", "scala\\.package\\.Serializable"]
+RequireArrowArchitecture.classes = ["cats\\.arrow\\..*", "scala\\.package\\.Serializable", "scala\\.Int"]
  */
 package golden.architecture.supertypes.inscope
 

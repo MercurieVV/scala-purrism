@@ -3,7 +3,7 @@ rules = [RequireArrowArchitecture]
 
 RequireArrowArchitecture.severity = warning
 RequireArrowArchitecture.scope = ["vocabulary\\.conforming.*"]
-RequireArrowArchitecture.classes = ["cats\\.arrow\\..*", "scala\\.Either", "scala\\.Option", "scala\\.Tuple.*"]
+RequireArrowArchitecture.classes = ["cats\\.arrow\\..*", "scala\\.Int", "scala\\.package\\.Either", "scala\\.Option", "scala\\.Tuple.*", "scala\\.Predef\\.String"]
 RequireArrowArchitecture.bannedConstructs = ["scala.meta.Term.If", "scala.meta.Term.Match", "scala.meta.Defn.Var", "scala.meta.Term.For", "scala.meta.Term.While", "scala.meta.Term.Try"]
  */
 package vocabulary.conforming

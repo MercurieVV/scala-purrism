@@ -2,7 +2,7 @@
 rules = [RequireArrowArchitecture]
 
 RequireArrowArchitecture.scope = ["golden\\.architecture\\.caseclass.*"]
-RequireArrowArchitecture.classes = ["cats\\.arrow\\..*", "scala\\.Unit"]
+RequireArrowArchitecture.classes = ["cats\\.arrow\\..*", "scala\\.Unit", "scala\\.Int", "scala\\.package\\.Either", "scala\\.Predef\\.String"]
 RequireArrowArchitecture.bannedConstructs = ["scala.meta.Defn.Var"]
  */
 package golden.architecture.caseclass
@@ -14,7 +14,7 @@ final case class Conforming[Step[_, _]: Arrow](
 )
 
 final case class PlainDataParam[Step[_, _]: Arrow](
-  retries: Int, // assert: RequireArrowArchitecture.typeWhitelist
+  retries: Boolean, // assert: RequireArrowArchitecture.typeWhitelist
   step: Step[Int, Int]
 )
 

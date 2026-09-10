@@ -2,7 +2,7 @@
 rules = [RequireArrowArchitecture]
 
 RequireArrowArchitecture.scope = ["golden\\.architecture\\.concretetypes.*"]
-RequireArrowArchitecture.classes = ["cats\\.arrow\\..*"]
+RequireArrowArchitecture.classes = ["cats\\.arrow\\..*", "scala\\.Int", "scala\\.package\\.Either", "scala\\.Tuple2"]
  */
 package golden.architecture.concretetypes
 
@@ -13,27 +13,27 @@ trait Generic[Step[_, _]: Arrow, A, B] {
   def run: Step[A, B]
 }
 
-// Int is a type argument (nested inside Step[..]'s ArgClause), not a named
-// reference in its own right -- the new engine never recurses into type
-// arguments, so no allowlist entry is needed for it at all, unlike the old
-// engine's allowedConcreteTypePatterns.
-trait WithConcreteArgument[Step[_, _]: Arrow] {
+// Int is explicitly whitelisted above -- and every type argument is
+// checked, not just the head, so this needs the entry to conform
+trait WithAllowedConcrete[Step[_, _]: Arrow] {
   def run: Step[Int, Int]
 }
 
-// Either/tuples nest arbitrarily deep; every leaf here is still just a type
-// argument, so String being unlisted anywhere doesn't matter -- the new
-// engine only ever checks a type's own head, never its arguments' contents,
-// no matter how deep the nesting goes.
-trait WithNestedStructuralWrappers[Step[_, _]: Arrow, A] {
+// Either/Tuple2 are whitelisted above, but that only covers their own
+// head -- their type arguments are still checked recursively; A is a
+// type parameter (always exempt), Int is whitelisted, so this conforms
+trait WithStructuralWrappers[Step[_, _]: Arrow, A] {
   def either: Step[Int, Either[A, Int]]
-  def tuple: Step[Int, (A, String)]
+  def tuple: Step[Int, (A, Int)]
 }
 
-// The only thing that's ever checked is a BARE (non-argument) named type --
-// a type that is itself the declared type of a member, not an argument to
-// one. This is where a disallowed concrete type actually gets caught.
-trait WithBareDisallowedConcrete[Step[_, _]: Arrow] {
-  def run: Step[Int, Int]
-  def label: String // assert: RequireArrowArchitecture.typeWhitelist
+// String is not in the whitelist above, unlike Int
+trait WithDisallowedConcrete[Step[_, _]: Arrow] {
+  def run: Step[Int, String] // assert: RequireArrowArchitecture.typeWhitelist
+}
+
+// nested inside an otherwise-allowed Either: still checked recursively,
+// no matter how deep
+trait WithDisallowedNested[Step[_, _]: Arrow] {
+  def run: Step[Int, Either[String, Int]] // assert: RequireArrowArchitecture.typeWhitelist
 }

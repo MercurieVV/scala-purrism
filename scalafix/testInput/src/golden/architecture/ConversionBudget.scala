@@ -2,7 +2,7 @@
 rules = [RequireArrowArchitecture]
 
 RequireArrowArchitecture.scope = ["golden\\.architecture\\.budget.*"]
-RequireArrowArchitecture.classes = ["cats\\.arrow\\..*"]
+RequireArrowArchitecture.classes = ["cats\\.arrow\\..*", "scala\\.Int"]
 RequireArrowArchitecture.budgetedTypeclasses = ["golden.architecture.budget.ArrowConvert"]
 RequireArrowArchitecture.maxInstantiations = 1
  */

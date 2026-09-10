@@ -2,7 +2,7 @@
 rules = [RequireArrowArchitecture]
 
 RequireArrowArchitecture.scope = ["golden\\.architecture\\.slotforms.*"]
-RequireArrowArchitecture.classes = ["cats\\.arrow\\..*"]
+RequireArrowArchitecture.classes = ["cats\\.arrow\\..*", "scala\\.Int", "scala\\.package\\.Either", "scala\\.Predef\\.String"]
  */
 package golden.architecture.slotforms
 

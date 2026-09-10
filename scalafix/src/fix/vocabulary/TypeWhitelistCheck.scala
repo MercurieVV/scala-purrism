@@ -10,29 +10,6 @@ final case class WhitelistViolation(
 
 object TypeWhitelistCheck {
 
-  /** `Either[String, Int]`'s type arguments (`String`, `Int`) are not
-    * separately named references per the spec's grammar -- only the applied
-    * type's own head (`Either`) is a "named type". Likewise `Int => Int` sugar
-    * (`Type.Function`) has no literal `Function1` node to check, so its operand
-    * types are exempt the same way -- the `Type.Function` node itself is
-    * checked as a head instead (see `violations`, which computes its synthetic
-    * `scala.FunctionN` name directly rather than resolving a symbol --
-    * arrow-sugar nodes don't carry one). A node counts as an argument, and is
-    * skipped, if any ancestor in its parent chain is a `Type.ArgClause` or a
-    * `Type.Function` -- regardless of nesting depth, so an argument of an
-    * argument is still skipped.
-    */
-  private def insideArgumentPosition(node: Tree): Boolean = {
-    @scala.annotation.tailrec
-    def loop(t: Tree): Boolean = t.parent match {
-      case Some(_: Type.ArgClause) => true
-      case Some(_: Type.Function)  => true
-      case Some(p)                 => loop(p)
-      case None                    => false
-    }
-    loop(node)
-  }
-
   /** `type Error = String` binds a concrete implementation to an abstract type
     * member -- a type-alias binding, not a value-bearing member type, so it
     * gets the same exemption as the abstract member it implements.
@@ -49,12 +26,7 @@ object TypeWhitelistCheck {
         case t: Type.Name   => t
         case t: Type.Select => t
       }
-      .filterNot(t => insideArgumentPosition(t) || isTypeAliasBinding(t))
-
-  private def functionSugarIn(tree: Tree): List[Type.Function] =
-    tree
-      .collect { case t: Type.Function => t }
-      .filterNot(insideArgumentPosition)
+      .filterNot(isTypeAliasBinding)
 
   def violations(tree: Tree, allowed: PatternList)(implicit
       doc: SemanticDocument
@@ -74,11 +46,12 @@ object TypeWhitelistCheck {
         }
       }
     }
-    val functionViolations = functionSugarIn(tree).flatMap { tf =>
-      val fqcn = s"scala.Function${tf.paramClause.values.size}"
-      if (allowed.matches(fqcn)) Nil
-      else List(WhitelistViolation(tf.pos, fqcn))
-    }
+    val functionViolations =
+      tree.collect { case t: Type.Function => t }.flatMap { tf =>
+        val fqcn = s"scala.Function${tf.paramClause.values.size}"
+        if (allowed.matches(fqcn)) Nil
+        else List(WhitelistViolation(tf.pos, fqcn))
+      }
     namedViolations ++ functionViolations
   }
 }

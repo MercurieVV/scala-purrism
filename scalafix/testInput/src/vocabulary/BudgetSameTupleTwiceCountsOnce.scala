@@ -2,6 +2,7 @@
 rules = [RequireArrowArchitecture]
 
 RequireArrowArchitecture.scope = ["vocabulary\\.budgetsametwice.*"]
+RequireArrowArchitecture.classes = ["scala\\.Int"]
 RequireArrowArchitecture.budgetedTypeclasses = ["vocabulary.budgetsametwice.ArrowConvert"]
 RequireArrowArchitecture.maxInstantiations = 1
  */
