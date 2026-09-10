@@ -27,6 +27,7 @@ instantiated.
 ```hocon
 RequireArrowArchitecture {
   severity = warning   // or error
+  maxArrowConversions = 1
   packages = [
     "com.foo.wiring.**"
   ]
@@ -46,6 +47,13 @@ want to scope by a whole package.
 `severity` defaults to `warning`, matching `docs/RULES.md`'s convention that
 diagnostics default to `LintSeverity.Warning`; a team can promote it to
 `error` per-module once a package is fully conformant.
+
+`maxArrowConversions` (default `1`) caps how many *distinct*
+`ArrowConvert[P, Q]` requirements — counted by their `(P, Q)` type pair, not
+by call site — a trait/case-class and its companion object may together
+require. See Cross-slot conversion below for what's counted and why it's
+combined across template and companion; exceeding it reuses the same
+`severity` setting rather than a separate knob.
 
 ## Allowed-construct grammar
 
@@ -113,6 +121,19 @@ parameters (`P`, `A`, `B` → `P[A, B]`; likewise for `Q`) — and no other. A
 trait declaring any other per-method-generic abstract method is still a
 violation; this carve-out exists solely so cross-slot conversion has
 somewhere to live without loosening the monomorphic-member rule generally.
+
+**Conversion budget.** `maxArrowConversions` counts the number of
+*distinct* `(P, Q)` pairs for which a trait/case-class and its companion
+object, taken together, require `ArrowConvert[P, Q]` evidence — as a
+context bound or `given`/implicit parameter anywhere in that pair of
+templates. Requiring `ArrowConvert[Step1, Step2]` in two different
+companion-object constructors still counts once; requiring both
+`ArrowConvert[Step1, Step2]` and `ArrowConvert[Step2, Step3]` counts as two.
+Exceeding the configured max (default `1`) is reported once per
+trait/case-class pair, at the `severity` configured for the rule as a
+whole. The premise: bridging exactly two slots at one boundary is ordinary
+wiring; a module quietly accumulating several such bridges is usually
+doing real translation logic dressed up as composition.
 
 ### Traits / abstract classes
 
@@ -362,4 +383,7 @@ for signature-*changing* rules doesn't apply to a rule that only *reports*.
   (conforming) versus the same shape with an `Arrow` bound added
   (violation); an `ArrowConvert[P, Q].apply` call moving between two slots
   (conforming) versus a hand-written conversion that names a concrete
-  arrow type to bridge them (violation).
+  arrow type to bridge them (violation); a class/companion pair requiring
+  exactly `maxArrowConversions` distinct `(P, Q)` pairs (conforming), one
+  more than the configured max (violation), and the same `(P, Q)` pair
+  required twice across template and companion counting once, not twice.
