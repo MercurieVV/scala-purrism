@@ -22,6 +22,20 @@ import laika.io.syntax.*
 
 object DocsMain:
   def main(args: Array[String]): Unit =
+    try run(args)
+    catch
+      case t: Throwable =>
+        // A failure here otherwise surfaces to the caller (Mill's `run` task)
+        // as a bare "Subprocess failed", with no indication of what broke --
+        // this is the only place that can print the actual cause.
+        System.err.println(
+          s"docs.run failed: ${t.getClass.getName}: ${t.getMessage}"
+        )
+        t.printStackTrace(System.err)
+        System.err.flush()
+        sys.exit(1)
+
+  private def run(args: Array[String]): Unit =
     val mdocOut = Paths.get("website", "docs")
     val siteOut = Paths.get("website", "site")
     cleanDirectory(mdocOut)
