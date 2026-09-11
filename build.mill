@@ -51,7 +51,14 @@ object scalafix
   // configured", which is what Mima's own default does). It builds the same
   // coordinates that default would -- verified by pinning 0.6.2 through it and
   // getting the identical 68 problems.
-  def mimaPreviousVersions = Seq("0.8.0")
+  //
+  // Cleared again here: fix.PreferStateThreading, fix.PreferStateThreadingConfig,
+  // and fix.idioms.StateThreadingRules shipped in 0.8.0 but were removed from
+  // source in commit 8b00102 with no deprecation shim and no version bump at
+  // the time. A filter would claim that removal is compatible; it is not, so
+  // the next release after this one is the honest minor bump for it, the same
+  // way 0.7.0 was for the flow-graph move above.
+  def mimaPreviousVersions = Seq()
 
   // `PreferHKTTypeclasses`/`PreferContainerTypeclasses`/`PreferElementTypeclasses`
   // were renamed to `PreferPolymorphicTypeclasses`/`PreferPolymorphicCollections`/
@@ -65,15 +72,7 @@ object scalafix
   def mimaBinaryIssueFilters = Seq(
     ProblemFilter.exclude[IncompatibleMethTypeProblem](
       "fix.PreferTypeParameters.this"
-    ),
-    // PreferStateThreading/StateThreadingRules shipped in 0.8.0 but were
-    // removed from source in commit 8b00102, with no deprecation shim added
-    // at the time -- accepting the break here rather than reintroducing it.
-    ProblemFilter.exclude[MissingClassProblem]("fix.PreferStateThreading"),
-    ProblemFilter.exclude[MissingClassProblem]("fix.PreferStateThreadingConfig"),
-    ProblemFilter.exclude[MissingClassProblem]("fix.PreferStateThreadingConfig$"),
-    ProblemFilter.exclude[MissingClassProblem]("fix.idioms.StateThreadingRules"),
-    ProblemFilter.exclude[MissingClassProblem]("fix.idioms.StateThreadingRules$")
+    )
   )
 
   def mimaPreviousArtifacts = Task {
