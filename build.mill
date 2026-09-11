@@ -325,6 +325,16 @@ object docs extends ScalaModule {
     mvn"org.scala-lang::scala3-compiler:${Versions.scala3}"
   )
   def scalacOptions = Seq("-Ysemanticdb", s"-sourceroot:${mill.api.BuildCtx.workspaceRoot}")
+
+  // `docs.run` renders ~20 rule examples, each compiling a snippet in-process
+  // (dotc) and then launching `coursier launch scalafix-cli` as a child JVM.
+  // On CI this has been observed to die silently mid-run -- no exception, no
+  // stack trace, just the process gone -- which is the signature of an
+  // external (OOM) kill rather than anything the JVM's own exception
+  // handling ever got a chance to see. An explicit, conservative `-Xmx` makes
+  // the JVM respect that ceiling itself: if it's genuinely a heap issue, this
+  // turns a silent kill into a normal, catchable `OutOfMemoryError`.
+  def forkArgs = Seq("-Xmx3g")
 }
 
 // IntelliJ IDEA plugin: wraps the `scalafix` module's rules as a Refactor
