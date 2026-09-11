@@ -19,6 +19,17 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - uses: coursier/setup-action@v1
+        with:
+          jvm: false
+
+      # DocDiff shells out to the literal program name "coursier" (not "cs")
+      # to render docs; the setup action only guarantees a `cs` binary on PATH.
+      - name: Alias cs as coursier
+        run: |
+          CS_BIN="$(command -v cs)"
+          ln -sf "$CS_BIN" "$(dirname "$CS_BIN")/coursier"
+
       - name: Install Mill
         run: |
           curl -L https://repo1.maven.org/maven2/com/lihaoyi/mill-dist/1.1.7/mill-dist-1.1.7-mill.sh -o mill
