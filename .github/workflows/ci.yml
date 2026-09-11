@@ -20,8 +20,6 @@ jobs:
       - uses: actions/checkout@v7
 
       - uses: coursier/setup-action@v1
-        with:
-          jvm: false
 
       # DocDiff shells out to the literal program name "coursier" (not "cs")
       # to render docs; the setup action only guarantees a `cs` binary on PATH.
