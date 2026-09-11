@@ -52,28 +52,26 @@ object scalafix
   // coordinates that default would -- verified by pinning 0.6.2 through it and
   // getting the identical 68 problems.
   //
-  // Cleared again here: fix.PreferStateThreading, fix.PreferStateThreadingConfig,
-  // and fix.idioms.StateThreadingRules shipped in 0.8.0 but were removed from
-  // source in commit 8b00102 with no deprecation shim and no version bump at
-  // the time. A filter would claim that removal is compatible; it is not, so
-  // the next release after this one is the honest minor bump for it, the same
-  // way 0.7.0 was for the flow-graph move above.
+  // Cleared again here, for two genuine breaks, neither kept alive with a
+  // filter that would claim they are compatible:
+  //
+  // - fix.PreferStateThreading, fix.PreferStateThreadingConfig, and
+  //   fix.idioms.StateThreadingRules shipped in 0.8.0 but were removed from
+  //   source in commit 8b00102, with no deprecation shim and no version bump
+  //   at the time.
+  // - `PreferHKTTypeclasses`/`PreferContainerTypeclasses`/`PreferElementTypeclasses`
+  //   were renamed to `PreferPolymorphicTypeclasses`/`PreferPolymorphicCollections`/
+  //   `PreferPolymorphicCollectionOps`; the old names stay resolvable as
+  //   deprecated forwarders (`DeprecatedPolymorphicAliases.scala`), so most
+  //   call sites keep compiling, but `PreferTypeParameters`'s own constructor
+  //   cannot be shimmed the same way -- it legitimately takes the renamed
+  //   config types as parameters.
+  //
+  // The next release after this one is the honest minor bump for both, the
+  // same way 0.7.0 was for the flow-graph move above.
   def mimaPreviousVersions = Seq()
 
-  // `PreferHKTTypeclasses`/`PreferContainerTypeclasses`/`PreferElementTypeclasses`
-  // were renamed to `PreferPolymorphicTypeclasses`/`PreferPolymorphicCollections`/
-  // `PreferPolymorphicCollectionOps`; the old names stay resolvable as deprecated
-  // forwarders (`DeprecatedPolymorphicAliases.scala`), so most call sites keep
-  // compiling. `PreferTypeParameters`'s own constructor is the one place that
-  // cannot be shimmed the same way -- it legitimately takes the renamed config
-  // types as parameters -- and nobody constructs the umbrella positionally by
-  // hand (it is loaded by rule name), so the break is accepted rather than kept
-  // alive with a config-type alias that would defeat the rename.
-  def mimaBinaryIssueFilters = Seq(
-    ProblemFilter.exclude[IncompatibleMethTypeProblem](
-      "fix.PreferTypeParameters.this"
-    )
-  )
+  def mimaBinaryIssueFilters = Seq()
 
   def mimaPreviousArtifacts = Task {
     mimaPreviousVersions().map(previous =>
