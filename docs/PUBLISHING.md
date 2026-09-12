@@ -23,16 +23,25 @@ rtk mill scalafix.publishM2Local
 
 ## Release Flow
 
-1. Update `Project.publishVersion` in `build.mill` to the release version.
-2. Merge the version change after CI passes.
-3. Tag the exact commit:
+The version comes from the git tag itself (`VcsVersionModule`) — there is no
+version field in `build.mill` to edit.
+
+1. If this release intentionally breaks binary compatibility, clear the
+   baseline first: set `mimaPreviousVersions = Seq()` in `build.mill` (see
+   the comment above it), merge that change, and confirm CI is green.
+2. Tag the exact commit:
 
 ```bash
-rtk git tag v0.2.0
-rtk git push origin v0.2.0
+rtk git tag v0.9.0
+rtk git push origin v0.9.0
 ```
 
-The `Release` workflow publishes tagged versions to Sonatype Central.
+The `Release` workflow (`.github/workflows/release.yml`) then runs
+`scalafix.compile`/`scalafix.test`/`docs.run`, checks binary compatibility
+against `mimaPreviousVersions`, publishes to Sonatype Central, and — only
+after a successful publish — commits back to `master` pinning
+`mimaPreviousVersions` to the version just released (`[skip ci]`), so the
+next release checks against this one.
 
 ## Documentation Site
 

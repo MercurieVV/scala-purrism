@@ -45,7 +45,7 @@ Cats and Cats Effect.
 Add the published rule artifact:
 
 ```text
-io.github.mercurievv:scala-purrism-scalafix_3:0.8.0
+io.github.mercurievv:scala-purrism-scalafix_3:0.9.0
 ```
 
 Enable SemanticDB in the target project:

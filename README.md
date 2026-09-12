@@ -15,7 +15,7 @@ locally.
 Latest release:
 
 ```text
-io.github.mercurievv:scala-purrism-scalafix_3:0.8.0
+io.github.mercurievv:scala-purrism-scalafix_3:0.9.0
 ```
 
 The published artifact targets Scala 3 and Scalafix `0.14.7`.
@@ -34,7 +34,7 @@ Configure SemanticDB and the rule dependency in `build.sbt`:
 ThisBuild / scalacOptions += "-Ysemanticdb"
 
 ThisBuild / scalafixDependencies +=
-  "io.github.mercurievv" %% "scala-purrism-scalafix" % "0.8.0"
+  "io.github.mercurievv" %% "scala-purrism-scalafix" % "0.9.0"
 ```
 
 Create `.scalafix.conf`:
@@ -66,7 +66,7 @@ object app extends ScalaModule, ScalafixModule {
   def scalaVersion = "3.8.4"
   def scalacOptions = Seq("-Ysemanticdb")
   def scalafixIvyDeps = Seq(
-    mvn"io.github.mercurievv::scala-purrism-scalafix:0.8.0"
+    mvn"io.github.mercurievv::scala-purrism-scalafix:0.9.0"
   )
 }
 ```
@@ -91,7 +91,7 @@ Add directives:
 
 ```scala
 //> using options "-Ysemanticdb"
-//> using scalafix.dep io.github.mercurievv::scala-purrism-scalafix:0.8.0
+//> using scalafix.dep io.github.mercurievv::scala-purrism-scalafix:0.9.0
 ```
 
 Create `.scalafix.conf`:
@@ -118,7 +118,7 @@ cs install scalafix
 
 scalafix \
   --rules TypelevelPurrism \
-  --tool-classpath "$(cs fetch -p io.github.mercurievv::scala-purrism-scalafix:0.8.0)" \
+  --tool-classpath "$(cs fetch -p io.github.mercurievv::scala-purrism-scalafix:0.9.0)" \
   --semanticdb-targetroots target/scala-3.8.4/classes \
   --sourceroot . \
   --files src/main/scala/example/App.scala
