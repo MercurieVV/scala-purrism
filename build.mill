@@ -69,7 +69,7 @@ object scalafix
   //
   // The next release after this one is the honest minor bump for both, the
   // same way 0.7.0 was for the flow-graph move above.
-  def mimaPreviousVersions = Seq()
+  def mimaPreviousVersions = Seq("0.9.0")
 
   def mimaBinaryIssueFilters = Seq()
 
