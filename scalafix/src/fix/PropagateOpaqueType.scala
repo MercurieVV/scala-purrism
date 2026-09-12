@@ -116,7 +116,6 @@ object AutoDiscoverConfig {
 
 final case class PropagateOpaqueTypeConfig(
     types: List[OpaqueTypeSpec] = Nil,
-    debug: Boolean = false,
     autoDiscover: AutoDiscoverConfig = AutoDiscoverConfig.default
 )
 
@@ -125,11 +124,9 @@ object PropagateOpaqueTypeConfig {
   implicit val decoder: ConfDecoder[PropagateOpaqueTypeConfig] =
     ConfDecoder.from { conf =>
       conf.getOrElse("types")(default.types).andThen { types =>
-        conf.getOrElse("debug")(default.debug).andThen { debug =>
-          conf.getOrElse("autoDiscover")(default.autoDiscover).map {
-            autoDiscover =>
-              PropagateOpaqueTypeConfig(types, debug, autoDiscover)
-          }
+        conf.getOrElse("autoDiscover")(default.autoDiscover).map {
+          autoDiscover =>
+            PropagateOpaqueTypeConfig(types, autoDiscover)
         }
       }
     }
@@ -178,8 +175,6 @@ final class PropagateOpaqueType(
         // `--semanticdb-targetroots` is prepended to the scalac classpath by
         // the CLI, so the payload location arrives here for free.
         val scalacClasspath = configuration.scalacClasspath.map(_.toNIO)
-        if (parsed.debug)
-          println(s"DEBUG scalacClasspath: ${scalacClasspath.mkString(", ")}")
 
         if (!parsed.autoDiscover.enabled)
           Configured.ok(new PropagateOpaqueType(parsed, scalacClasspath))
@@ -208,8 +203,7 @@ final class PropagateOpaqueType(
           val discovered = PropagateOpaqueType.discover(
             bundle,
             parsed.autoDiscover,
-            parsed.types,
-            parsed.debug
+            parsed.types
           )
 
           Configured.ok(
@@ -266,7 +260,6 @@ final class PropagateOpaqueType(
       )
     else {
       val declarations = PropagateOpaqueType.declaredTypes(uri)
-      if (config.debug) reportDebug(uri, declarations)
 
       closures.map { case (spec, result) =>
         annotationPatches(spec, result, declarations, uri) +
@@ -275,24 +268,6 @@ final class PropagateOpaqueType(
           mergePointDiagnostics(result, declarations, uri)
       }.asPatch
     }
-  }
-
-  /** Which closure members this file could and could not place, for `debug`. */
-  private def reportDebug(
-      uri: Option[String],
-      declarations: Map[String, Type]
-  ): Unit = {
-    val members = closures.flatMap(_._2.members)
-    val (matched, unmatched) =
-      members.partition(node => declarations.contains(node.symbol))
-    println(s"[PropagateOpaqueType] uri=$uri")
-    println(s"[PropagateOpaqueType]   declared symbols: ${declarations.size}")
-    println(
-      s"[PropagateOpaqueType]   matched members : ${matched.map(_.render)}"
-    )
-    println(
-      s"[PropagateOpaqueType]   unmatched       : ${unmatched.map(_.render).take(8)}"
-    )
   }
 
   /** Wrap where the value is created, unwrap where it leaves.
@@ -319,16 +294,8 @@ final class PropagateOpaqueType(
       }
 
     val unwraps = result.leaves.filter(here).flatMap { boundary =>
-      if (config.debug)
-        println(
-          s"UNWRAP candidate: ${boundary.node.render} -> ${boundary.counterpart.render} at ${boundary.at}"
-        )
       PropagateOpaqueType.termAt(boundary.at).collect {
         case term if !PropagateOpaqueType.isUnwrapped(term) =>
-          if (config.debug)
-            println(
-              s"UNWRAPPING term: $term to ${PropagateOpaqueType.unwrapped(term)}"
-            )
           Patch.replaceTree(term, PropagateOpaqueType.unwrapped(term))
       }
     }
@@ -452,17 +419,6 @@ object PropagateOpaqueType {
       bundle: IndexBundle,
       autoDiscover: AutoDiscoverConfig,
       manual: List[OpaqueTypeSpec]
-  ): List[OpaqueCandidate] =
-    discover(bundle, autoDiscover, manual, debug = false)
-
-  // A default parameter would change this method's own erased signature
-  // (binary-incompatible with the published 0.9.0 jar); a real overload
-  // adds a new method instead, leaving the old one's bytecode untouched.
-  def discover(
-      bundle: IndexBundle,
-      autoDiscover: AutoDiscoverConfig,
-      manual: List[OpaqueTypeSpec],
-      debug: Boolean
   ): List[OpaqueCandidate] = {
     val claimedNames = manual.map(_.name).toSet
     val claimedSeeds = manual.flatMap(_.seeds).toSet
@@ -479,16 +435,10 @@ object PropagateOpaqueType {
         explorerConfig
       )
     )
-    val res = candidates.filterNot(candidate =>
+    candidates.filterNot(candidate =>
       claimedNames.contains(candidate.name) ||
         candidate.seeds.exists(claimedSeeds.contains)
     )
-    if (debug) {
-      println("--- DISCOVERED CANDIDATES ---")
-      println(OpaqueCandidateExplorer.renderSizeHistogram(res))
-      res.foreach(c => println(s"Candidate: ${c.name}, seeds: ${c.seeds}"))
-    }
-    res
   }
 
   /** Walk a declared type by type-argument index, matching how `TypePath`

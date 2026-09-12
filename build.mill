@@ -52,7 +52,7 @@ object scalafix
   // coordinates that default would -- verified by pinning 0.6.2 through it and
   // getting the identical 68 problems.
   //
-  // Cleared again here, for two genuine breaks, neither kept alive with a
+  // Cleared again here, for three genuine breaks, none kept alive with a
   // filter that would claim they are compatible:
   //
   // - fix.PreferStateThreading, fix.PreferStateThreadingConfig, and
@@ -66,10 +66,16 @@ object scalafix
   //   call sites keep compiling, but `PreferTypeParameters`'s own constructor
   //   cannot be shimmed the same way -- it legitimately takes the renamed
   //   config types as parameters.
+  // - `PropagateOpaqueTypeConfig.debug` (published in 0.9.0) is removed:
+  //   four leftover println calls fired unconditionally on every fix run
+  //   regardless of the flag, and the fix was to delete them rather than
+  //   maintain a debug surface nothing else needed. Removing a case-class
+  //   field always breaks its constructor/copy/apply, with no way to keep
+  //   the old and new shapes both binary-compatible.
   //
-  // The next release after this one is the honest minor bump for both, the
-  // same way 0.7.0 was for the flow-graph move above.
-  def mimaPreviousVersions = Seq("0.9.0")
+  // The next release after this one is the honest minor bump for all three,
+  // the same way 0.7.0 was for the flow-graph move above.
+  def mimaPreviousVersions = Seq()
 
   def mimaBinaryIssueFilters = Seq()
 

@@ -235,7 +235,6 @@ PropagateOpaqueType.types = [ // [required for explicit propagation] opaque type
     widen = [] // [optional] symbols allowed to keep the underlying type
   }
 ]
-PropagateOpaqueType.debug = false // [optional] disable diagnostic output
 PropagateOpaqueType.autoDiscover.enabled = false // [optional] require explicit seed config
 ```
 
