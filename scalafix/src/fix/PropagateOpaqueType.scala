@@ -178,7 +178,8 @@ final class PropagateOpaqueType(
         // `--semanticdb-targetroots` is prepended to the scalac classpath by
         // the CLI, so the payload location arrives here for free.
         val scalacClasspath = configuration.scalacClasspath.map(_.toNIO)
-        println(s"DEBUG scalacClasspath: ${scalacClasspath.mkString(", ")}")
+        if (parsed.debug)
+          println(s"DEBUG scalacClasspath: ${scalacClasspath.mkString(", ")}")
 
         if (!parsed.autoDiscover.enabled)
           Configured.ok(new PropagateOpaqueType(parsed, scalacClasspath))
@@ -207,7 +208,8 @@ final class PropagateOpaqueType(
           val discovered = PropagateOpaqueType.discover(
             bundle,
             parsed.autoDiscover,
-            parsed.types
+            parsed.types,
+            parsed.debug
           )
 
           Configured.ok(
@@ -317,14 +319,16 @@ final class PropagateOpaqueType(
       }
 
     val unwraps = result.leaves.filter(here).flatMap { boundary =>
-      println(
-        s"UNWRAP candidate: ${boundary.node.render} -> ${boundary.counterpart.render} at ${boundary.at}"
-      )
+      if (config.debug)
+        println(
+          s"UNWRAP candidate: ${boundary.node.render} -> ${boundary.counterpart.render} at ${boundary.at}"
+        )
       PropagateOpaqueType.termAt(boundary.at).collect {
         case term if !PropagateOpaqueType.isUnwrapped(term) =>
-          println(
-            s"UNWRAPPING term: $term to ${PropagateOpaqueType.unwrapped(term)}"
-          )
+          if (config.debug)
+            println(
+              s"UNWRAPPING term: $term to ${PropagateOpaqueType.unwrapped(term)}"
+            )
           Patch.replaceTree(term, PropagateOpaqueType.unwrapped(term))
       }
     }
@@ -447,7 +451,8 @@ object PropagateOpaqueType {
   def discover(
       bundle: IndexBundle,
       autoDiscover: AutoDiscoverConfig,
-      manual: List[OpaqueTypeSpec]
+      manual: List[OpaqueTypeSpec],
+      debug: Boolean = false
   ): List[OpaqueCandidate] = {
     val claimedNames = manual.map(_.name).toSet
     val claimedSeeds = manual.flatMap(_.seeds).toSet
@@ -468,9 +473,11 @@ object PropagateOpaqueType {
       claimedNames.contains(candidate.name) ||
         candidate.seeds.exists(claimedSeeds.contains)
     )
-    println("--- DISCOVERED CANDIDATES ---")
-    println(OpaqueCandidateExplorer.renderSizeHistogram(res))
-    res.foreach(c => println(s"Candidate: ${c.name}, seeds: ${c.seeds}"))
+    if (debug) {
+      println("--- DISCOVERED CANDIDATES ---")
+      println(OpaqueCandidateExplorer.renderSizeHistogram(res))
+      res.foreach(c => println(s"Candidate: ${c.name}, seeds: ${c.seeds}"))
+    }
     res
   }
 
