@@ -451,8 +451,18 @@ object PropagateOpaqueType {
   def discover(
       bundle: IndexBundle,
       autoDiscover: AutoDiscoverConfig,
+      manual: List[OpaqueTypeSpec]
+  ): List[OpaqueCandidate] =
+    discover(bundle, autoDiscover, manual, debug = false)
+
+  // A default parameter would change this method's own erased signature
+  // (binary-incompatible with the published 0.9.0 jar); a real overload
+  // adds a new method instead, leaving the old one's bytecode untouched.
+  def discover(
+      bundle: IndexBundle,
+      autoDiscover: AutoDiscoverConfig,
       manual: List[OpaqueTypeSpec],
-      debug: Boolean = false
+      debug: Boolean
   ): List[OpaqueCandidate] = {
     val claimedNames = manual.map(_.name).toSet
     val claimedSeeds = manual.flatMap(_.seeds).toSet
