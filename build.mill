@@ -77,7 +77,28 @@ object scalafix
   // the same way 0.7.0 was for the flow-graph move above.
   def mimaPreviousVersions = Seq()
 
-  def mimaBinaryIssueFilters = Seq()
+  // Lint diagnostics are not API: the ad-hoc *Diagnostic case classes (and
+  // their companions, hence the trailing `*`) were folded into
+  // FindingDiagnostic (docs/superpowers/plans/2026-09-20-finding-catalog.md).
+  // Removing them is invisible to every consumer that only runs the rules.
+  def mimaBinaryIssueFilters = Seq(
+    ProblemFilter.exclude[MissingClassProblem]("fix.IdiomDiagnostic*"),
+    ProblemFilter.exclude[MissingClassProblem]("fix.ArrowBudgetDiagnostic*"),
+    ProblemFilter.exclude[MissingClassProblem]("fix.ArrowSkipDiagnostic*"),
+    ProblemFilter
+      .exclude[MissingClassProblem]("fix.FanOutShadowedInputDiagnostic*"),
+    ProblemFilter
+      .exclude[MissingClassProblem]("fix.AmbiguousCatsMatchDiagnostic*"),
+    ProblemFilter.exclude[MissingClassProblem]("fix.PrivateCatsMatchDiagnostic*"),
+    ProblemFilter
+      .exclude[MissingClassProblem]("fix.MissingTypeclassEvidenceDiagnostic*"),
+    ProblemFilter
+      .exclude[MissingClassProblem]("fix.ContainerAbstractionDiagnostic*"),
+    ProblemFilter.exclude[MissingClassProblem]("fix.HKTDeclineDiagnostic*"),
+    ProblemFilter
+      .exclude[MissingClassProblem]("fix.DeclineHKTAbstractionDiagnostic*"),
+    ProblemFilter.exclude[MissingClassProblem]("fix.MergePointDiagnostic*")
+  )
 
   def mimaPreviousArtifacts = Task {
     mimaPreviousVersions().map(previous =>

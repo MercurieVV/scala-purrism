@@ -11,6 +11,6 @@ package crossfile
 import cats.Show
 
 object WidenVetoDef {
-  def summarise[A: Show](rows: List[Int]): List[String] = // assert: PreferPolymorphicCollections
+  def summarise[A: Show](rows: List[Int]): List[String] = // assert: PreferPolymorphicCollections.explicit-type-arguments
     rows.map(row => row.toString)
 }

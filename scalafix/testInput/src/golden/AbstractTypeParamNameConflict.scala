@@ -10,6 +10,6 @@ PreferPolymorphicTypeclasses.containers = []
 package golden
 
 object AbstractTypeParamNameConflict {
-  def process[G, H, K](xs: List[Int]): List[String] = // assert: PreferPolymorphicTypeclasses
+  def process[G, H, K](xs: List[Int]): List[String] = // assert: PreferPolymorphicTypeclasses.name-conflict
     xs.map(_.toString)
 }

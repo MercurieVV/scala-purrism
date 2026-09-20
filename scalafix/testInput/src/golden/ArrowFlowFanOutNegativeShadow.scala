@@ -22,6 +22,6 @@ final class FanOutShadowFlow[F[_]: Monad](
   def profile(id: String): F[(Int, Boolean)] =
     loadUserAge.run(id).flatMap { age =>
       val id = age.toString
-      loadSettings.run(id).map(active => (age, active)) // assert: PreferArrow
+      loadSettings.run(id).map(active => (age, active)) // assert: PreferArrow.fan-out-shadowed-input
     }
 }

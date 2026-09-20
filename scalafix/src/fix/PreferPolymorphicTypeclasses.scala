@@ -4,9 +4,9 @@ import scala.meta._
 
 import metaconfig.ConfDecoder
 import metaconfig.Configured
-import scalafix.lint.LintSeverity
 import scalafix.v1._
 
+import fix.findings.PolymorphicFindings.{Typeclasses => Findings}
 import fix.hkt.CapabilitySolver
 import fix.hkt.CatsIndex
 import fix.hkt.DeclineReason
@@ -71,25 +71,6 @@ object PreferHKTConfig {
         .getOrElse("widenPublic")(default.widenPublic)
         .map(PreferHKTConfig.apply)
     }
-}
-
-/** Retained for binary compatibility; declines now carry the analyzer's own
-  * reason through [[HKTDeclineDiagnostic]].
-  */
-final case class DeclineHKTAbstractionDiagnostic(
-    override val position: scala.meta.inputs.Position
-) extends Diagnostic {
-  override def message: String =
-    "This function is a candidate for HKT abstraction but was declined."
-  override def severity: LintSeverity = LintSeverity.Warning
-}
-
-final case class HKTDeclineDiagnostic(
-    override val position: scala.meta.inputs.Position,
-    reason: DeclineReason
-) extends Diagnostic {
-  override def message: String = reason.message
-  override def severity: LintSeverity = LintSeverity.Warning
 }
 
 /** Widens a concrete type constructor in a signature to a type parameter `G[_]`
@@ -224,13 +205,20 @@ final class PreferPolymorphicTypeclasses(
           // cannot replace them, so it cannot take another type parameter.
           lint(
             defn.name.pos,
-            DeclineReason.UnsafeBody(
-              s"`${defn.name.value}` is called with explicit type arguments " +
-                "that inference cannot replace"
-            )
+            Findings.ExplicitTypeArguments,
+            DeclineReason
+              .UnsafeBody(
+                s"`${defn.name.value}` is called with explicit type arguments " +
+                  "that inference cannot replace"
+              )
+              .message
           )
         else if (!UsageAnalyzer.isWidenable(defn, config.widenPublic))
-          lint(defn.name.pos, DeclineReason.PublicBoundary(defn.name.value))
+          lint(
+            defn.name.pos,
+            Findings.PublicBoundary,
+            DeclineReason.PublicBoundary(defn.name.value).message
+          )
         else if (handedOver.contains(defn.name.value))
           // A widened signature is source-compatible at every application
           // site, because the argument still infers the type parameter. `val g
@@ -238,18 +226,22 @@ final class PreferPolymorphicTypeclasses(
           // monomorphic function type to eta-expand to.
           lint(
             defn.name.pos,
-            DeclineReason.UnsafeBody(
-              s"`${defn.name.value}` is handed over as a value"
-            )
+            Findings.HandedOverAsValue,
+            DeclineReason
+              .UnsafeBody(s"`${defn.name.value}` is handed over as a value")
+              .message
           )
         else if (!config.rewrite)
           lint(
             defn.name.pos,
-            DeclineReason.UnsafeBody(
-              "abstractable over " +
-                solution.constraints.map(_.value).mkString(", ") +
-                " (rewriting is off)"
-            )
+            Findings.RewriteOff,
+            DeclineReason
+              .UnsafeBody(
+                "abstractable over " +
+                  solution.constraints.map(_.value).mkString(", ") +
+                  " (rewriting is off)"
+              )
+              .message
           )
         else
           HktRewriter
@@ -259,15 +251,19 @@ final class PreferPolymorphicTypeclasses(
                 removeStaleImport(usage)
             )
             .getOrElse(
-              lint(defn.name.pos, DeclineReason.NameConflict(TypeParamNames))
+              lint(
+                defn.name.pos,
+                Findings.NameConflict,
+                DeclineReason.NameConflict(TypeParamNames).message
+              )
             )
       case None if hasKnownUnaryTarget(defn) =>
-        results
-          .collectFirst {
-            case UsageResult.Declined(position, reason)
-                if isReportable(reason) =>
-              lint(position, reason)
+        results.iterator
+          .collect { case UsageResult.Declined(position, reason) =>
+            reportable(reason).map(lint(position, _, reason.message))
           }
+          .flatten
+          .nextOption()
           .getOrElse(Patch.empty)
       case None => Patch.empty
     }
@@ -304,20 +300,32 @@ final class PreferPolymorphicTypeclasses(
     * abstracted. Reporting it turns the rule into a warning on every third
     * definition, so a body the index cannot account for is simply not widened.
     */
-  private def isReportable(reason: DeclineReason): Boolean =
+  private def reportable(reason: DeclineReason): Option[Finding] =
     reason match {
-      case _: DeclineReason.NoCapability => false
+      case _: DeclineReason.NoCapability => None
       // Nor is `UnsupportedKind`. It is decided from the signature alone, so on
       // a real codebase it fires for every `Map[K, V]` and `Either[E, A]` a
       // definition happens to mention, whether or not the body treats it as a
       // functor. The gap it names is permanent for v1 and recorded in
       // `gaps.tsv`; repeating it per signature tells a reader nothing they can
       // act on.
-      case _: DeclineReason.UnsupportedKind => false
+      case _: DeclineReason.UnsupportedKind => None
       // Nor is `InheritedSignature`: an override's signature belongs to the
       // supertype, which is not an obstacle anyone can remove here.
-      case _: DeclineReason.InheritedSignature => false
-      case _                                   => true
+      case _: DeclineReason.InheritedSignature => None
+      case _: DeclineReason.UnsafeBody         => Some(Findings.UnsafeBody)
+      case _: DeclineReason.ConcreteConstructorMatch =>
+        Some(Findings.ConcreteConstructorMatch)
+      case _: DeclineReason.OrderOrIndexSpecific =>
+        Some(Findings.OrderOrIndexSpecific)
+      case _: DeclineReason.AmbiguousCapability =>
+        Some(Findings.AmbiguousCapability)
+      case _: DeclineReason.PublicBoundary => Some(Findings.PublicBoundary)
+      case _: DeclineReason.NameConflict   => Some(Findings.NameConflict)
+      // The solver's reasons never arrive through `UsageResult.Declined`, and
+      // `MissingEvidence` is never constructed.
+      case _: DeclineReason.TooManyConstraints => None
+      case DeclineReason.MissingEvidence       => None
     }
 
   /** The import of the constructor that was just abstracted away.
@@ -562,9 +570,13 @@ final class PreferPolymorphicTypeclasses(
     */
   private val TypeParamNames: List[String] = List("G", "H", "K")
 
+  /** Every decline is a `Warning`: a lint error would make scalafix withhold
+    * the file's other patches.
+    */
   private def lint(
       position: scala.meta.inputs.Position,
-      reason: DeclineReason
+      finding: Finding,
+      message: String
   )(implicit doc: SemanticDocument): Patch =
-    Patch.lint(HKTDeclineDiagnostic(position, reason))
+    Patch.lint(FindingDiagnostic(finding, position, message))
 }

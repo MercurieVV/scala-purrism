@@ -3,6 +3,7 @@ package fix.idioms
 import scala.meta._
 
 import fix.catsexpr.CatsFacts
+import fix.findings.IdiomFindings
 
 /** Effect and error idioms: `try`/`catch`/`finally` and the mutable primitives
   * that predate `Ref`.
@@ -48,11 +49,11 @@ private[fix] object EffectIdiomRules {
     tree.collect {
       case term: Term.Try
           if closesInFinally(term) && usingResource(term).isEmpty =>
-        IdiomFinding(term, ManualResource)
+        IdiomFinding(term, IdiomFindings.ManualResource, ManualResource)
       case term: Term.New if refs && isAtomicReference(term) =>
-        IdiomFinding(term, MutableReference)
+        IdiomFinding(term, IdiomFindings.MutableReference, MutableReference)
       case term: Term.ApplyType if isUnsafeCast(term) =>
-        IdiomFinding(term, UnsafeCast)
+        IdiomFinding(term, IdiomFindings.UnsafeCast, UnsafeCast)
     }
 
   /** `catch { case _: Throwable => … }` -> `catch { case NonFatal(_) => … }`.

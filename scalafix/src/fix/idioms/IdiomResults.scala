@@ -2,6 +2,8 @@ package fix.idioms
 
 import scala.meta._
 
+import fix.Finding
+
 /** A rewrite an idiom rule wants to make.
   *
   * `needsCatsSyntax` is per-rewrite rather than per-rule: `Either.catchNonFatal
@@ -21,5 +23,11 @@ private[fix] final case class IdiomRewrite(
   *
   * Reported rather than edited, per `docs/RULES.md`: a check that cannot be
   * rewritten safely reports a diagnostic instead of producing a partial edit.
+  * `finding` is the catalogued kind; `text` is the rule's own short wording,
+  * which `FindingDiagnostic` follows with the finding's explanation.
   */
-private[fix] final case class IdiomFinding(tree: Tree, message: String)
+private[fix] final case class IdiomFinding(
+    tree: Tree,
+    finding: Finding,
+    text: String
+)

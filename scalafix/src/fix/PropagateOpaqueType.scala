@@ -16,6 +16,7 @@ import metaconfig.ConfDecoder
 import metaconfig.Configured
 import scalafix.v1._
 
+import fix.findings.OpaqueFindings
 import fix.opaque._
 
 /** One opaque type to introduce, and where its propagation starts.
@@ -132,20 +133,6 @@ object PropagateOpaqueTypeConfig {
     }
 }
 
-/** A merge point is guidance, not a defect, so it is reported as a warning.
-  *
-  * `Diagnostic` defaults to `LintSeverity.Error`, and scalafix withholds a
-  * rule's patches when it emits lint errors -- which silently turned the whole
-  * rewrite into a no-op for any file that also reported a merge point.
-  */
-final case class MergePointDiagnostic(
-    override val position: scala.meta.inputs.Position,
-    override val message: String
-) extends Diagnostic {
-  override def severity: scalafix.lint.LintSeverity =
-    scalafix.lint.LintSeverity.Warning
-}
-
 /** Replaces a value type with an opaque type and follows the value wherever it
   * flows -- through parameters, fields, returns, container type arguments and
   * Kleisli input tuples -- stopping where the value is created or crosses into
@@ -252,7 +239,8 @@ final class PropagateOpaqueType(
     // nothing rather than patch against a stale view.
     else if (uri.exists(stale.contains))
       Patch.lint(
-        MergePointDiagnostic(
+        FindingDiagnostic(
+          OpaqueFindings.StaleSemanticdb,
           doc.tree.pos,
           s"SemanticDB for ${uri.getOrElse("this file")} is out of date, so it " +
             "was left unchanged. Regenerate it and re-run."
@@ -375,6 +363,11 @@ final class PropagateOpaqueType(
   /** Report a node the closure reached but could not convert, because a value
     * it does not cover also flows in. The message names the symbol to add to
     * `widen` if that other value belongs in the conversion after all.
+    *
+    * A merge point is guidance, not a defect, so `FindingDiagnostic` reports it
+    * as a warning: scalafix withholds a rule's patches when it emits lint
+    * errors, which would silently turn the whole rewrite into a no-op for any
+    * file that also reported a merge point.
     */
   private def mergePointDiagnostics(
       result: ClosureResult,
@@ -384,7 +377,11 @@ final class PropagateOpaqueType(
     result.mergePoints.flatMap { merge =>
       declarations
         .get(merge.node.symbol)
-        .map(tpe => Patch.lint(MergePointDiagnostic(tpe.pos, merge.message)))
+        .map(tpe =>
+          Patch.lint(
+            FindingDiagnostic(OpaqueFindings.MergePoint, tpe.pos, merge.message)
+          )
+        )
     }.asPatch
 }
 

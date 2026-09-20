@@ -5,56 +5,8 @@ import scala.util.control.NonFatal
 
 import scalafix.v1._
 
+import fix.findings.CatsFunctionFindings
 import fix.prefercats._
-
-/** Emitted for decline rule D1 (docs/PREFER_CATS_FUNCTIONS.md §3): the
-  * normalized body matches more than one public Cats function and ranking (§4)
-  * could not resolve a unique winner. Stays a `Warning` -- `Diagnostic`
-  * defaults to `LintSeverity.Error`, and scalafix withholds every patch for a
-  * file that reports a lint error, which would silently turn unrelated rewrites
-  * in the same file into no-ops (same reasoning as `ArrowBudgetDiagnostic` in
-  * `PreferArrow`).
-  */
-final case class AmbiguousCatsMatchDiagnostic(
-    override val position: scala.meta.inputs.Position
-) extends Diagnostic {
-  override def message: String =
-    "This body normalizes to match more than one public Cats function, and " +
-      "ranking (public > in-scope > shortest) did not resolve a unique " +
-      "winner. Not rewriting -- see docs/PREFER_CATS_FUNCTIONS.md §3-4 (D1)."
-  override def severity: scalafix.lint.LintSeverity =
-    scalafix.lint.LintSeverity.Warning
-}
-
-/** Decline rule D2: the only normalized match is a private/internal-only Cats
-  * implementation detail (no `render` template, i.e. no public call form).
-  * Never rewrite to a non-public symbol.
-  */
-final case class PrivateCatsMatchDiagnostic(
-    override val position: scala.meta.inputs.Position
-) extends Diagnostic {
-  override def message: String =
-    "This body matches only a private/internal Cats implementation detail, " +
-      "with no public API of the same normalized shape. Not rewriting -- " +
-      "see docs/PREFER_CATS_FUNCTIONS.md §3 (D2)."
-  override def severity: scalafix.lint.LintSeverity =
-    scalafix.lint.LintSeverity.Warning
-}
-
-/** Decline rule D3: the matched Cats function requires a typeclass constraint
-  * (§2 P8) that is not derivable from the candidate's own enclosing parameter
-  * list.
-  */
-final case class MissingTypeclassEvidenceDiagnostic(
-    override val position: scala.meta.inputs.Position
-) extends Diagnostic {
-  override def message: String =
-    "This body matches a Cats function that requires a typeclass constraint " +
-      "not derivable in the enclosing scope. Not rewriting -- see " +
-      "docs/PREFER_CATS_FUNCTIONS.md §3 (D3)."
-  override def severity: scalafix.lint.LintSeverity =
-    scalafix.lint.LintSeverity.Warning
-}
 
 /** Matches project candidate bodies (task #101) against the Cats source index
   * (task #99), ranks ties per docs/PREFER_CATS_FUNCTIONS.md §4, and rewrites
@@ -413,16 +365,55 @@ object PreferCatsFunctions {
         .map(req => Patch.addGlobalImport(toImporter(req)))
         .asPatch
 
+  /** Decline rules D1-D3 (docs/PREFER_CATS_FUNCTIONS.md §3), each a catalogued
+    * finding. `FindingDiagnostic` keeps the severity at `Warning`: `Diagnostic`
+    * defaults to `LintSeverity.Error`, and scalafix withholds every patch for a
+    * file that reports a lint error, which would silently turn unrelated
+    * rewrites in the same file into no-ops.
+    */
   def declinePatch(candidate: Candidate, outcome: MatchOutcome): Patch =
     outcome match {
       case MatchOutcome.PrivateOnly =>
-        Patch.lint(PrivateCatsMatchDiagnostic(candidate.term.pos))
+        Patch.lint(
+          FindingDiagnostic(
+            CatsFunctionFindings.PrivateCatsMatch,
+            candidate.term.pos,
+            PrivateCatsMatchText
+          )
+        )
       case MatchOutcome.MissingEvidence =>
-        Patch.lint(MissingTypeclassEvidenceDiagnostic(candidate.term.pos))
+        Patch.lint(
+          FindingDiagnostic(
+            CatsFunctionFindings.MissingTypeclassEvidence,
+            candidate.term.pos,
+            MissingTypeclassEvidenceText
+          )
+        )
       case MatchOutcome.Ambiguous =>
-        Patch.lint(AmbiguousCatsMatchDiagnostic(candidate.term.pos))
+        Patch.lint(
+          FindingDiagnostic(
+            CatsFunctionFindings.AmbiguousCatsMatch,
+            candidate.term.pos,
+            AmbiguousCatsMatchText
+          )
+        )
       case _ => Patch.empty
     }
+
+  private val AmbiguousCatsMatchText: String =
+    "This body normalizes to match more than one public Cats function, and " +
+      "ranking (public > in-scope > shortest) did not resolve a unique " +
+      "winner. Not rewriting -- see docs/PREFER_CATS_FUNCTIONS.md §3-4 (D1)."
+
+  private val PrivateCatsMatchText: String =
+    "This body matches only a private/internal Cats implementation detail, " +
+      "with no public API of the same normalized shape. Not rewriting -- " +
+      "see docs/PREFER_CATS_FUNCTIONS.md §3 (D2)."
+
+  private val MissingTypeclassEvidenceText: String =
+    "This body matches a Cats function that requires a typeclass constraint " +
+      "not derivable in the enclosing scope. Not rewriting -- see " +
+      "docs/PREFER_CATS_FUNCTIONS.md §3 (D3)."
 
   /** One patch (possibly empty, possibly a single lint warning) per usable
     * candidate. Never both a patch and a warning for the same candidate.
@@ -434,12 +425,9 @@ object PreferCatsFunctions {
   )(implicit doc: SemanticDocument): Patch =
     decide(candidate, byHash, wildcardImports) match {
       case MatchOutcome.NoMatch | MatchOutcome.Unrenderable => Patch.empty
-      case MatchOutcome.PrivateOnly =>
-        Patch.lint(PrivateCatsMatchDiagnostic(candidate.term.pos))
-      case MatchOutcome.MissingEvidence =>
-        Patch.lint(MissingTypeclassEvidenceDiagnostic(candidate.term.pos))
-      case MatchOutcome.Ambiguous =>
-        Patch.lint(AmbiguousCatsMatchDiagnostic(candidate.term.pos))
+      case declined @ (MatchOutcome.PrivateOnly | MatchOutcome.MissingEvidence |
+          MatchOutcome.Ambiguous) =>
+        declinePatch(candidate, declined)
       case MatchOutcome.Rewrite(cf, rendered) =>
         Patch.replaceTree(candidate.term, rendered) +
           cf.requiredImports

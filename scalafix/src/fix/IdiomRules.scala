@@ -1,26 +1,16 @@
 package fix
 
-import scala.meta._
-
 import metaconfig.ConfDecoder
 import metaconfig.Configured
-import scalafix.lint.LintSeverity
 import scalafix.v1._
 
 import fix.catsexpr.CatsFacts
+import fix.findings.IdiomFindings
 import fix.idioms.EffectIdiomRules
 import fix.idioms.IdiomFinding
 import fix.idioms.IdiomRewrite
 import fix.idioms.IndexedMapRules
 import fix.idioms.OptionIdiomRules
-
-/** A shape one of the idiom rules recognised but declined to rewrite. */
-final case class IdiomDiagnostic(
-    override val position: scala.meta.inputs.Position,
-    override val message: String
-) extends Diagnostic {
-  override def severity: LintSeverity = LintSeverity.Warning
-}
 
 final case class PreferEffectIdiomsConfig(
     rewrite: Boolean = true,
@@ -104,7 +94,9 @@ private[fix] object IdiomPatches {
       .filterNot(finding => suppression.suppresses(finding.tree))
       .filterNot(finding => allowed.exists(_.tree eq finding.tree))
       .map(finding =>
-        Patch.lint(IdiomDiagnostic(finding.tree.pos, finding.message))
+        Patch.lint(
+          FindingDiagnostic(finding.finding, finding.tree.pos, finding.text)
+        )
       )
     (patches ++ lints).asPatch
   }
@@ -144,7 +136,7 @@ final class PreferEffectIdioms(config: PreferEffectIdiomsConfig)
       EffectIdiomRules
         .findings(doc.tree, config.refs)
         .filter(finding =>
-          config.resources || finding.message != EffectIdiomRules.ManualResource
+          config.resources || finding.finding != IdiomFindings.ManualResource
         )
     )
   }

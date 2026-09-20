@@ -5,5 +5,5 @@ package golden
 
 object AbstractAmbiguousWeakestCapability {
   private def sum(xs: List[Int]): Int =
-    xs.reduce(_ + _) // assert: PreferPolymorphicTypeclasses
+    xs.reduce(_ + _) // assert: PreferPolymorphicTypeclasses.ambiguous-capability
 }

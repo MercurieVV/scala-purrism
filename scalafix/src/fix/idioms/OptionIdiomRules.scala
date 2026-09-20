@@ -5,6 +5,8 @@ import scala.meta._
 import scalafix.v1.SemanticDocument
 import scalafix.v1.XtensionTreeScalafix
 
+import fix.findings.IdiomFindings
+
 /** `null`-guard idioms that are an `Option`.
   *
   * The shape these target is the Java-interop lookup:
@@ -141,7 +143,7 @@ private[fix] object OptionIdiomRules {
             Term.Select(_, Term.Name("getOrElse")),
             argClause
           ) if argClause.values.exists(throwsDirectly) =>
-        IdiomFinding(term, ThrowingLookup)
+        IdiomFinding(term, IdiomFindings.ThrowingLookup, ThrowingLookup)
     }
 
   /** A block of exactly `val v = <lookup>` followed by a `null` test on `v`. */

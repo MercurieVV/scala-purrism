@@ -26,10 +26,10 @@ final class IdiomUsingResource {
   /** The finally does more than close, so there is nothing safe to say. */
   def noisy(open: () => InputStream, log: String => Unit): Unit = {
     val stream = open()
-    try stream.read() // assert: PreferEffectIdioms
+    try stream.read() // assert: PreferEffectIdioms.manual-resource
     finally { log("done"); stream.close() }
   }
 
   def widen(value: Any): String =
-    value.asInstanceOf[String] // assert: PreferEffectIdioms
+    value.asInstanceOf[String] // assert: PreferEffectIdioms.unsafe-cast
 }

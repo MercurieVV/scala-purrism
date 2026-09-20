@@ -4,9 +4,9 @@ import scala.meta._
 
 import metaconfig.ConfDecoder
 import metaconfig.Configured
-import scalafix.lint.LintSeverity
 import scalafix.v1._
 
+import fix.findings.PolymorphicFindings.{Collections => Findings}
 import fix.hkt.CapabilitySolver
 import fix.hkt.CatsIndex
 import fix.hkt.DeclineReason
@@ -42,13 +42,6 @@ object PreferPolymorphicCollectionsConfig {
           )
         }
     }
-}
-
-final case class ContainerAbstractionDiagnostic(
-    override val position: scala.meta.inputs.Position,
-    override val message: String
-) extends Diagnostic {
-  override def severity: LintSeverity = LintSeverity.Warning
 }
 
 /** Widens a concrete collection in a signature to the weakest Cats typeclass
@@ -218,19 +211,21 @@ final class PreferPolymorphicCollections(
           // cannot simply stop naming them, and this def cannot grow one.
           lint(
             defn.name.pos,
+            Findings.ExplicitTypeArguments,
             s"`${defn.name.value}` is called with explicit type arguments that " +
               "inference cannot replace, so it cannot take another type parameter"
           )
         else if (handedOver.contains(defn.name.value))
           lint(
             defn.name.pos,
+            Findings.HandedOverAsValue,
             s"`${defn.name.value}` is handed over as a value, so widening it " +
               "to a type parameter would stop that reference compiling."
           )
         else rewrite(usage)
       case UsageResult.Declined(position, reason)
           if mentionsContainer(reason) =>
-        lint(position, reason.message)
+        lint(position, Findings.OrderOrIndexSpecific, reason.message)
       case _ =>
         Patch.empty
     }
@@ -246,6 +241,7 @@ final class PreferPolymorphicCollections(
       case Right(solution) if solution.constraints.isEmpty =>
         lint(
           usage.defn.name.pos,
+          Findings.NoCapability,
           "no Cats capability covers this container's use; nothing to widen to"
         )
       // `UsageAnalyzer` reports the ops it could map to a capability. It does
@@ -257,6 +253,7 @@ final class PreferPolymorphicCollections(
           if !ContainerFlow.staysAbstract(usage, index.exitsConstructor) =>
         lint(
           usage.defn.name.pos,
+          Findings.ContainerNotAbstract,
           "the container does not stay abstract: an operation on it is not " +
             "covered by " + solution.constraints.map(_.value).mkString(", ") +
             ", or its value is passed to a signature that names a container"
@@ -268,18 +265,34 @@ final class PreferPolymorphicCollections(
           .getOrElse(
             lint(
               usage.defn.name.pos,
+              Findings.NameConflict,
               DeclineReason.NameConflict(TypeParamNames).message
             )
           )
       case Right(solution) =>
         lint(
           usage.defn.name.pos,
+          Findings.RewriteOff,
           "container is abstractable over " +
             solution.constraints.map(_.value).mkString(", ") +
             " (rewriting is off)"
         )
       case Left(reason) =>
-        lint(usage.defn.name.pos, reason.message)
+        solverFinding(reason)
+          .map(finding => lint(usage.defn.name.pos, finding, reason.message))
+          .getOrElse(Patch.empty)
+    }
+
+  /** The kinds `CapabilitySolver.solve` declines with. The other
+    * `DeclineReason`s are the analyzer's, and never come back from the solver.
+    */
+  private def solverFinding(reason: DeclineReason): Option[Finding] =
+    reason match {
+      case _: DeclineReason.NoCapability    => Some(Findings.NoCapability)
+      case _: DeclineReason.UnsupportedKind => Some(Findings.UnsupportedKind)
+      case _: DeclineReason.TooManyConstraints =>
+        Some(Findings.TooManyConstraints)
+      case _ => None
     }
 
   /** Named for the container they stand for rather than for an effect: `S` is
@@ -335,10 +348,15 @@ final class PreferPolymorphicCollections(
   private def simpleName(symbol: Symbol): String =
     symbol.value.stripSuffix("#").split('/').last.split('.').last
 
-  private def lint(position: scala.meta.inputs.Position, message: String)(
-      implicit doc: SemanticDocument
-  ): Patch =
-    Patch.lint(ContainerAbstractionDiagnostic(position, message))
+  /** Every decline is a `Warning`: a lint error would make scalafix withhold
+    * the file's other patches.
+    */
+  private def lint(
+      position: scala.meta.inputs.Position,
+      finding: Finding,
+      message: String
+  )(implicit doc: SemanticDocument): Patch =
+    Patch.lint(FindingDiagnostic(finding, position, message))
 }
 
 /** Which definitions in a file are used as values rather than called.

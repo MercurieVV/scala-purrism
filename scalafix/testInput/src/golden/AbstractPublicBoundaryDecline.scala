@@ -12,6 +12,6 @@ package golden
 final case class User(name: String)
 
 object AbstractPublicBoundaryDecline {
-  def names(us: List[User]): List[String] = // assert: PreferPolymorphicTypeclasses
+  def names(us: List[User]): List[String] = // assert: PreferPolymorphicTypeclasses.public-boundary
     us.map(_.name)
 }

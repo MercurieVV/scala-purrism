@@ -69,7 +69,7 @@ object ArrowBodyAskDiscardDeclined {
       Kleisli { path => Monad[F].unit }
 
     def run: Kleisli[F, Task, Task] =
-      Kleisli { task => // assert: PreferArrow
+      Kleisli { task => // assert: PreferArrow.readability-budget
         validatePath.run(task.path).as(task)
       }
   }

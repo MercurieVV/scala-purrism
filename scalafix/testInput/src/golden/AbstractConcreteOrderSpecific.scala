@@ -5,5 +5,5 @@ package golden
 
 object AbstractConcreteOrderSpecific {
   private def first(xs: List[Int]): Int =
-    xs.sorted.head // assert: PreferPolymorphicTypeclasses
+    xs.sorted.head // assert: PreferPolymorphicTypeclasses.order-or-index-specific
 }

@@ -3,6 +3,7 @@ package fix.idioms
 import scala.meta._
 
 import fix.catsexpr.CatsFacts
+import fix.findings.IdiomFindings
 
 /** Effects a signature does not mention.
   *
@@ -64,7 +65,11 @@ private[fix] object SideEffectRules {
         val effects = unsuspendedEffects(defn.body, facts)
           .filterNot(effect => enclosedByNestedDef(effect, defn))
         Option.when(effects.nonEmpty)(
-          IdiomFinding(defn.name, unsuspendedEffectMessage(effects.size))
+          IdiomFinding(
+            defn.name,
+            IdiomFindings.UnsuspendedEffect,
+            unsuspendedEffectMessage(effects.size)
+          )
         )
     }.flatten
 

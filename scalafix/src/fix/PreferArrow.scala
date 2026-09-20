@@ -13,47 +13,7 @@ import fix.arrow.ArrowRender
 import fix.arrow.KleisliScope
 import fix.arrow.KleisliType
 import fix.arrow.ReadabilityBudget
-
-/** A fan-out near-miss where both `.run`/`.apply` arguments are spelled like
-  * the arrow input but the second resolves to a different binding -- an inner
-  * scope shadowed the input first. Reported rather than silently skipped so a
-  * reader knows the near-miss was seen and rejected, not simply never
-  * recognised.
-  *
-  * Stays `Warning` for the same reason as [[ArrowBudgetDiagnostic]]: a lint
-  * *error* makes scalafix withhold every patch in the file.
-  */
-final case class FanOutShadowedInputDiagnostic(
-    override val position: scala.meta.inputs.Position
-) extends Diagnostic {
-  override def message: String =
-    "Both branches call .run/.apply with an argument spelled like this arrow's " +
-      "input, but the second resolves to a different binding (likely shadowed " +
-      "in an inner scope). Not rewriting to `&&&`, since the two Kleislis would " +
-      "no longer run on the same input."
-  override def severity: scalafix.lint.LintSeverity =
-    scalafix.lint.LintSeverity.Warning
-}
-
-/** Emitted when a body was recognised as composable but declined by the
-  * readability budget -- so a reader knows the shape *was* seen and rejected on
-  * purpose, not merely never matched.
-  *
-  * `Diagnostic` defaults to `LintSeverity.Error`, and scalafix withholds a
-  * rule's patches for a whole file that reports a lint *error*, which would
-  * silently turn every other rewrite in that file into a no-op. It therefore
-  * stays a `Warning`.
-  */
-final case class ArrowBudgetDiagnostic(
-    override val position: scala.meta.inputs.Position,
-    reason: String
-) extends Diagnostic {
-  override def message: String =
-    s"This Kleisli body could be written point-free, but the rule declined: " +
-      s"$reason."
-  override def severity: scalafix.lint.LintSeverity =
-    scalafix.lint.LintSeverity.Warning
-}
+import fix.findings.ArrowFindings
 
 /** Rewrites hand-threaded Kleisli code into point-free `Arrow` composition.
   *
@@ -89,10 +49,10 @@ final case class ArrowBudgetDiagnostic(
   *   shape it stopped on.
   *
   * A body the readability budget declines already reports itself
-  * ([[ArrowBudgetDiagnostic]]); a body the *parser* never understood is silent,
-  * and the two are indistinguishable from the outside -- which is how a corpus
-  * ends up with fifty untouched Kleislis and no evidence why. Off by default:
-  * this is a census instrument, one warning per unrecognised body, not
+  * (`PreferArrow.readability-budget`); a body the *parser* never understood is
+  * silent, and the two are indistinguishable from the outside -- which is how a
+  * corpus ends up with fifty untouched Kleislis and no evidence why. Off by
+  * default: this is a census instrument, one warning per unrecognised body, not
   * something to leave on in a build.
   */
 final case class PreferArrowConfig(
@@ -109,20 +69,6 @@ object PreferArrowConfig {
         .product(conf.getOrElse("reportSkips")(default.reportSkips))
         .map(PreferArrowConfig.apply.tupled)
     }
-}
-
-/** A Kleisli body the parser did not recognise, labelled with the shape it
-  * stopped on, so a corpus can be counted by cause instead of guessed at.
-  * Emitted only under `PreferArrow.reportSkips`.
-  */
-final case class ArrowSkipDiagnostic(
-    override val position: scala.meta.inputs.Position,
-    shape: String
-) extends Diagnostic {
-  override def message: String =
-    s"PreferArrow did not recognise this Kleisli body: $shape."
-  override def severity: scalafix.lint.LintSeverity =
-    scalafix.lint.LintSeverity.Warning
 }
 
 final class PreferArrow(
@@ -247,14 +193,43 @@ object PreferArrow {
             Patch.replaceTree(applyTerm, rendered) +
               imports.map(Patch.addGlobalImport).asPatch
           case Compiled.Warn(reason) =>
-            Patch.lint(ArrowBudgetDiagnostic(applyTerm.pos, reason))
+            Patch.lint(
+              FindingDiagnostic(
+                ArrowFindings.ReadabilityBudget,
+                applyTerm.pos,
+                budgetText(reason)
+              )
+            )
           case Compiled.Skip =>
             ArrowParser
               .shadowedInput(fn.body, inputParam.value, inputSymbol)
-              .map(pos => Patch.lint(FanOutShadowedInputDiagnostic(pos)))
+              .map(pos =>
+                Patch.lint(
+                  FindingDiagnostic(
+                    ArrowFindings.FanOutShadowedInput,
+                    pos,
+                    FanOutShadowedInputText
+                  )
+                )
+              )
               .getOrElse(skipReport(applyTerm.pos, fn.body, config))
         }
     }
+
+  /** The three declines this rule reports, worded as before the catalogue:
+    * `FindingDiagnostic` appends the catalogued explanation and keeps the
+    * severity at `Warning`, because a lint *error* makes scalafix withhold
+    * every patch in the file.
+    */
+  private def budgetText(reason: String): String =
+    s"This Kleisli body could be written point-free, but the rule declined: " +
+      s"$reason."
+
+  private val FanOutShadowedInputText: String =
+    "Both branches call .run/.apply with an argument spelled like this arrow's " +
+      "input, but the second resolves to a different binding (likely shadowed " +
+      "in an inner scope). Not rewriting to `&&&`, since the two Kleislis would " +
+      "no longer run on the same input."
 
   /** Names the shape an unrecognised body stopped on, coarsely enough to count
     * a corpus by cause. Deliberately syntactic: the point is to say which
@@ -268,9 +243,11 @@ object PreferArrow {
     if (!config.reportSkips) Patch.empty
     else
       Patch.lint(
-        ArrowSkipDiagnostic(
+        FindingDiagnostic(
+          ArrowFindings.UnrecognisedBody,
           pos,
-          s"${skipShape(body)}, ${effectSteps(body)} effect steps"
+          s"PreferArrow did not recognise this Kleisli body: " +
+            s"${skipShape(body)}, ${effectSteps(body)} effect steps."
         )
       )
 
@@ -376,11 +353,25 @@ object PreferArrow {
               Patch.addGlobalImport(Symbol("cats/data/Kleisli#")) +
               imports.map(Patch.addGlobalImport).asPatch
           case Compiled.Warn(reason) =>
-            Patch.lint(ArrowBudgetDiagnostic(defn.body.pos, reason))
+            Patch.lint(
+              FindingDiagnostic(
+                ArrowFindings.ReadabilityBudget,
+                defn.body.pos,
+                budgetText(reason)
+              )
+            )
           case Compiled.Skip =>
             ArrowParser
               .shadowedInput(defn.body, param.name.value, param.name.symbol)
-              .map(pos => Patch.lint(FanOutShadowedInputDiagnostic(pos)))
+              .map(pos =>
+                Patch.lint(
+                  FindingDiagnostic(
+                    ArrowFindings.FanOutShadowedInput,
+                    pos,
+                    FanOutShadowedInputText
+                  )
+                )
+              )
               .getOrElse(Patch.empty)
         }
     }

@@ -8,6 +8,6 @@ final class SuspendKeptOnRealtimePath {
   def render(frames: Int): Unit =
     System.arraycopy(new Array[Float](frames), 0, new Array[Float](frames), 0, frames)
 
-  def report(frames: Int): Unit = // assert: SuspendSideEffects
+  def report(frames: Int): Unit = // assert: SuspendSideEffects.unsuspended-effect
     System.arraycopy(new Array[Float](frames), 0, new Array[Float](frames), 0, frames)
 }
