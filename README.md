@@ -10,6 +10,9 @@ Full rule reference: <https://mercurievv.github.io/scala-purrism/>
 push to `master`; `mill docs.run` renders the same site into `website/docs`
 locally.
 
+Every lint prints its code as `[Rule.kind]` with a repair instruction; the full
+table is `docs/findings.tsv` (also shipped in the jar as `purrism/findings.tsv`).
+
 ## Quickstart
 
 Latest release:

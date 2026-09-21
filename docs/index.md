@@ -68,6 +68,9 @@ For whole-project rewrites, run Scalafix over every relevant source file and
 pass every SemanticDB target root. Recompile between stages when one rule
 changes signatures that another rule reads semantically.
 
+Every lint prints a coded id (`[Rule.kind]`) with a repair instruction —
+see [Findings](findings.md) for the full table.
+
 ## Rule Sets
 
 ### TypelevelPurrism

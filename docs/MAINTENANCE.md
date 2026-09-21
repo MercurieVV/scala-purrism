@@ -1,5 +1,38 @@
 # Maintenance
 
+## Finding codes
+
+Every lint's `Rule.kind` code (the scalafix lint id `FindingDiagnostic` prints, e.g.
+`PreferArrow.fan-out-shadowed-input`) is **append-only**. `findings.tsv` is checked
+in twice (`docs/findings.tsv`, `scalafix/resources/purrism/findings.tsv`) and
+harnesses vendor it, so renaming or removing a code is a breaking change for any
+harness pinned to a version — treat it like removing a public API, not a doc edit.
+
+To add a kind:
+
+1. Add a `Finding` (rule, kind, title, explanation, instruction, doc anchor) to the
+   relevant family object in `scalafix/src/fix/findings/Families.scala`.
+2. Lint with `FindingDiagnostic(finding, position, text)` at the site — `FindingCatalog`
+   is the only source of `Finding`s, so the code and the message stay in sync.
+3. Add a fixture that triggers it, asserting the code with `// assert: Rule.kind`
+   (`scalafix/test/...`). If no fixture can trigger it, add the code and reason to
+   `FindingCatalog.unfixturable` instead — see below.
+4. Run `rtk mill scalafix.findings` to regenerate both checked-in TSVs from the
+   catalog, and commit both files together with the code change.
+
+`mill scalafix.findingsCheck` (run in CI after `scalafix.test`) fails the build when
+either checked-in TSV is stale relative to `FindingCatalog`.
+
+### The `unfixturable` allowlist
+
+`FindingCatalog.unfixturable` (`scalafix/src/fix/FindingCatalog.scala`) is a map of
+code → reason for codes the coverage suite cannot force a fixture to trigger (e.g. a
+branch that is only reachable with a stale build cache). The coverage suite skips
+these codes but also asserts each one is still catalogued and still genuinely has no
+fixture — so the list cannot silently accumulate. Add an entry here only when a
+fixture is provably unreachable, not as a shortcut around writing one; removing an
+entry is how a later change re-requires a fixture for that code.
+
 ## Scala Steward
 
 This project has a valid `.scala-steward.conf`.

@@ -39,6 +39,9 @@ jobs:
       - name: Test Scalafix module
         run: ./mill scalafix.test
 
+      - name: Check finding codes table is up to date
+        run: ./mill scalafix.findingsCheck
+
       - name: Render docs
         run: ./mill docs.run
 

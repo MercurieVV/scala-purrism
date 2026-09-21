@@ -101,10 +101,15 @@ object DocsMain:
       .build
       .use(
         _.fromInput(
-          InputTree[IO].addFile(
-            input.resolve("index.md").toString,
-            Root / "index.md"
-          )
+          InputTree[IO]
+            .addFile(
+              input.resolve("index.md").toString,
+              Root / "index.md"
+            )
+            .addFile(
+              input.resolve("findings.md").toString,
+              Root / "findings.md"
+            )
         )
           .toDirectory(output.toString)
           .transform
