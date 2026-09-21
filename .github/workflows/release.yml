@@ -20,7 +20,12 @@ jobs:
     permissions:
       contents: write
     steps:
+      # `findingsVersion` (scalafix.findingsCheck) reads the last release tag
+      # via `git describe`; the default shallow, tag-less clone has none.
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Install Mill
         run: |

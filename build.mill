@@ -286,12 +286,23 @@ object scalafix
   // would churn the checked-in findings.tsv on every commit in a worktree.
   // The header instead names the last release tag -- a real release-style
   // version, which is what the harness in skreeep2 compares it against.
-  def findingsVersion = Task {
-    os.proc("git", "describe", "--tags", "--abbrev=0")
-      .call(cwd = mill.api.BuildCtx.workspaceRoot)
-      .out
-      .trim()
-      .stripPrefix("v")
+  //
+  // `Task.Input` rather than `Task`: a `Task` with no upstream inputs is cached
+  // in `out/`, so a warm checkout would keep rendering the previous tag after a
+  // release while a fresh clone renders the new one. As an Input it is
+  // re-evaluated on every run (the same shape as Mill's own `VcsVersion`).
+  def findingsVersion = Task.Input {
+    val described = os
+      .proc("git", "describe", "--tags", "--abbrev=0")
+      .call(cwd = mill.api.BuildCtx.workspaceRoot, check = false)
+    // `actions/checkout`'s default clone is shallow and tag-less, so `git
+    // describe` fails there; name the cause instead of leaking the raw
+    // subprocess exception.
+    if (described.exitCode != 0)
+      sys.error(
+        "findingsVersion: no tag reachable -- clone with fetch-depth 0 / fetch-tags"
+      )
+    described.out.trim().stripPrefix("v")
   }
 
   /** The finding table (spec 2026-09-20-diagnostic-instruction-table-design §1): rendered from FindingCatalog. */
