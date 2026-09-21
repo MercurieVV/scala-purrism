@@ -8,6 +8,11 @@ package fix
   * guards staleness.
   */
 object FindingsTsv {
+
+  /** A kind is lower-case kebab-case: `readability-budget`, `manual-resource`.
+    */
+  private val kindPattern = """^[a-z0-9]+(-[a-z0-9]+)*$""".r
+
   def render(version: String, findings: List[Finding]): String =
     (s"# purrism $version" :: findings
       .sortBy(_.code)
@@ -22,18 +27,15 @@ object FindingsTsv {
       case h :: rows if h.startsWith("# purrism ") =>
         val parsed = rows.filter(_.nonEmpty).map { r =>
           r.split("\t", -1) match {
-            case Array(code, rule, title, expl, instr, doc)
-                if code == s"$rule.${code.stripPrefix(rule + ".")}" =>
-              Right(
-                Finding(
-                  rule,
-                  code.stripPrefix(rule + "."),
-                  title,
-                  expl,
-                  instr,
-                  doc
-                )
-              )
+            case Array(code, rule, title, expl, instr, doc) =>
+              if (!code.startsWith(rule + "."))
+                Left(s"code $code does not start with $rule.")
+              else {
+                val kind = code.stripPrefix(rule + ".")
+                if (!kindPattern.matches(kind))
+                  Left(s"code $code: kind '$kind' is not kebab-case")
+                else Right(Finding(rule, kind, title, expl, instr, doc))
+              }
             case other => Left(s"bad row (${other.length} fields): $r")
           }
         }

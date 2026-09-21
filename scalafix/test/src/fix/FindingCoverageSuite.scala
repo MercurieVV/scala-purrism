@@ -49,10 +49,22 @@ final class FindingCoverageSuite extends munit.FunSuite {
       s"unfixturable codes that now have a fixture -- remove from the map: ${nowFixtured.mkString(", ")}"
     )
   }
-  test("every asserted code is catalogued") {
-    val unknown = assertedCodes.filterNot { case (c, _) =>
-      FindingCatalog.byCode.contains(c)
+  // Umbrella rules sum their children's patches, so scalafix prints the
+  // umbrella's own name as the prefix (`[TypelevelPurrism.readability-budget]`)
+  // -- see docs/MAINTENANCE.md "Finding codes". Kinds are unique across the
+  // catalog, so such an assertion is catalogued when its kind is.
+  private val umbrellaRules =
+    Set("TypelevelPurrism", "PreferTypeParameters", "PreferCatsExpressions")
+  private val kinds = FindingCatalog.all.map(_.kind).toSet
+
+  private def catalogued(code: String): Boolean =
+    FindingCatalog.byCode.contains(code) || {
+      val (rule, kind) = code.span(_ != '.')
+      umbrellaRules(rule) && kinds(kind.stripPrefix("."))
     }
+
+  test("every asserted code is catalogued") {
+    val unknown = assertedCodes.filterNot { case (c, _) => catalogued(c) }
     assert(
       unknown.isEmpty,
       s"fixtures assert codes the catalog does not know: ${unknown.mkString(", ")}"

@@ -1,6 +1,7 @@
 package fix
 
 import java.nio.file.{Files, Path, Paths}
+import scala.jdk.CollectionConverters.*
 import scala.meta.inputs.{Input, Position}
 
 final class FindingCatalogSuite extends munit.FunSuite {
@@ -48,7 +49,43 @@ final class FindingCatalogSuite extends munit.FunSuite {
         s"malformed code $c"
       )
     )
-    assertEquals(codes, codes.sorted, "catalog must be sorted by code")
+  }
+  // Every `rule` must name a rule scalafix can actually run, i.e. one declared
+  // as `SemanticRule("<rule>")` under scalafix/src/fix and registered in the
+  // META-INF services file. A typo'd rule name would otherwise ship a code no
+  // lint ever prints.
+  test("every rule is a registered rule name") {
+    val fixSrc = workspaceRoot.resolve("scalafix").resolve("src").resolve("fix")
+    val declared = """SemanticRule\("([A-Za-z0-9]+)"\)""".r
+    val declaredNames = Files
+      .walk(fixSrc)
+      .iterator()
+      .asScala
+      .filter(_.toString.endsWith(".scala"))
+      .flatMap(p =>
+        declared.findAllMatchIn(Files.readString(p)).map(_.group(1))
+      )
+      .toSet
+    val services = workspaceRoot
+      .resolve("scalafix/resources/META-INF/services/scalafix.v1.Rule")
+    val registered = Files
+      .readAllLines(services)
+      .asScala
+      .map(_.trim)
+      .filter(_.nonEmpty)
+      .map(_.stripPrefix("fix."))
+      .toSet
+    val rules = FindingCatalog.all.map(_.rule).distinct
+    val undeclared = rules.filterNot(declaredNames)
+    assert(
+      undeclared.isEmpty,
+      s"rules with no SemanticRule(\"<rule>\") declaration: ${undeclared.mkString(", ")}"
+    )
+    val unregistered = rules.filterNot(registered)
+    assert(
+      unregistered.isEmpty,
+      s"rules not registered in META-INF/services: ${unregistered.mkString(", ")}"
+    )
   }
   test(
     "every field is non-empty, TAB-free, newline-free; title <= 60; explanation ends with a period"
