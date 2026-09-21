@@ -24,7 +24,7 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - uses: coursier/setup-action@v1
+      - uses: coursier/setup-action@v3
 
       # DocDiff shells out to the literal program name "coursier" (not "cs")
       # to render docs; the setup action only guarantees a `cs` binary on PATH.
