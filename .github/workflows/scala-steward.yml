@@ -15,7 +15,7 @@ jobs:
     if: github.repository == 'MercurieVV/scala-purrism'
     steps:
       - name: Launch Scala Steward
-        uses: scala-steward-org/scala-steward-action@v2
+        uses: scala-steward-org/scala-steward-action@v2.92.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           repo-config: .scala-steward.conf
