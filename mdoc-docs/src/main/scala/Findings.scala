@@ -18,10 +18,16 @@ object Findings:
     val body = rows.map { line =>
       line.split("\t", -1) match
         case Array(code, _rule, title, explanation, instruction, doc) =>
-          s"| `$code` | $title | $explanation | $instruction | [$doc](index.md$doc) |"
+          // A literal `|` in a field would end the table cell.
+          val t = cell(title)
+          val e = cell(explanation)
+          val i = cell(instruction)
+          s"| `$code` | $t | $e | $i | [$doc](index.md$doc) |"
         case other =>
           throw new IllegalArgumentException(
             s"bad findings.tsv row (${other.length} fields): $line"
           )
     }
     (header :: divider :: body).mkString("\n")
+
+  private def cell(field: String): String = field.replace("|", "\\|")

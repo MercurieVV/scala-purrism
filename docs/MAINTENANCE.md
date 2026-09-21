@@ -11,17 +11,36 @@ harness pinned to a version — treat it like removing a public API, not a doc e
 To add a kind:
 
 1. Add a `Finding` (rule, kind, title, explanation, instruction, doc anchor) to the
-   relevant family object in `scalafix/src/fix/findings/Families.scala`.
+   relevant family object in `scalafix/src/fix/findings/` (`IdiomFindings.scala`,
+   `ArrowFindings.scala`, `OpaqueFindings.scala`, `PolymorphicFindings.scala`,
+   `CatsFunctionFindings.scala`, …). `Families.scala` only aggregates those objects
+   into `FindingCatalog.all`; a `Finding` never goes there directly.
 2. Lint with `FindingDiagnostic(finding, position, text)` at the site — `FindingCatalog`
    is the only source of `Finding`s, so the code and the message stay in sync.
-3. Add a fixture that triggers it, asserting the code with `// assert: Rule.kind`
-   (`scalafix/test/...`). If no fixture can trigger it, add the code and reason to
-   `FindingCatalog.unfixturable` instead — see below.
+3. Add a fixture that triggers it, asserting the code with `// assert: Rule.kind`.
+   Fixtures live in `scalafix/testInput/src/**` (`/* rules = [...] */` header), with
+   the expected rewrite in the matching file under `scalafix/testOutput/src/**`
+   (lint-only fixtures need no output file). If no fixture can trigger it, add the
+   code and reason to `FindingCatalog.unfixturable` instead — see below.
 4. Run `rtk mill scalafix.findings` to regenerate both checked-in TSVs from the
    catalog, and commit both files together with the code change.
 
 `mill scalafix.findingsCheck` (run in CI after `scalafix.test`) fails the build when
-either checked-in TSV is stale relative to `FindingCatalog`.
+either checked-in TSV is stale relative to `FindingCatalog`. The header version is
+the last reachable release tag (`git describe --tags --abbrev=0`), so CI checks out
+with `fetch-depth: 0` / `fetch-tags: true`; a shallow, tag-less clone fails with
+`findingsVersion: no tag reachable`.
+
+### Umbrella rules re-prefix the code
+
+Under an umbrella rule the prefix is the umbrella's name
+(`[TypelevelPurrism.readability-budget]`, not `[PreferArrow.readability-budget]`),
+because the umbrella's `fix` sums its children's patches and scalafix attributes
+every lint in the sum to the rule that returned it. The same holds for
+`PreferTypeParameters` and `PreferCatsExpressions`. Kinds are unique across the
+catalog, so join on the kind, never on the full `Rule.kind`. A fixture that runs an
+umbrella asserts the umbrella-prefixed code (`ArrowUmbrellaFindingPrefix.scala`);
+`FindingCoverageSuite` accepts such an assertion when its kind is catalogued.
 
 ### The `unfixturable` allowlist
 

@@ -343,7 +343,8 @@ reason `DeclineReason.PublicBoundary(name)`. A def that is not widenable *and* w
 have been declined for another reason produces the other reason's warning only — the
 visibility gate is evaluated last, so warnings never double up.
 
-Severity is `Warning`, not `Error`, for the same reason `ArrowBudgetDiagnostic` is:
+Severity is `Warning`, not `Error`, for the same reason `PreferArrow`'s
+`FindingDiagnostic` (`PreferArrow.readability-budget`) is:
 scalafix withholds every patch in a file that reports a lint error, which would
 silently disable the rule's other rewrites in that file.
 
@@ -809,14 +810,11 @@ object PreferPolymorphicTypeclassesConfig {
     }
 }
 
-final case class HKTDeclineDiagnostic(
-    override val position: scala.meta.inputs.Position,
-    reason: DeclineReason
-) extends Diagnostic {
-  override def message: String = reason.message
-  override def severity: scalafix.lint.LintSeverity =
-    scalafix.lint.LintSeverity.Warning
-}
+// Declines are reported through the shared `FindingDiagnostic` (see
+// `FindingCatalog`), keyed by the catalogued code -- e.g.
+// `PreferPolymorphicTypeclasses.public-boundary` for `DeclineReason.PublicBoundary`:
+//   Patch.lint(FindingDiagnostic(Findings.PublicBoundary, position, reason.message))
+// Severity is `Warning`; the code is the scalafix lint id.
 
 final class PreferPolymorphicTypeclasses(config: PreferPolymorphicTypeclassesConfig)
     extends SemanticRule("PreferPolymorphicTypeclasses") {
