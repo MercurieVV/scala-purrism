@@ -117,7 +117,7 @@ object PolymorphicFindings {
 
     val ExplicitTypeArguments: Finding = Finding(
       Rule,
-      "explicit-type-arguments",
+      "constructor-explicit-type-arguments",
       "Def called with explicit type arguments",
       "A call site names this def's type arguments and inference cannot replace them, so the def cannot take another type parameter.",
       "Let the call sites infer the type arguments, or leave the signature concrete; then re-run `<module>.fix`.",
@@ -135,7 +135,7 @@ object PolymorphicFindings {
 
     val HandedOverAsValue: Finding = Finding(
       Rule,
-      "handed-over-as-value",
+      "constructor-handed-over-as-value",
       "Def handed over as a value",
       "The def is referenced as a value rather than called, and a polymorphic method has no monomorphic function type, so widening it would stop that reference compiling.",
       "Call the def at the use site instead of passing it as a value, or leave the signature concrete.",
@@ -144,7 +144,7 @@ object PolymorphicFindings {
 
     val RewriteOff: Finding = Finding(
       Rule,
-      "rewrite-off",
+      "constructor-rewrite-off",
       "Constructor abstractable but rewriting is off",
       "The type constructor is abstractable over the reported constraints, but `PreferPolymorphicTypeclasses.rewrite = false` leaves the signature unchanged.",
       "Widen the signature by hand to `G[_]` with the reported constraints, or set `rewrite = true` and re-run `<module>.fix`.",
@@ -153,7 +153,7 @@ object PolymorphicFindings {
 
     val NameConflict: Finding = Finding(
       Rule,
-      "name-conflict",
+      "constructor-name-conflict",
       "No free type parameter name",
       "Every candidate name for the new type parameter (`G`, `H`, `K`) is already taken in the definition, so the rule has nothing to introduce.",
       "Rename one of the existing type parameters to free a candidate name, then re-run `<module>.fix`.",
@@ -180,7 +180,7 @@ object PolymorphicFindings {
 
     val OrderOrIndexSpecific: Finding = Finding(
       Rule,
-      "order-or-index-specific",
+      "constructor-order-or-index-specific",
       "Constructor used by position",
       "The body reaches an element by position or order -- `xs(i)`, `.indices`, `.head`, `.sorted` -- which expresses random access, and Cats has no typeclass for that.",
       "Express the body through `Foldable`/`Traverse` operations (`foldLeft`, `get`, `traverse`) or keep the concrete type.",

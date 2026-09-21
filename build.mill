@@ -291,6 +291,10 @@ object scalafix
       // [test-dependencies-end]
     )
 
+    def purrismTestInput: Task[String] = Task {
+      (mill.api.BuildCtx.workspaceRoot / "scalafix" / "testInput" / "src").toString
+    }
+
     def testkitProperties = Task {
       val sep = java.io.File.pathSeparator
       val lines = Seq(
@@ -308,7 +312,8 @@ object scalafix
         "sourceroot" -> mill.api.BuildCtx.workspaceRoot.toString,
         "scalaVersion" -> Versions.scala3,
         "catsIndexGenerated" -> catsIndexGenerated().path.toString,
-        "scalacOptions" -> testInput.scalacOptions().mkString("|")
+        "scalacOptions" -> testInput.scalacOptions().mkString("|"),
+        "purrism.testInput" -> purrismTestInput()
       ).map { case (key, value) => s"$key=$value" }
       os.write(
         Task.dest / "scalafix-testkit.properties",
@@ -318,6 +323,12 @@ object scalafix
     }
 
     def resources = Task { super.resources() ++ testkitProperties() }
+
+    // FindingCoverageSuite walks the fixture tree via a plain java.nio.file
+    // path, not scalafix-testkit's TestkitProperties loader, so it needs the
+    // input root as an actual JVM system property (forked tests do not run
+    // with the workspace root as their working directory).
+    def forkArgs = Task { Seq(s"-Dpurrism.testInput=${purrismTestInput()}") }
   }
 }
 
