@@ -9,9 +9,6 @@ object SlotId:
 final case class Slot(id: SlotId, label: String)
 
 object Slots {
-  def choose(flag: Boolean, source: Slot, other: Slot): Slot = {
-    val chosen.value: String = 
-      if (flag) source.id else other.label
-    Slot(chosen, "picked")
-  }
+  def choose(flag: Boolean, source: Slot, other: Slot): String = 
+    if (flag) source.id.value else other.label
 }

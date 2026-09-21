@@ -313,6 +313,10 @@ object scalafix
         "scalaVersion" -> Versions.scala3,
         "catsIndexGenerated" -> catsIndexGenerated().path.toString,
         "scalacOptions" -> testInput.scalacOptions().mkString("|"),
+        // Kept for humans grepping this file; scalafix-testkit's own
+        // `TestkitProperties.loadFromResources()` only reads the keys above --
+        // it never touches this one. The live value is the `-Dpurrism.testInput`
+        // fork arg below.
         "purrism.testInput" -> purrismTestInput()
       ).map { case (key, value) => s"$key=$value" }
       os.write(
