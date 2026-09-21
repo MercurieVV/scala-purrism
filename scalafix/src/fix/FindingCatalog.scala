@@ -25,6 +25,20 @@ object FindingCatalog {
   val byCode: Map[String, Finding] = all.map(f => f.code -> f).toMap
   def get(code: String): Option[Finding] = byCode.get(code)
 
+  /** Codes no fixture can trigger, with the reason. The coverage suite skips
+    * these — and asserts each one is still catalogued and still has NO fixture,
+    * so the list cannot rot. Removing an entry is the way to re-require a
+    * fixture.
+    */
+  val unfixturable: Map[String, String] = Map(
+    "PreferCatsFunctions.private-cats-match" ->
+      "the index generator only emits entries with a render template, so the private-only branch is unreachable",
+    "PreferCatsFunctions.ambiguous-cats-match" ->
+      "the only tie-eligible pair (reduceMapA/reduceMapM) has a curried body decideByPattern cannot bucket",
+    "PropagateOpaqueType.stale-semanticdb" ->
+      "reachable only with a stale build cache; a single-pass test run always recompiles testInput first"
+  )
+
   /** `<text>. <explanation>` — the human reads the finding first; scalafix adds
     * `[rule.kind]` itself.
     */

@@ -26,10 +26,27 @@ final class FindingCoverageSuite extends munit.FunSuite {
 
   test("every catalogued code is asserted by at least one fixture") {
     val asserted = assertedCodes.keySet
-    val dead = FindingCatalog.all.map(_.code).filterNot(asserted)
+    val dead = FindingCatalog.all
+      .map(_.code)
+      .filterNot(asserted)
+      .filterNot(FindingCatalog.unfixturable.keySet)
     assert(
       dead.isEmpty,
       s"catalogued but never emitted in a fixture: ${dead.mkString(", ")}"
+    )
+  }
+  test("every unfixturable code is catalogued and has no fixture") {
+    val asserted = assertedCodes.keySet
+    val notCatalogued =
+      FindingCatalog.unfixturable.keySet.diff(FindingCatalog.byCode.keySet)
+    assert(
+      notCatalogued.isEmpty,
+      s"unfixturable lists codes not in the catalog: ${notCatalogued.mkString(", ")}"
+    )
+    val nowFixtured = FindingCatalog.unfixturable.keySet.intersect(asserted)
+    assert(
+      nowFixtured.isEmpty,
+      s"unfixturable codes that now have a fixture -- remove from the map: ${nowFixtured.mkString(", ")}"
     )
   }
   test("every asserted code is catalogued") {

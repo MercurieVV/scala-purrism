@@ -135,4 +135,17 @@ final class FindingCatalogSuite extends munit.FunSuite {
       s"doc anchors with no matching docs/index.md heading: ${missing.mkString(", ")}"
     )
   }
+
+  test("unfixturable reasons are non-empty and keys are catalogued codes") {
+    FindingCatalog.unfixturable.foreach { case (code, reason) =>
+      assert(
+        reason.trim.nonEmpty,
+        s"$code: unfixturable reason must not be empty"
+      )
+      assert(
+        FindingCatalog.byCode.contains(code),
+        s"$code: listed in unfixturable but not in the catalog"
+      )
+    }
+  }
 }
