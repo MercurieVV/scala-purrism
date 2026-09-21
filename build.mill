@@ -281,6 +281,58 @@ object scalafix
     }
   }
 
+  // `publishVersion()` (VcsVersionModule) embeds the commit count and short
+  // hash whenever HEAD is ahead of its tag (e.g. "0.9.0-12-213c09"), which
+  // would churn the checked-in findings.tsv on every commit in a worktree.
+  // The header instead names the last release tag -- a real release-style
+  // version, which is what the harness in skreeep2 compares it against.
+  def findingsVersion = Task {
+    os.proc("git", "describe", "--tags", "--abbrev=0")
+      .call(cwd = mill.api.BuildCtx.workspaceRoot)
+      .out
+      .trim()
+      .stripPrefix("v")
+  }
+
+  /** The finding table (spec 2026-09-20-diagnostic-instruction-table-design §1): rendered from FindingCatalog. */
+  def findingsTsv = Task {
+    val out = Task.dest / "findings.tsv"
+    val cp = runClasspath().map(_.path)
+    os.proc(
+      "java",
+      "-cp",
+      cp.mkString(java.io.File.pathSeparator),
+      "fix.FindingsTsvMain",
+      findingsVersion()
+    ).call(stdout = out)
+    PathRef(out)
+  }
+
+  /** Regenerate the checked-in `findings.tsv` copies in place (docs, jar resource). */
+  def findings() = Task.Command {
+    val src = findingsTsv().path
+    os.copy.over(src, mill.api.BuildCtx.workspaceRoot / "docs" / "findings.tsv")
+    os.copy.over(
+      src,
+      mill.api.BuildCtx.workspaceRoot / "scalafix" / "resources" / "purrism" / "findings.tsv"
+    )
+  }
+
+  /** Fail when either committed `findings.tsv` differs from the current rendering. */
+  def findingsCheck() = Task.Command {
+    val generated = os.read(findingsTsv().path)
+    Seq(
+      os.rel / "docs" / "findings.tsv",
+      os.rel / "scalafix" / "resources" / "purrism" / "findings.tsv"
+    ).foreach { p =>
+      val f = mill.api.BuildCtx.workspaceRoot / p
+      require(
+        os.exists(f) && os.read(f) == generated,
+        s"$p is stale — run ./mill scalafix.findings"
+      )
+    }
+  }
+
   object test extends ScalaTests {
     def testFramework = "munit.Framework"
     def mvnDeps = Seq(
