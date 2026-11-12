@@ -238,4 +238,31 @@ final class BoundSolverSuite extends ScalaCheckSuite {
       }
     }
   }
+
+  // The property above passes on any non-Replace decision. Enumerating every
+  // unary bound against each single ancestor proves the Replace branch is
+  // reached often, and checks the same law on every one of those cases.
+  test("Replace is reached and lawful for every bound and single ancestor") {
+    val cases = for {
+      b <- index.publicTypeclasses.filter(_.typeParamCount == 1).toList
+      a <- index.typeclasses.keys.filter(index.isAncestor(_, b.symbol)).toList
+    } yield (b.symbol, Set(a))
+    val replaced = cases.collect { case (b, r) =>
+      BoundSolver.solve(b, r, index) match {
+        case Decision.Replace(t) => Some((b, r, t))
+        case _                   => None
+      }
+    }.flatten
+    assert(replaced.size >= 20, clue(replaced.size))
+    replaced.foreach { case (b, r, t) =>
+      assert(
+        t.symbol == b || index.isAncestor(t.symbol, b),
+        clue((b, r, t))
+      )
+      assert(
+        r.forall(x => x == t.symbol || index.isAncestor(x, t.symbol)),
+        clue((b, r, t))
+      )
+    }
+  }
 }

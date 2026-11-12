@@ -176,9 +176,10 @@ final class RequirementsSuite extends FunSuite {
   }
 
   test("generator over a local def keeps the def's own evidence") {
-    val required = collect("localGenerator")
-    assert(required.forall(_.contains(Sync)), clue(required))
-    assert(required.forall(_.contains(s("FlatMap"))), clue(required))
+    assertEquals(
+      collect("localGenerator"),
+      Some(Set(Sync, s("FlatMap"), s("Functor")))
+    )
   }
 
   test("named evidence passed to a method keeps the bound") {
@@ -199,6 +200,20 @@ final class RequirementsSuite extends FunSuite {
 
   test("a Functor[F] derived from the evidence and passed on keeps the bound") {
     assertEquals(collect("derivedPassed"), None)
+  }
+
+  test("a summoned Functor[F] passed on keeps the bound") {
+    assertEquals(collect("summonedPassed"), None)
+  }
+
+  // No synthetic hands `F`'s evidence to anything here: only the value-type
+  // check sees that `functor: Functor[F]` leaves the body as a plain argument.
+  test("a Functor[F] value passed as a plain argument is unexplained") {
+    assertEquals(collect("valuePassed"), None)
+  }
+
+  test("a context-function value applied with evidence keeps its own need") {
+    assertEquals(collect("contextual"), Some(Set(Sync, s("Functor"))))
   }
 
   test("isMethod distinguishes methods from values") {

@@ -100,6 +100,23 @@ private object RequirementsFixture {
     useFunctor(fa)(derived)
   }
 
+  def summonedPassed[F[_]: Sync](fa: F[Int]): F[Int] = {
+    val summoned: Functor[F] = summon[Functor[F]]
+    useFunctor(fa)(summoned)
+  }
+
+  def valuePassed[F[_]: Sync](fa: F[Int], functor: Functor[F]): F[Int] =
+    useFunctor(fa)(functor)
+
+  def contextual[F[_]: Sync](fa: F[Int]): F[Int] = {
+    val k: Sync[F] ?=> F[Int] = fa
+    k.map(_ + 1)
+  }
+
+  def ordered[A: Ordering](xs: List[A]): List[A] = xs.sorted
+
+  def tagged[A: scala.reflect.ClassTag](xs: List[A]): Array[A] = xs.toArray
+
   final class Shadow[F[_]: Sync](outer: F[Int]) {
     def outerMap: F[Int] = outer.map(_ + 1)
 

@@ -2,6 +2,7 @@ package fix.weakening
 
 import java.nio.file.Path
 
+import scala.annotation.tailrec
 import scala.meta.*
 
 import fix.FindingDiagnostic
@@ -18,12 +19,26 @@ import scalafix.v1.*
   * target's import is added; the original's import is removed only when no
   * other reference to it is left in the file. An ambiguous choice keeps the
   * bound and reports `TypeclassWeakening.ambiguous-weakening`.
+  *
+  * Whenever the rewrite could produce code that no longer compiles, the bound
+  * is kept instead: a type parameter holding more than one evidence (see
+  * [[Evidences.several]]), a def one of whose call sites in this file would
+  * find two candidate instances for the weakened typeclass (see
+  * [[Evidences.ambiguousAtCallSite]]), a target whose simple name already means
+  * something else in this file, and an owner overlapping a tree another rule
+  * rewrites in the same run (`rewritten`).
   */
-object Weakening {
+private[fix] object Weakening {
 
+  /** @param rewritten
+    *   trees other rules of the same run replace wholesale (the umbrella's
+    *   `PreferKleisli` and `PreferArrow` rewrites): a bound inside or around
+    *   one is kept, since both patches would edit the same tokens.
+    */
   def patch(
       classpath: List[Path],
-      config: TypeclassWeakeningConfig
+      config: TypeclassWeakeningConfig,
+      rewritten: List[Tree] = Nil
   )(using doc: SemanticDocument): Patch = {
     val seeds = boundSymbols(doc.tree)
     if (seeds.isEmpty) Patch.empty
@@ -35,7 +50,7 @@ object Weakening {
         case Left(error) =>
           debug(config, s"index unavailable ($error); every bound is kept")
           Patch.empty
-        case Right(index) => patchWith(index)
+        case Right(index) => patchWith(index, rewritten)
       }
   }
 
@@ -62,7 +77,13 @@ object Weakening {
         )
     }
 
-  private def boundSymbols(tree: Tree)(using SemanticDocument): Set[Symbol] =
+  /** The bounds of unary higher-kinded type parameters only -- the same filter
+    * as [[Requirements.sites]]: `A: Ordering` or `A: ClassTag` can never be a
+    * site, so scanning their jars would be wasted.
+    */
+  private[weakening] def boundSymbols(tree: Tree)(using
+      SemanticDocument
+  ): Set[Symbol] =
     tree
       .collect {
         case defn: Defn.Def =>
@@ -71,6 +92,7 @@ object Weakening {
         case tr: Defn.Trait  => tr.tparamClause.values
       }
       .flatten
+      .filter(_.tparamClause.values.size == 1)
       .flatMap(_.bounds.context)
       .map(unaliased(_).symbol)
       .filterNot(_.isNone)
@@ -83,27 +105,16 @@ object Weakening {
     }
 
   private def patchWith(
-      index: CatsIndex
+      index: CatsIndex,
+      rewritten: List[Tree]
   )(using doc: SemanticDocument): Patch = {
-    val sites = Requirements.sites(doc.tree, index).filterNot(overrides)
-    val helperSites = localHelperSites(sites)
-    val memo = helperSites.keys.toList
-      .sortBy(_.value)
-      .foldLeft(Map.empty[Symbol, Set[Symbol]]) { (memo, method) =>
-        memo.updated(
-          method,
-          helperBounds(method, helperSites, index, Set.empty, memo)
-        )
-      }
-    val decisions = sites.map { site =>
-      site -> decide(
-        site,
-        helperSites,
-        index,
-        ownerSymbol(site.owner).toSet,
-        memo
-      )
-    }
+    val rewrittenSpans = rewritten.map(_.pos)
+    val candidates = Requirements
+      .sites(doc.tree, index)
+      .filterNot(overrides)
+      .filterNot(site => rewrittenSpans.exists(overlaps(site.owner.pos, _)))
+      .filterNot(Evidences.several)
+    val decisions = settle(candidates, index)
     val replaced = decisions.collect { case (site, Decision.Replace(target)) =>
       site -> target
     }
@@ -122,6 +133,105 @@ object Weakening {
         (if (imported.contains(target.importPath)) Patch.empty
          else addImport(target))
     }.asPatch + lints.asPatch + removedImports(replaced)
+  }
+
+  private def overlaps(a: Position, b: Position): Boolean =
+    a.start < b.end && b.start < a.end
+
+  /** Decides `sites`, then drops every owner whose replacement would not
+    * compile (see [[vetoed]]) and decides again: dropping an owner turns it
+    * from a local helper back into a plain signature, which can change its
+    * callers' needs. Each round drops at least one owner, so it terminates.
+    */
+  @tailrec
+  private def settle(
+      sites: List[BoundSite],
+      index: CatsIndex
+  )(using SemanticDocument): List[(BoundSite, Decision)] = {
+    val decisions = decideAll(sites, index)
+    val dropped = decisions.collect {
+      case (site, Decision.Replace(target)) if vetoed(site, target, index) =>
+        site.owner
+    }
+    if (dropped.isEmpty) decisions
+    else
+      settle(
+        sites.filterNot(site => dropped.exists(_ eq site.owner)),
+        index
+      )
+  }
+
+  private def vetoed(site: BoundSite, target: Rendered, index: CatsIndex)(using
+      SemanticDocument
+  ): Boolean =
+    nameClash(target, index) ||
+      Evidences.ambiguousAtCallSite(
+        callees(site.owner),
+        target.symbol,
+        index
+      )
+
+  /** The symbols a call to `owner` resolves to: the def itself, or a class and
+    * its primary constructor.
+    */
+  private def callees(owner: Tree)(using SemanticDocument): Set[Symbol] =
+    (owner match {
+      case cls: Defn.Class => Set(cls.name.symbol, cls.ctor.name.symbol)
+      case other           => ownerSymbol(other).toSet
+    }).filterNot(_.isNone)
+
+  /** `target.renderName` already names something else in this file -- a local
+    * `trait Functor`, another library's `Functor` imported explicitly -- so the
+    * emitted bound would not mean the target. A name the document cannot
+    * resolve counts as a clash, except an importee whose path is the target's.
+    */
+  private def nameClash(target: Rendered, index: CatsIndex)(using
+      doc: SemanticDocument
+  ): Boolean =
+    doc.tree
+      .collect {
+        case name: Name if name.value == target.renderName => name
+      }
+      .exists { name =>
+        val symbol = name.symbol
+        val same = !symbol.isNone && (symbol == target.symbol ||
+          stem(symbol) == stem(target.symbol) ||
+          index.aliasTarget(symbol).exists(_.target == target.symbol))
+        !same && !importeePath(name).contains(target.importPath)
+      }
+
+  /** `a.b.C` for the `C` of `import a.b.C` (or of `a.b.{C => D}`). */
+  private def importeePath(name: Name): Option[String] =
+    name.parent.flatMap {
+      case importee @ Importee.Name(imported) if imported eq name =>
+        importee.parent.collect { case importer: Importer =>
+          s"${importer.ref.syntax}.${imported.value}"
+        }
+      case _ => None
+    }
+
+  private def decideAll(
+      sites: List[BoundSite],
+      index: CatsIndex
+  )(using SemanticDocument): List[(BoundSite, Decision)] = {
+    val helperSites = localHelperSites(sites)
+    val memo = helperSites.keys.toList
+      .sortBy(_.value)
+      .foldLeft(Map.empty[Symbol, Set[Symbol]]) { (memo, method) =>
+        memo.updated(
+          method,
+          helperBounds(method, helperSites, index, Set.empty, memo)
+        )
+      }
+    sites.map { site =>
+      site -> decide(
+        site,
+        helperSites,
+        index,
+        ownerSymbol(site.owner).toSet,
+        memo
+      )
+    }
   }
 
   /** `a.b.C` for every `import a.b.C` / `import a.b.{C, D}` in the file. */
@@ -246,15 +356,21 @@ object Weakening {
     }
   }
 
-  /** The definition whose template directly holds `defn`; `None` for a local
-    * def, whose parent is a block or another def's body.
+  /** The definition whose template directly holds `defn`, looking through an
+    * `extension` group (whose methods are members like any other); `None` for a
+    * local def, whose parent is a block or another def's body.
     */
   private def enclosingTemplateOwner(defn: Defn.Def): Option[Tree] = {
     def up(tree: Tree): Option[Tree] =
       tree.parent.flatMap {
-        case template: Template  => template.parent
-        case body: Template.Body => up(body)
-        case _                   => None
+        case template: Template         => template.parent
+        case body: Template.Body        => up(body)
+        case group: Defn.ExtensionGroup => up(group)
+        case block: Term.Block =>
+          block.parent
+            .collect { case group: Defn.ExtensionGroup => group }
+            .flatMap(up)
+        case _ => None
       }
     up(defn)
   }

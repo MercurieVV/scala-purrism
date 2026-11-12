@@ -12,7 +12,7 @@ import scalafix.v1.*
   * `MonadError`), in which case `boundFixedArgs` holds the alias's fixed
   * arguments (`java/lang/Throwable#`); `Nil` otherwise.
   */
-final case class BoundSite(
+private[fix] final case class BoundSite(
     owner: Tree,
     tparam: Type.Param,
     bound: Type,
@@ -50,7 +50,7 @@ final case class BoundSite(
   * Typeclasses outside the bound's ancestry constrain another type
   * (`xs.traverse`'s `Traverse` constrains `List`) and are ignored.
   */
-object Requirements {
+private[fix] object Requirements {
 
   private val SyntaxConversion = "to([A-Za-z]+)Ops".r
 
@@ -192,15 +192,28 @@ object Requirements {
     * Decided from the symbol's SemanticDB signature when the document has it
     * (local defs are `localN`, with no `).` suffix); the suffix is only the
     * fallback for TASTy-only globals without `info`.
+    *
+    * A value of context-function type (`val k: Sync[F] ?=> F[Int]`) takes
+    * evidence when applied exactly like a method, so it counts as one: the
+    * evidence recorded on its span may be its own.
     */
   def isMethod(symbol: Symbol)(using SemanticDocument): Boolean =
     symbol.info match {
       case Some(info) =>
         info.signature match {
-          case MethodSignature(_, parameterLists, _) => parameterLists.nonEmpty
-          case _                                     => false
+          case MethodSignature(_, parameterLists, result) =>
+            parameterLists.nonEmpty || isContextFunction(result)
+          case ValueSignature(tpe) => isContextFunction(tpe)
+          case _                   => false
         }
       case None => symbol.value.endsWith(").")
+    }
+
+  private def isContextFunction(tpe: SemanticType): Boolean =
+    tpe match {
+      case TypeRef(_, function, _) =>
+        function.value.startsWith("scala/ContextFunction")
+      case _ => false
     }
 
   /** Nested definitions that declare a type parameter of the same name: the
@@ -290,19 +303,36 @@ object Requirements {
 
   /** Typeclass evidence a local method's signature declares. `info` is absent
     * for TASTy-only library symbols, which the `evidence` table covers.
+    *
+    * A context-function value (`Sync[F] ?=> F[Int]`) declares the evidence its
+    * parameter types name.
     */
   private def signatureEvidence(function: Symbol, index: CatsIndex)(using
       SemanticDocument
   ): List[Symbol] =
     function.info.toList.flatMap(_.signature match {
-      case MethodSignature(_, parameterLists, _) =>
+      case MethodSignature(_, parameterLists, result) =>
         parameterLists.flatten.flatMap(_.signature match {
           case ValueSignature(TypeRef(_, typeclass, _ :: _)) =>
             normalise(typeclass, index).toList
           case _ => Nil
-        })
-      case _ => Nil
+        }) ++ contextFunctionEvidence(result, index)
+      case ValueSignature(tpe) => contextFunctionEvidence(tpe, index)
+      case _                   => Nil
     })
+
+  private def contextFunctionEvidence(
+      tpe: SemanticType,
+      index: CatsIndex
+  ): List[Symbol] =
+    tpe match {
+      case TypeRef(_, _, arguments) if isContextFunction(tpe) =>
+        arguments.dropRight(1).flatMap {
+          case TypeRef(_, typeclass, _ :: _) => normalise(typeclass, index)
+          case _                             => None
+        }
+      case _ => Nil
+    }
 
   /** Implicit conversions applied to source expressions, keyed by the span of
     * the converted expression.
