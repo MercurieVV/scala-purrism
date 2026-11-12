@@ -75,7 +75,7 @@ object scalafix
   //
   // The next release after this one is the honest minor bump for all three,
   // the same way 0.7.0 was for the flow-graph move above.
-  def mimaPreviousVersions = Seq()
+  def mimaPreviousVersions = Seq("0.9.1")
 
   // Lint diagnostics are not API: the ad-hoc *Diagnostic case classes (and
   // their companions, hence the trailing `*`) were folded into
