@@ -125,6 +125,50 @@ final class BoundSolverSuite extends ScalaCheckSuite {
     )
   }
 
+  // Seeding the re-export `cats/effect/package.Sync#` scans cats-effect too,
+  // whose package object re-exports the kernel aliases: `MonadCancelThrow`
+  // then has two rows naming the same alias.
+  private lazy val reexportIndex: CatsIndex =
+    RuntimeIndex
+      .load(
+        classpath,
+        Set(Sync, Symbol("cats/effect/package.Sync#")),
+        CacheConfig(
+          Some(Files.createTempDirectory("bound-solver-reexport")),
+          false
+        )
+      )
+      .fold(fail(_), identity)
+
+  test("re-exported aliases render once, through the shortest import path") {
+    val monadCancel = Symbol("cats/effect/kernel/MonadCancel#")
+    assert(reexportIndex.aliasesOf(monadCancel).size > 1)
+    val t = replaced(BoundSolver.solve(Sync, Set(monadCancel), reexportIndex))
+    assertEquals(t.map(_.renderName), Some("MonadCancelThrow"))
+    assertEquals(t.map(_.importPath), Some("cats.effect.MonadCancelThrow"))
+  }
+
+  test("distinct aliases of one binary typeclass leave it unrenderable") {
+    val distinct = new CatsIndex(
+      Map(
+        tc("A", Nil, 0, binary = true),
+        tc("E", List("A"), 1)
+      ),
+      Map.empty,
+      Map.empty
+    ).withTables(
+      Iterator.empty,
+      Iterator(
+        "x/package.AThrow#\tAThrow\tx.AThrow\tcats/A#\tjava/lang/Throwable#",
+        "x/package.AString#\tAString\tx.AString\tcats/A#\tjava/lang/String#"
+      )
+    ).fold(fail(_), identity)
+    assertEquals(
+      BoundSolver.solve(s("E"), Set(s("A")), distinct),
+      Decision.Keep
+    )
+  }
+
   test("Keep cases") {
     assertEquals(BoundSolver.solve(Sync, Set.empty, index), Decision.Keep)
     assertEquals(BoundSolver.solve(Sync, Set(Sync), index), Decision.Keep)

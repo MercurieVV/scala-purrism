@@ -10,5 +10,6 @@ object Families {
       ArrowFindings.findings ++
       CatsFunctionFindings.findings ++
       PolymorphicFindings.findings ++
-      OpaqueFindings.findings
+      OpaqueFindings.findings ++
+      WeakeningFindings.findings
 }

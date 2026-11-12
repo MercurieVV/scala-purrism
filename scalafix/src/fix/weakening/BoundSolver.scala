@@ -74,6 +74,11 @@ object BoundSolver {
 
   private def isBinary(tc: CatsTypeclass): Boolean = tc.typeParamCount > 1
 
+  /** A binary typeclass renders through its alias. Re-exports of one alias
+    * (`cats.effect.MonadCancelThrow` and `cats.effect.kernel.MonadCancelThrow`)
+    * share name and fixed arguments and count as one, imported through the
+    * shortest path; genuinely different aliases leave it unrenderable.
+    */
   private def render(
       tc: CatsTypeclass,
       index: CatsIndex,
@@ -81,11 +86,17 @@ object BoundSolver {
   ): Option[Rendered] =
     if (!isBinary(tc))
       Some(Rendered(tc.symbol, tc.renderName, tc.importPath))
-    else
-      index.aliasesOf(tc.symbol) match {
-        case alias :: Nil
-            if boundFixedArgs.isEmpty || alias.fixedArgs == boundFixedArgs =>
-          Some(Rendered(tc.symbol, alias.renderName, alias.importPath))
+    else {
+      val aliases = index.aliasesOf(tc.symbol)
+      aliases.map(alias => (alias.renderName, alias.fixedArgs)).distinct match {
+        case (renderName, fixedArgs) :: Nil
+            if boundFixedArgs.isEmpty || fixedArgs == boundFixedArgs =>
+          aliases
+            .map(_.importPath)
+            .sortBy(path => (path.length, path))
+            .headOption
+            .map(Rendered(tc.symbol, renderName, _))
         case _ => None
       }
+    }
 }
