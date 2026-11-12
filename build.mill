@@ -97,7 +97,13 @@ object scalafix
     ProblemFilter.exclude[MissingClassProblem]("fix.HKTDeclineDiagnostic*"),
     ProblemFilter
       .exclude[MissingClassProblem]("fix.DeclineHKTAbstractionDiagnostic*"),
-    ProblemFilter.exclude[MissingClassProblem]("fix.MergePointDiagnostic*")
+    ProblemFilter.exclude[MissingClassProblem]("fix.MergePointDiagnostic*"),
+    // `AppliedCallee` belonged to the name-based weakening gate inside
+    // `private[fix] object TypelevelPurrism`, removed when TypeclassWeakening
+    // moved to `fix.weakening`. `private[fix]` is public in bytecode, so MiMa
+    // sees it, but no consumer outside `fix` could ever name it.
+    ProblemFilter
+      .exclude[MissingClassProblem]("fix.TypelevelPurrism$AppliedCallee*")
   )
 
   def mimaPreviousArtifacts = Task {
@@ -135,7 +141,8 @@ object scalafix
     mvn"ch.epfl.scala:scalafix-rules_${Versions.scala3}:${Versions.scalafix}",
     mvn"io.github.mercurievv::scalasemantic-analysis:${Versions.scalaSemantic}",
     mvn"org.typelevel::cats-core:${Versions.catsCore}",
-    mvn"org.typelevel::cats-effect:${Versions.catsEffect}"
+    mvn"org.typelevel::cats-effect:${Versions.catsEffect}",
+    mvn"org.scala-lang:scala3-tasty-inspector_3:${Versions.scala3}"
     // [dependencies-end]
   )
 
@@ -196,7 +203,6 @@ object scalafix
     def scalaVersion = Versions.scala3
     def moduleDeps = Seq(scalafix)
     def mvnDeps = Seq(
-      mvn"org.scala-lang:scala3-tasty-inspector_3:${Versions.scala3}",
       mvn"org.typelevel::scalac-compat-annotation:0.1.4"
     )
   }
@@ -266,7 +272,9 @@ object scalafix
       "typeclasses.tsv",
       "capabilities.tsv",
       "syntax.tsv",
-      "gaps.tsv"
+      "gaps.tsv",
+      "evidence.tsv",
+      "aliases.tsv"
     ).foreach { fileName =>
       val expected = checkedIn / fileName
       val actual = generated / fileName
@@ -352,6 +360,10 @@ object scalafix
       mvn"org.scalameta::munit:${Versions.munit}",
       mvn"org.scalameta::munit-scalacheck:${Versions.munitScalaCheck}"
       // [test-dependencies-end]
+    ) ++ Seq(
+      // cats-core TASTy refers to this annotation; TypeclassInspectorSuite
+      // reads that TASTy and needs the annotation on its classpath.
+      mvn"org.typelevel::scalac-compat-annotation:0.1.4"
     )
 
     def purrismTestInput: Task[String] = Task {

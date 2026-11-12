@@ -2,6 +2,8 @@ package fix
 
 import scala.meta._
 
+import fix.weakening.TypeclassWeakeningConfig
+import fix.weakening.Weakening
 import metaconfig.Configured
 import scalafix.v1._
 
@@ -16,8 +18,26 @@ final class TypelevelPurrism(
     preferArrow: PreferArrowConfig,
     preferHKT: PreferHKTConfig,
     classpath: List[java.nio.file.Path],
-    typeParameters: PreferTypeParameters
+    typeParameters: PreferTypeParameters,
+    weakening: TypeclassWeakeningConfig
 ) extends SemanticRule("TypelevelPurrism") {
+
+  /** The shape before `TypeclassWeakening` took configuration. Retained because
+    * this constructor is published.
+    */
+  def this(
+      preferArrow: PreferArrowConfig,
+      preferHKT: PreferHKTConfig,
+      classpath: List[java.nio.file.Path],
+      typeParameters: PreferTypeParameters
+  ) =
+    this(
+      preferArrow,
+      preferHKT,
+      classpath,
+      typeParameters,
+      TypeclassWeakeningConfig.default
+    )
 
   /** The shape before `PreferTypeParameters` joined: the widening member was
     * `PreferPolymorphicTypeclasses` alone, configured through
@@ -49,93 +69,113 @@ final class TypelevelPurrism(
       // by name -- `PreferPolymorphicCollections.crossFile` and the rest reach it
       // here too.
       .product(PreferTypeParameters.from(config))
+      .product(
+        config.conf.getOrElse("TypeclassWeakening")(
+          TypeclassWeakeningConfig.default
+        )
+      )
       // The classpath carries the SemanticDB payloads `PreferArrow` needs to
       // recognise a Kleisli declared in another file; dropping it here would
-      // silently make the umbrella weaker than the rule run on its own.
-      .map { case ((preferArrow, preferHKT), typeParameters) =>
+      // silently make the umbrella weaker than the rule run on its own. The
+      // same classpath is where `TypeclassWeakening` reads TASTy from.
+      .map { case (((preferArrow, preferHKT), typeParameters), weakening) =>
         new TypelevelPurrism(
           preferArrow,
           preferHKT,
           config.scalacClasspath.map(_.toNIO),
-          typeParameters
+          typeParameters,
+          weakening
         )
       }
 
-  override def fix(implicit doc: SemanticDocument): Patch =
-    new TypeclassWeakening().fix + new PreferKleisli().fix +
-      new PreferArrow(preferArrow, classpath).fix +
-      // Held as a field rather than constructed here: it owns the Cats index
-      // and, under `crossFile`, a scan of every source in the project, and
-      // building that per document would redo both for every file.
-      typeParameters.fix +
+  /** `PreferKleisli` and `PreferArrow` replace whole defs and Kleisli bodies,
+    * copying type parameters verbatim; a weakening patch on a bound inside such
+    * a tree would edit tokens the replacement already removed. So the weakening
+    * is told which trees they rewrite and keeps those bounds.
+    */
+  override def fix(implicit doc: SemanticDocument): Patch = {
+    val (kleisliPatch, kleisliTrees) = new PreferKleisli().planned
+    val (arrowPatch, arrowTrees) =
+      new PreferArrow(preferArrow, classpath).planned
+    // Held as a field rather than constructed here: it owns the Cats index
+    // and, under `crossFile`, a scan of every source in the project, and
+    // building that per document would redo both for every file.
+    val typeParametersPlan = typeParameters.planned
+    Weakening.patch(
+      classpath,
+      weakening,
+      kleisliTrees ++ arrowTrees,
+      typeParametersPlan.keptParams,
+      typeParametersPlan.typeclassNames
+    ) +
+      kleisliPatch +
+      arrowPatch +
+      typeParametersPlan.patch +
       new PreferCatsExpressions().fix
+  }
 }
 
-final class TypeclassWeakening extends SemanticRule("TypeclassWeakening") {
-  override def fix(implicit doc: SemanticDocument): Patch = {
-    val typeclassWeakenings =
-      TypeclassWeakening.contextBoundWeakenings(doc.tree, Some(doc))
-    val stillUsedTypeclasses =
-      TypeclassWeakening.typeclassNamesStillUsed(
-        doc.tree,
-        typeclassWeakenings
+/** Replaces an over-strong context bound with the single weakest ancestor
+  * typeclass the body needs, read from the classpath's TASTy (see
+  * [[Weakening]]). Needs the scalac classpath: without it every bound is kept.
+  */
+final class TypeclassWeakening(
+    config: TypeclassWeakeningConfig,
+    classpath: List[java.nio.file.Path]
+) extends SemanticRule("TypeclassWeakening") {
+
+  def this() = this(TypeclassWeakeningConfig.default, Nil)
+
+  override def withConfiguration(
+      configuration: Configuration
+  ): Configured[Rule] =
+    configuration.conf
+      .getOrElse("TypeclassWeakening")(
+        TypeclassWeakeningConfig.default
+      )
+      .map(
+        new TypeclassWeakening(_, configuration.scalacClasspath.map(_.toNIO))
       )
 
-    typeclassWeakenings
-      .map(weakening =>
-        typeclassWeakeningPatch(
-          weakening,
-          removeOriginalImport = !stillUsedTypeclasses.contains(
-            weakening.originalName
-          )
-        )
-      )
-      .asPatch
-  }
-
-  private def typeclassWeakeningPatch(
-      weakening: TypelevelPurrism.TypeclassWeakening,
-      removeOriginalImport: Boolean
-  )(implicit doc: SemanticDocument): Patch =
-    Patch.addGlobalImport(Symbol("cats/Monad#")) +
-      (if (removeOriginalImport)
-         Patch.removeGlobalImport(weakening.originalSymbol)
-       else Patch.empty) +
-      Patch.replaceTree(weakening.original, weakening.replacement)
+  override def fix(implicit doc: SemanticDocument): Patch =
+    Weakening.patch(classpath, config)
 }
 
 object TypeclassWeakening {
+  private val Retired =
+    "name-based weakening was replaced by the TASTy-backed TypeclassWeakening rule"
+
+  @deprecated(Retired, "0.10.0")
   def contextBoundWeakenings(
       tree: Tree
-  ): List[TypelevelPurrism.TypeclassWeakening] =
-    TypelevelPurrism.contextBoundWeakenings(tree)
+  ): List[TypelevelPurrism.TypeclassWeakening] = Nil
 
+  @deprecated(Retired, "0.10.0")
   def contextBoundWeakenings(
       tree: Tree,
       semanticDocument: Option[SemanticDocument]
-  ): List[TypelevelPurrism.TypeclassWeakening] =
-    TypelevelPurrism.contextBoundWeakenings(tree, semanticDocument)
+  ): List[TypelevelPurrism.TypeclassWeakening] = Nil
 
+  @deprecated(Retired, "0.10.0")
   def contextBoundWeakenings(
       defn: Defn.Def
-  ): List[TypelevelPurrism.TypeclassWeakening] =
-    TypelevelPurrism.contextBoundWeakenings(defn)
+  ): List[TypelevelPurrism.TypeclassWeakening] = Nil
 
+  @deprecated(Retired, "0.10.0")
   def contextBoundWeakenings(
       cls: Defn.Class
-  ): List[TypelevelPurrism.TypeclassWeakening] =
-    TypelevelPurrism.contextBoundWeakenings(cls)
+  ): List[TypelevelPurrism.TypeclassWeakening] = Nil
 
+  @deprecated(Retired, "0.10.0")
   def contextBoundWeakenings(
       traitDef: Defn.Trait
-  ): List[TypelevelPurrism.TypeclassWeakening] =
-    TypelevelPurrism.contextBoundWeakenings(traitDef)
+  ): List[TypelevelPurrism.TypeclassWeakening] = Nil
 
+  @deprecated(Retired, "0.10.0")
   def typeclassNamesStillUsed(
       tree: Tree,
       weakenings: List[TypelevelPurrism.TypeclassWeakening]
-  ): Set[String] =
-    TypelevelPurrism.typeclassNamesStillUsed(tree, weakenings)
+  ): Set[String] = Set.empty
 }
 
 final class PreferKleisli(
@@ -172,7 +212,15 @@ final class PreferKleisli(
       KleisliLiftScope.build(root, index)
     }
 
-  override def fix(implicit doc: SemanticDocument): Patch = {
+  override def fix(implicit doc: SemanticDocument): Patch = planned._1
+
+  /** This rule's patch, with the trees it replaces wholesale: each rewritten
+    * def and each `.local` composition. Call-site re-splits only touch argument
+    * lists and are left out.
+    */
+  private[fix] def planned(implicit
+      doc: SemanticDocument
+  ): (Patch, List[Tree]) = {
     val knownKleislies = PreferKleisli.collectKleisliNames(doc.tree)
     val rewrites = PreferKleisli.rewritePlan(
       doc.tree,
@@ -180,18 +228,23 @@ final class PreferKleisli(
       config.fileLocalOnly,
       scope
     )
+    val compositions =
+      TypelevelPurrism.sequencedLocalCompositionRewrites(
+        doc.tree,
+        knownKleislies
+      )
 
-    rewrites.map { case (defn, rewritten) =>
+    val patch = rewrites.map { case (defn, rewritten) =>
       kleisliPatch(defn, rewritten)
     }.asPatch +
       // With a scope, *every* call site -- this file's own included -- is
       // re-split from the project-wide shape, so the per-def path would double
       // up on the local ones.
       PreferKleisli.scopedCallPatches(doc.tree, scope) +
-      PreferKleisli.sequencedLocalCompositionPatches(
-        doc.tree,
-        knownKleislies
-      )
+      compositions.map { rewrite =>
+        Patch.replaceTree(rewrite.term, rewrite.replacement)
+      }.asPatch
+    (patch, rewrites.map(_._1) ++ compositions.map(_.term))
   }
 
   private def kleisliPatch(
@@ -327,12 +380,6 @@ private[fix] object TypelevelPurrism {
         }
       )
   }
-
-  private final case class AppliedCallee(
-      term: Term,
-      name: String,
-      passesEffectType: Boolean
-  )
 
   def kleisliRewrite(
       defn: Defn.Def,
@@ -764,149 +811,6 @@ private[fix] object TypelevelPurrism {
   private def templateStats(templ: Template): List[Stat] =
     templ.body.stats
 
-  def contextBoundWeakenings(tree: Tree): List[TypeclassWeakening] =
-    contextBoundWeakenings(tree, None)
-
-  def contextBoundWeakenings(
-      tree: Tree,
-      semanticDocument: Option[SemanticDocument]
-  ): List[TypeclassWeakening] = {
-    val helperDefinitions = helperDefinitionsByName(tree)
-    val helperRequirements = helperRequiredTypeclasses(tree)
-
-    tree.collect {
-      case defn: Defn.Def =>
-        contextBoundWeakenings(
-          defn,
-          helperDefinitions,
-          helperRequirements,
-          semanticDocument
-        )
-      case cls: Defn.Class =>
-        contextBoundWeakenings(
-          cls,
-          helperDefinitions,
-          helperRequirements,
-          semanticDocument
-        )
-      case traitDef: Defn.Trait =>
-        contextBoundWeakenings(
-          traitDef,
-          helperDefinitions,
-          helperRequirements,
-          semanticDocument
-        )
-    }.flatten
-  }
-
-  def contextBoundWeakenings(defn: Defn.Def): List[TypeclassWeakening] =
-    contextBoundWeakenings(defn, Map.empty)
-
-  private def contextBoundWeakenings(
-      defn: Defn.Def,
-      helperDefinitions: Map[String, List[Defn.Def]],
-      helperRequirements: Map[String, Set[String]],
-      semanticDocument: Option[SemanticDocument]
-  ): List[TypeclassWeakening] =
-    defn.paramClauseGroups.flatMap { group =>
-      weakenContextBounds(
-        group.tparamClause.values,
-        defn,
-        helperDefinitions,
-        helperRequirements,
-        semanticDocument
-      )
-    }
-
-  private def contextBoundWeakenings(
-      defn: Defn.Def,
-      helperRequirements: Map[String, Set[String]]
-  ): List[TypeclassWeakening] =
-    defn.paramClauseGroups.flatMap { group =>
-      weakenContextBounds(
-        group.tparamClause.values,
-        defn,
-        Map.empty,
-        helperRequirements,
-        None
-      )
-    }
-
-  def contextBoundWeakenings(cls: Defn.Class): List[TypeclassWeakening] =
-    contextBoundWeakenings(cls, Map.empty)
-
-  private def contextBoundWeakenings(
-      cls: Defn.Class,
-      helperDefinitions: Map[String, List[Defn.Def]],
-      helperRequirements: Map[String, Set[String]],
-      semanticDocument: Option[SemanticDocument]
-  ): List[TypeclassWeakening] =
-    weakenContextBounds(
-      cls.tparamClause.values,
-      cls,
-      helperDefinitions,
-      helperRequirements,
-      semanticDocument
-    )
-
-  private def contextBoundWeakenings(
-      cls: Defn.Class,
-      helperRequirements: Map[String, Set[String]]
-  ): List[TypeclassWeakening] =
-    weakenContextBounds(
-      cls.tparamClause.values,
-      cls,
-      Map.empty,
-      helperRequirements,
-      None
-    )
-
-  def contextBoundWeakenings(
-      traitDef: Defn.Trait
-  ): List[TypeclassWeakening] =
-    contextBoundWeakenings(traitDef, Map.empty)
-
-  private def contextBoundWeakenings(
-      traitDef: Defn.Trait,
-      helperDefinitions: Map[String, List[Defn.Def]],
-      helperRequirements: Map[String, Set[String]],
-      semanticDocument: Option[SemanticDocument]
-  ): List[TypeclassWeakening] =
-    weakenContextBounds(
-      traitDef.tparamClause.values,
-      traitDef,
-      helperDefinitions,
-      helperRequirements,
-      semanticDocument
-    )
-
-  private def contextBoundWeakenings(
-      traitDef: Defn.Trait,
-      helperRequirements: Map[String, Set[String]]
-  ): List[TypeclassWeakening] =
-    weakenContextBounds(
-      traitDef.tparamClause.values,
-      traitDef,
-      Map.empty,
-      helperRequirements,
-      None
-    )
-
-  def typeclassNamesStillUsed(
-      tree: Tree,
-      weakenings: List[TypeclassWeakening]
-  ): Set[String] =
-    tree
-      .collect {
-        case name: Type.Name
-            if MonadBoundCandidates.contains(name.value) &&
-              !insideWeakenedBound(name, weakenings) =>
-          Set(name.value)
-        case name: Term.Name if MonadBoundCandidates.contains(name.value) =>
-          Set(name.value)
-      }
-      .foldLeft(Set.empty[String])(_ ++ _)
-
   private def singlePlainParameter(defn: Defn.Def): Option[Term.Param] =
     plainParameters(defn).collect { case List(param) => param }
 
@@ -1073,425 +977,6 @@ private[fix] object TypelevelPurrism {
     tpe match {
       case returnType: Type.Apply => isKleisliResult(returnType)
       case _                      => false
-    }
-
-  private val MonadBoundCandidates =
-    Set("Async", "Concurrent", "MonadThrow", "Sync", "Temporal")
-
-  private val MonadOperations =
-    Set("flatMap", "flatten", "ifM", "map", "product", "pure", "replicateA")
-
-  private val StrongerThanMonadOperations =
-    Set(
-      "adaptError",
-      "async",
-      "blocking",
-      "cede",
-      "defer",
-      "delay",
-      "fromEither",
-      "fromFuture",
-      "fromOption",
-      "handleError",
-      "handleErrorWith",
-      "interruptible",
-      "raiseError",
-      "realTime",
-      "ref",
-      "sleep",
-      "start",
-      "uncancelable",
-      "unique"
-    )
-
-  private def weakenContextBounds(
-      tparams: List[Type.Param],
-      owner: Tree,
-      helperDefinitions: Map[String, List[Defn.Def]],
-      helperRequirements: Map[String, Set[String]],
-      semanticDocument: Option[SemanticDocument]
-  ): List[TypeclassWeakening] =
-    tparams.flatMap { tparam =>
-      if (typeParamClause(tparam).values.isEmpty) Nil
-      else {
-        val effectTypeName = tparam.name.syntax
-
-        contextBounds(typeBounds(tparam)).flatMap { bound =>
-          typeName(bound).flatMap {
-            case name
-                if MonadBoundCandidates.contains(name) &&
-                  needsAtMostMonad(
-                    owner,
-                    effectTypeName,
-                    helperDefinitions,
-                    helperRequirements,
-                    semanticDocument
-                  ) =>
-              Some(TypeclassWeakening(bound, name, "Monad"))
-            case _ =>
-              None
-          }
-        }
-      }
-    }
-
-  private def typeParamClause(tparam: Type.Param): Type.ParamClause =
-    tparam.productElement(2).asInstanceOf[Type.ParamClause]
-
-  private def typeBounds(tparam: Type.Param): Type.Bounds =
-    tparam.productElement(3).asInstanceOf[Type.Bounds]
-
-  private def contextBounds(bounds: Type.Bounds): List[Type] =
-    bounds.productElement(2).asInstanceOf[List[Type]]
-
-  private def needsAtMostMonad(
-      owner: Tree,
-      effectTypeName: String,
-      helperDefinitions: Map[String, List[Defn.Def]],
-      helperRequirements: Map[String, Set[String]],
-      semanticDocument: Option[SemanticDocument]
-  ): Boolean = {
-    val operations = selectedOperationNames(owner)
-    val hasRelevantEffectShape =
-      hasEffectValue(owner, effectTypeName) || hasEffectResult(
-        owner,
-        effectTypeName
-      )
-
-    hasRelevantEffectShape &&
-    operations.exists(MonadOperations.contains) &&
-    !operations.exists(StrongerThanMonadOperations.contains) &&
-    !usesStrongerTypeclass(owner) &&
-    !callsHelperRequiringStrongerTypeclass(
-      owner,
-      effectTypeName,
-      helperDefinitions,
-      helperRequirements,
-      semanticDocument,
-      Set.empty
-    )
-  }
-
-  private def hasEffectValue(owner: Tree, effectTypeName: String): Boolean =
-    owner.collect {
-      case param: Term.Param
-          if param.decltpe.exists(isEffectType(_, effectTypeName)) =>
-        true
-      case valDef: Defn.Val
-          if valDef.decltpe.exists(isEffectType(_, effectTypeName)) =>
-        true
-      case varDef: Defn.Var
-          if varDef.decltpe.exists(isEffectType(_, effectTypeName)) =>
-        true
-    }.nonEmpty
-
-  private def hasEffectResult(owner: Tree, effectTypeName: String): Boolean =
-    owner.collect {
-      case defn: Defn.Def
-          if defn.decltpe.exists(isEffectType(_, effectTypeName)) =>
-        true
-    }.nonEmpty
-
-  private def isEffectType(tpe: Type, effectTypeName: String): Boolean =
-    tpe match {
-      case Type.Apply.After_4_6_0(Type.Name(name), args) =>
-        name == effectTypeName && args.values.length == 1
-      case _ =>
-        false
-    }
-
-  private def selectedOperationNames(owner: Tree): Set[String] =
-    owner.collect { case select: Term.Select =>
-      select.name.value
-    }.toSet
-
-  private def usesStrongerTypeclass(owner: Tree): Boolean =
-    owner.collect {
-      case Term.Name(name) if MonadBoundCandidates.contains(name) =>
-        true
-    }.nonEmpty
-
-  private def helperDefinitionsByName(
-      tree: Tree
-  ): Map[String, List[Defn.Def]] =
-    tree
-      .collect { case defn: Defn.Def =>
-        Map(defn.name.value -> List(defn))
-      }
-      .foldLeft(Map.empty[String, List[Defn.Def]]) { case (all, next) =>
-        next.foldLeft(all) { case (acc, (name, defns)) =>
-          acc.updated(name, acc.getOrElse(name, Nil) ++ defns)
-        }
-      }
-
-  private def helperRequiredTypeclasses(tree: Tree): Map[String, Set[String]] =
-    tree
-      .collect { case defn: Defn.Def =>
-        val required =
-          defn.paramClauseGroups
-            .flatMap { group =>
-              group.tparamClause.values.flatMap { tparam =>
-                contextBounds(typeBounds(tparam)).flatMap(typeName)
-              } ++ group.paramClauses.flatMap { clause =>
-                clause.values.flatMap(param =>
-                  param.decltpe.flatMap(typeclassEvidenceName)
-                )
-              }
-            }
-            .filter(MonadBoundCandidates.contains)
-            .toSet
-
-        if (required.isEmpty) Map.empty[String, Set[String]]
-        else Map(defn.name.value -> required)
-      }
-      .foldLeft(Map.empty[String, Set[String]]) { case (all, next) =>
-        next.foldLeft(all) { case (acc, (name, required)) =>
-          acc.updated(name, acc.getOrElse(name, Set.empty) ++ required)
-        }
-      }
-
-  private def callsHelperRequiringStrongerTypeclass(
-      owner: Tree,
-      effectTypeName: String,
-      helperDefinitions: Map[String, List[Defn.Def]],
-      helperRequirements: Map[String, Set[String]],
-      semanticDocument: Option[SemanticDocument],
-      seen: Set[String]
-  ): Boolean =
-    appliedCallees(owner, effectTypeName).exists { callee =>
-      val semanticRequirements =
-        semanticDocument
-          .map(semanticRequiredTypeclasses(callee.term)(using _))
-          .getOrElse(Set.empty)
-      val syntaxRequirements =
-        helperRequirements.getOrElse(callee.name, Set.empty)
-      val requirements = semanticRequirements ++ syntaxRequirements
-
-      (requirements.nonEmpty || callee.passesEffectType) &&
-      !MonadOperations.contains(callee.name) &&
-      !localHelpersNeedAtMostMonad(
-        callee.name,
-        effectTypeName,
-        helperDefinitions,
-        helperRequirements,
-        semanticDocument,
-        seen
-      )
-    }
-
-  private def localHelpersNeedAtMostMonad(
-      name: String,
-      effectTypeName: String,
-      helperDefinitions: Map[String, List[Defn.Def]],
-      helperRequirements: Map[String, Set[String]],
-      semanticDocument: Option[SemanticDocument],
-      seen: Set[String]
-  ): Boolean =
-    helperDefinitions.get(name).exists { defns =>
-      defns.forall { defn =>
-        val key = defn.pos.start.toString
-
-        seen.contains(key) || {
-          val operations = selectedOperationNames(defn)
-
-          !operations.exists(StrongerThanMonadOperations.contains) &&
-          !usesStrongerTypeclass(defn) &&
-          !callsUnprovenOperation(
-            defn,
-            effectTypeName,
-            helperDefinitions,
-            helperRequirements,
-            semanticDocument,
-            seen + key
-          ) &&
-          !callsHelperRequiringStrongerTypeclass(
-            defn,
-            effectTypeName,
-            helperDefinitions,
-            helperRequirements,
-            semanticDocument,
-            seen + key
-          )
-        }
-      }
-    }
-
-  private def callsUnprovenOperation(
-      owner: Tree,
-      effectTypeName: String,
-      helperDefinitions: Map[String, List[Defn.Def]],
-      helperRequirements: Map[String, Set[String]],
-      semanticDocument: Option[SemanticDocument],
-      seen: Set[String]
-  ): Boolean =
-    appliedCallees(owner, effectTypeName).exists { callee =>
-      val semanticRequirements =
-        semanticDocument
-          .map(semanticRequiredTypeclasses(callee.term)(using _))
-          .getOrElse(Set.empty)
-      val syntaxRequirements =
-        helperRequirements.getOrElse(callee.name, Set.empty)
-
-      !SafeOperationsInsideWeakenableHelper.contains(callee.name) &&
-      semanticRequirements.isEmpty &&
-      syntaxRequirements.isEmpty &&
-      !localHelpersNeedAtMostMonad(
-        callee.name,
-        effectTypeName,
-        helperDefinitions,
-        helperRequirements,
-        semanticDocument,
-        seen
-      )
-    }
-
-  private def appliedCallees(
-      owner: Tree,
-      effectTypeName: String
-  ): List[AppliedCallee] =
-    owner.collect {
-      case apply: Term.Apply =>
-        appliedCallee(apply.fun, effectTypeName).toList
-      case applyType: Term.ApplyType =>
-        appliedCallee(applyType, effectTypeName).toList
-    }.flatten
-
-  private def appliedCallee(
-      term: Term,
-      effectTypeName: String
-  ): Option[AppliedCallee] =
-    term match {
-      case name: Term.Name =>
-        Some(AppliedCallee(name, name.value, passesEffectType = false))
-      case select: Term.Select =>
-        Some(
-          AppliedCallee(select, select.name.value, passesEffectType = false)
-        )
-      case applyType: Term.ApplyType =>
-        appliedCallee(applyType.fun, effectTypeName).map { callee =>
-          callee.copy(
-            passesEffectType = callee.passesEffectType ||
-              applyType.targClause.values.exists(
-                isPlainTypeName(_, effectTypeName)
-              )
-          )
-        }
-      case _ =>
-        None
-    }
-
-  private def semanticRequiredTypeclasses(
-      term: Term
-  )(implicit doc: SemanticDocument): Set[String] =
-    term.symbol.info
-      .map(info => signatureRequiredTypeclasses(info.signature))
-      .getOrElse(Set.empty)
-
-  private def signatureRequiredTypeclasses(signature: Signature): Set[String] =
-    signature match {
-      case MethodSignature(_, parameterLists, _) =>
-        parameterLists.flatten.flatMap(parameterRequiredTypeclass).toSet
-      case ValueSignature(tpe) =>
-        semanticTypeRequiredTypeclasses(tpe)
-      case _ =>
-        Set.empty
-    }
-
-  private def parameterRequiredTypeclass(
-      info: SymbolInformation
-  ): Option[String] =
-    info.signature match {
-      case ValueSignature(tpe) =>
-        semanticTypeclassEvidenceName(tpe)
-      case _ =>
-        None
-    }
-
-  private def semanticTypeRequiredTypeclasses(
-      tpe: SemanticType
-  ): Set[String] =
-    tpe match {
-      case TypeRef(_, symbol, typeArguments) =>
-        val current =
-          if (
-            typeArguments.length == 1 &&
-            MonadBoundCandidates.contains(symbol.displayName)
-          ) Set(symbol.displayName)
-          else Set.empty[String]
-
-        current ++ typeArguments.flatMap(semanticTypeRequiredTypeclasses)
-      case UniversalType(_, tpe) =>
-        semanticTypeRequiredTypeclasses(tpe)
-      case LambdaType(_, tpe) =>
-        semanticTypeRequiredTypeclasses(tpe)
-      case IntersectionType(types) =>
-        types.flatMap(semanticTypeRequiredTypeclasses).toSet
-      case UnionType(types) =>
-        types.flatMap(semanticTypeRequiredTypeclasses).toSet
-      case WithType(types) =>
-        types.flatMap(semanticTypeRequiredTypeclasses).toSet
-      case AnnotatedType(_, tpe) =>
-        semanticTypeRequiredTypeclasses(tpe)
-      case ByNameType(tpe) =>
-        semanticTypeRequiredTypeclasses(tpe)
-      case RepeatedType(tpe) =>
-        semanticTypeRequiredTypeclasses(tpe)
-      case _ =>
-        Set.empty
-    }
-
-  private def semanticTypeclassEvidenceName(tpe: SemanticType): Option[String] =
-    tpe match {
-      case TypeRef(_, symbol, List(_))
-          if MonadBoundCandidates.contains(symbol.displayName) =>
-        Some(symbol.displayName)
-      case _ =>
-        None
-    }
-
-  private def typeclassEvidenceName(tpe: Type): Option[String] =
-    tpe match {
-      case Type.Apply.After_4_6_0(tpe, args)
-          if args.values.length == 1 && isPlainTypeName(args.values.head) =>
-        typeName(tpe)
-      case _ =>
-        None
-    }
-
-  private def isPlainTypeName(tpe: Type): Boolean =
-    tpe match {
-      case Type.Name(_) => true
-      case _            => false
-    }
-
-  private def isPlainTypeName(tpe: Type, effectTypeName: String): Boolean =
-    tpe match {
-      case Type.Name(name) => name == effectTypeName
-      case _               => false
-    }
-
-  private val SafeOperationsInsideWeakenableHelper =
-    MonadOperations ++ Set("identity")
-
-  private def typeName(tpe: Type): Option[String] =
-    tpe match {
-      case Type.Name(value) =>
-        Some(value)
-      case Type.Select(_, Type.Name(value)) =>
-        Some(value)
-      case _ =>
-        None
-    }
-
-  private def insideWeakenedBound(
-      tree: Tree,
-      weakenings: List[TypeclassWeakening]
-  ): Boolean =
-    weakenings.exists { weakening =>
-      val owner = weakening.original.pos
-      val candidate = tree.pos
-
-      owner.start <= candidate.start && candidate.end <= owner.end
     }
 
   private def outsideTree(candidate: Tree, owner: Tree): Boolean =

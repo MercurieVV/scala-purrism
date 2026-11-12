@@ -317,8 +317,51 @@ than individual expressions.
 
 #### TypeclassWeakening
 
-Weakens over-strong effect bounds when the body only needs weaker Cats
-capabilities.
+Weakens a context bound to the single weakest typeclass the body still
+satisfies, intermediate typeclasses included (`flatMap` only gives `FlatMap`,
+not `Monad`). Capabilities are read from the compiler: direct calls, syntax
+conversions such as `toFlatMapOps`, and the evidence the compiler passes on.
+Library typeclass facts (cats and cats-effect) come from the TASTy of the jars
+on the scalac classpath, so the rule needs a semantic classpath to act.
+
+The bound is kept as written when the rule cannot be sure, in these cases:
+
+- no classpath or no typeclass index is available (nothing to read the
+  library typeclasses from);
+- the def is overridable or overrides another def, so its signature is a
+  contract;
+- the body uses a summoner such as `Sync[F]`, or uses named evidence
+  (`[F[_]: Sync as S]`) other than as the qualifier of a capability call;
+- the body passes implicit evidence to a method whose signature is unknown;
+- the typeclass is defined in the project's own sources (only classpath
+  typeclasses are indexed);
+- several equally weak typeclasses fit (the choice is ambiguous), which is
+  reported as the lint `TypeclassWeakening.ambiguous-weakening`;
+- the type parameter holds more than one evidence (`F[_]: Temporal: Sync`, or
+  a bound next to a `using`/`implicit` parameter mentioning `F`): all of its
+  bounds are kept, since weakening each alone could produce two identical or
+  competing instances;
+- a call of the def in the same file runs where two or more in-scope
+  evidences for the type argument descend from the weakened typeclass
+  (`bump(fa)` inside `[F[_]: Temporal: Sync]` would find two `Functor[F]`);
+- the target's simple name already means something else in the file (a local
+  `trait Functor`, another library's `Functor` imported explicitly);
+- under `TypelevelPurrism`, another member (`PreferKleisli`, `PreferArrow`)
+  rewrites the same def or Kleisli body;
+- under `TypelevelPurrism`, `PreferTypeParameters` builds on the type
+  parameter: it reuses it for a widened `List`/`Option` use (relying on its
+  bound as written, e.g. `Traverse` for a moved `foldLeft`), or appends a new
+  type parameter right after it.
+
+Known risk: the rule sees one file at a time. A caller in another file whose
+scope holds two evidences descending from the weakened typeclass (for
+example `[F[_]: Temporal: Sync]` calling a `bump` now bounded by `Functor`)
+gets an "Ambiguous given instances" error there. Pass the evidence explicitly
+or revert that bound.
+
+Two-parameter typeclasses render through their aliases (`MonadThrow`,
+`ApplicativeThrow`, `MonadCancelThrow`). A tagless algebra such as
+`profiles: Profiles[F]` is an ordinary value and does not block weakening.
 
 Examples:
 
@@ -342,7 +385,45 @@ def choose[F[_]: Concurrent, A](left: F[A], right: F[A]): F[A] =
 ))
 ```
 
-Configs: none.
+```scala mdoc:passthrough
+print(docs.DocDiff.renderRule(
+  rule = "TypeclassWeakening",
+  before = """
+def orZero[F[_]: Sync](fa: F[Int]): F[Int] =
+  fa.handleError(_ => 0)
+"""
+))
+```
+
+```scala mdoc:passthrough
+print(docs.DocDiff.renderRule(
+  rule = "TypeclassWeakening",
+  before = """
+def twice[F[_]: Sync](fa: F[Int], next: Int => F[Int]): F[Int] =
+  fa.flatMap(next)
+"""
+))
+```
+
+Configs:
+
+```hocon
+TypeclassWeakening {
+  cacheDir = "~/.cache/scala-purrism/tasty-index" # "" disables the disk cache
+  debug = false # log index source, jars scanned and time to stderr
+}
+```
+
+The first run scans library jars and stores one index row per jar in
+`cacheDir`; later runs read it from disk. With `debug = true` each jar
+reports `Bundled`, `Disk` or `Scan` and the milliseconds spent.
+
+Supported range: the bundled index covers only cats-core and cats-kernel
+2.13.0. Any other cats version, cats-effect, and every other library are
+scanned from the TASTy on the classpath, so results can differ by library
+version. The rule is built and tested with Scala 3.8 (TASTy 3.8). Newer TASTy
+the bundled reader cannot decode, or an incompatible classpath, makes the
+index unavailable, and then the rule keeps every bound and changes nothing.
 
 #### SuspendSideEffects
 

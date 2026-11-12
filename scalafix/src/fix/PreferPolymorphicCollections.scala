@@ -11,6 +11,7 @@ import fix.hkt.CapabilitySolver
 import fix.hkt.CatsIndex
 import fix.hkt.DeclineReason
 import fix.hkt.HktRewriter
+import fix.hkt.Planned
 import fix.hkt.UsageAnalyzer
 import fix.hkt.UsageResult
 
@@ -108,17 +109,22 @@ final class PreferPolymorphicCollections(
       symbol => index.knowsConstructor(Symbol(symbol))
     )
 
-  override def fix(implicit doc: SemanticDocument): Patch = {
+  override def fix(implicit doc: SemanticDocument): Patch = planned.patch
+
+  /** [[fix]], plus the type parameters its rewrites rely on (see [[Planned]]).
+    */
+  private[fix] def planned(implicit doc: SemanticDocument): Planned = {
     val suppression = Suppression.forDocument
     val handedOver = ContainerCallSites.valueReferences(doc.tree)
 
-    doc.tree.collect {
+    Planned.all(doc.tree.collect {
       case defn: Defn.Def if !suppression.suppresses(defn) =>
-        UsageAnalyzer
-          .analyze(defn, index, config.widenPublic)
-          .map(result => patchFor(defn, result, handedOver))
-          .asPatch
-    }.asPatch + callSiteRepairs
+        Planned.all(
+          UsageAnalyzer
+            .analyze(defn, index, config.widenPublic)
+            .map(result => patchFor(defn, result, handedOver))
+        )
+    }) + callSiteRepairs
   }
 
   /** The other half of a widening: a call that named its type arguments has to
@@ -198,7 +204,7 @@ final class PreferPolymorphicCollections(
       defn: Defn.Def,
       result: UsageResult,
       handedOver: Set[String]
-  )(implicit doc: SemanticDocument): Patch =
+  )(implicit doc: SemanticDocument): Planned =
     result match {
       case usage: UsageResult.Abstractable
           if isContainer(usage.constructor) && isParameter(
@@ -206,43 +212,49 @@ final class PreferPolymorphicCollections(
             usage.target
           ) =>
         if (scope.vetoes(defn.symbol.value))
-          // A type parameter of this def is not inferable from its value
-          // parameters, so the call sites that name their type arguments
-          // cannot simply stop naming them, and this def cannot grow one.
-          lint(
-            defn.name.pos,
-            Findings.ExplicitTypeArguments,
-            s"`${defn.name.value}` is called with explicit type arguments that " +
-              "inference cannot replace, so it cannot take another type parameter"
+          Planned(
+            // A type parameter of this def is not inferable from its value
+            // parameters, so the call sites that name their type arguments
+            // cannot simply stop naming them, and this def cannot grow one.
+            lint(
+              defn.name.pos,
+              Findings.ExplicitTypeArguments,
+              s"`${defn.name.value}` is called with explicit type arguments that " +
+                "inference cannot replace, so it cannot take another type parameter"
+            )
           )
         else if (handedOver.contains(defn.name.value))
-          lint(
-            defn.name.pos,
-            Findings.HandedOverAsValue,
-            s"`${defn.name.value}` is handed over as a value, so widening it " +
-              "to a type parameter would stop that reference compiling."
+          Planned(
+            lint(
+              defn.name.pos,
+              Findings.HandedOverAsValue,
+              s"`${defn.name.value}` is handed over as a value, so widening it " +
+                "to a type parameter would stop that reference compiling."
+            )
           )
         else rewrite(usage)
       case UsageResult.Declined(position, reason)
           if mentionsContainer(reason) =>
-        lint(position, Findings.OrderOrIndexSpecific, reason.message)
+        Planned(lint(position, Findings.OrderOrIndexSpecific, reason.message))
       case _ =>
-        Patch.empty
+        Planned.empty
     }
 
   private def rewrite(
       usage: UsageResult.Abstractable
-  )(implicit doc: SemanticDocument): Patch =
+  )(implicit doc: SemanticDocument): Planned =
     CapabilitySolver.solve(usage.ops, index, config.maxConstraints) match {
       // An empty constraint set means the body never touches the collection as
       // a collection. Widening it then produces `def f[S[_]](xs: S[A])(using )`
       // -- an unconstrained type parameter and an empty using clause, which is
       // not a weaker signature but an uncompilable one.
       case Right(solution) if solution.constraints.isEmpty =>
-        lint(
-          usage.defn.name.pos,
-          Findings.NoCapability,
-          "no Cats capability covers this container's use; nothing to widen to"
+        Planned(
+          lint(
+            usage.defn.name.pos,
+            Findings.NoCapability,
+            "no Cats capability covers this container's use; nothing to widen to"
+          )
         )
       // `UsageAnalyzer` reports the ops it could map to a capability. It does
       // not report that it dropped one, so a body mixing `map` with `filter`
@@ -251,36 +263,44 @@ final class PreferPolymorphicCollections(
       // Both compile as `Vector` and neither compiles as `S`.
       case Right(solution)
           if !ContainerFlow.staysAbstract(usage, index.exitsConstructor) =>
-        lint(
-          usage.defn.name.pos,
-          Findings.ContainerNotAbstract,
-          "the container does not stay abstract: an operation on it is not " +
-            "covered by " + solution.constraints.map(_.value).mkString(", ") +
-            ", or its value is passed to a signature that names a container"
+        Planned(
+          lint(
+            usage.defn.name.pos,
+            Findings.ContainerNotAbstract,
+            "the container does not stay abstract: an operation on it is not " +
+              "covered by " + solution.constraints.map(_.value).mkString(", ") +
+              ", or its value is passed to a signature that names a container"
+          )
         )
       case Right(solution) if config.rewrite =>
         HktRewriter
           .freshTypeParamName(usage.defn, TypeParamNames)
-          .map(name => HktRewriter.rewrite(usage, solution, index, name))
+          .map(name => HktRewriter.plan(usage, solution, index, name))
           .getOrElse(
-            lint(
-              usage.defn.name.pos,
-              Findings.NameConflict,
-              DeclineReason.NameConflict(TypeParamNames).message
+            Planned(
+              lint(
+                usage.defn.name.pos,
+                Findings.NameConflict,
+                DeclineReason.NameConflict(TypeParamNames).message
+              )
             )
           )
       case Right(solution) =>
-        lint(
-          usage.defn.name.pos,
-          Findings.RewriteOff,
-          "container is abstractable over " +
-            solution.constraints.map(_.value).mkString(", ") +
-            " (rewriting is off)"
+        Planned(
+          lint(
+            usage.defn.name.pos,
+            Findings.RewriteOff,
+            "container is abstractable over " +
+              solution.constraints.map(_.value).mkString(", ") +
+              " (rewriting is off)"
+          )
         )
       case Left(reason) =>
-        solverFinding(reason)
-          .map(finding => lint(usage.defn.name.pos, finding, reason.message))
-          .getOrElse(Patch.empty)
+        Planned(
+          solverFinding(reason)
+            .map(finding => lint(usage.defn.name.pos, finding, reason.message))
+            .getOrElse(Patch.empty)
+        )
     }
 
   /** The kinds `CapabilitySolver.solve` declines with. The other

@@ -11,6 +11,7 @@ import fix.hkt.CapabilitySolver
 import fix.hkt.CatsIndex
 import fix.hkt.DeclineReason
 import fix.hkt.HktRewriter
+import fix.hkt.Planned
 import fix.hkt.UsageAnalyzer
 import fix.hkt.UsageResult
 
@@ -155,15 +156,19 @@ final class PreferPolymorphicTypeclasses(
       symbol => index.knowsConstructor(Symbol(symbol))
     )
 
-  override def fix(implicit doc: SemanticDocument): Patch = {
+  override def fix(implicit doc: SemanticDocument): Patch = planned.patch
+
+  /** [[fix]], plus the type parameters its rewrites rely on (see [[Planned]]).
+    */
+  private[fix] def planned(implicit doc: SemanticDocument): Planned = {
     val suppression = Suppression.forDocument
     val handedOver = ContainerCallSites.valueReferences(doc.tree)
 
-    doc.tree.collect {
+    Planned.all(doc.tree.collect {
       case defn: Defn.Def
           if !suppression.suppresses(defn) && !alreadyAbstracted(defn) =>
         patchFor(defn, handedOver)
-    }.asPatch + callSiteRepairs
+    }) + callSiteRepairs
   }
 
   /** The other half of a widening: a call that named its type arguments has to
@@ -189,7 +194,7 @@ final class PreferPolymorphicTypeclasses(
   private def patchFor(
       defn: Defn.Def,
       handedOver: Set[String]
-  )(implicit doc: SemanticDocument): Patch = {
+  )(implicit doc: SemanticDocument): Planned = {
     // Analysed as if every definition were widenable, and the visibility
     // verdict applied afterwards. Asking the analyzer to decide it reports
     // `PublicBoundary` for every public definition that merely *mentions* a
@@ -201,71 +206,83 @@ final class PreferPolymorphicTypeclasses(
     solved(results) match {
       case Some((usage, solution)) =>
         if (scope.vetoes(defn.symbol.value))
-          // Some call site names this def's type arguments, and inference
-          // cannot replace them, so it cannot take another type parameter.
-          lint(
-            defn.name.pos,
-            Findings.ExplicitTypeArguments,
-            DeclineReason
-              .UnsafeBody(
-                s"`${defn.name.value}` is called with explicit type arguments " +
-                  "that inference cannot replace"
-              )
-              .message
+          Planned(
+            // Some call site names this def's type arguments, and inference
+            // cannot replace them, so it cannot take another type parameter.
+            lint(
+              defn.name.pos,
+              Findings.ExplicitTypeArguments,
+              DeclineReason
+                .UnsafeBody(
+                  s"`${defn.name.value}` is called with explicit type arguments " +
+                    "that inference cannot replace"
+                )
+                .message
+            )
           )
         else if (!UsageAnalyzer.isWidenable(defn, config.widenPublic))
-          lint(
-            defn.name.pos,
-            Findings.PublicBoundary,
-            DeclineReason.PublicBoundary(defn.name.value).message
+          Planned(
+            lint(
+              defn.name.pos,
+              Findings.PublicBoundary,
+              DeclineReason.PublicBoundary(defn.name.value).message
+            )
           )
         else if (handedOver.contains(defn.name.value))
-          // A widened signature is source-compatible at every application
-          // site, because the argument still infers the type parameter. `val g
-          // = f` is the one shape that is not: a polymorphic method has no
-          // monomorphic function type to eta-expand to.
-          lint(
-            defn.name.pos,
-            Findings.HandedOverAsValue,
-            DeclineReason
-              .UnsafeBody(s"`${defn.name.value}` is handed over as a value")
-              .message
+          Planned(
+            // A widened signature is source-compatible at every application
+            // site, because the argument still infers the type parameter. `val g
+            // = f` is the one shape that is not: a polymorphic method has no
+            // monomorphic function type to eta-expand to.
+            lint(
+              defn.name.pos,
+              Findings.HandedOverAsValue,
+              DeclineReason
+                .UnsafeBody(s"`${defn.name.value}` is handed over as a value")
+                .message
+            )
           )
         else if (!config.rewrite)
-          lint(
-            defn.name.pos,
-            Findings.RewriteOff,
-            DeclineReason
-              .UnsafeBody(
-                "abstractable over " +
-                  solution.constraints.map(_.value).mkString(", ") +
-                  " (rewriting is off)"
-              )
-              .message
+          Planned(
+            lint(
+              defn.name.pos,
+              Findings.RewriteOff,
+              DeclineReason
+                .UnsafeBody(
+                  "abstractable over " +
+                    solution.constraints.map(_.value).mkString(", ") +
+                    " (rewriting is off)"
+                )
+                .message
+            )
           )
         else
           HktRewriter
             .freshTypeParamName(usage.defn, TypeParamNames)
             .map(name =>
-              HktRewriter.rewrite(usage, solution, index, name) +
+              HktRewriter.plan(usage, solution, index, name) +
                 removeStaleImport(usage)
             )
             .getOrElse(
-              lint(
-                defn.name.pos,
-                Findings.NameConflict,
-                DeclineReason.NameConflict(TypeParamNames).message
+              Planned(
+                lint(
+                  defn.name.pos,
+                  Findings.NameConflict,
+                  DeclineReason.NameConflict(TypeParamNames).message
+                )
               )
             )
       case None if hasKnownUnaryTarget(defn) =>
-        results.iterator
-          .collect { case UsageResult.Declined(position, reason) =>
-            reportable(reason).map(lint(position, _, reason.message))
-          }
-          .flatten
-          .nextOption()
-          .getOrElse(Patch.empty)
-      case None => Patch.empty
+        Planned(
+          results.iterator
+            .collect { case UsageResult.Declined(position, reason) =>
+              reportable(reason).map(lint(position, _, reason.message))
+            }
+            .flatten
+            .nextOption()
+            .getOrElse(Patch.empty)
+        )
+      case None => Planned.empty
     }
   }
 

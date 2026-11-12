@@ -114,14 +114,22 @@ final class PreferArrow(
       )
     }
 
-  override def fix(implicit doc: SemanticDocument): Patch = {
+  override def fix(implicit doc: SemanticDocument): Patch = planned._1
+
+  /** This rule's patch, with every tree it replaces wholesale: the umbrella
+    * keeps other members' edits out of them.
+    */
+  private[fix] def planned(implicit
+      doc: SemanticDocument
+  ): (Patch, List[Tree]) = {
     KleisliScope.install(scope)
-    doc.tree.collect {
+    val plans = doc.tree.collect {
       case applyTerm: Term.Apply if KleisliType.isKleisliApply(applyTerm) =>
-        PreferArrow.rewriteBody(applyTerm, config)
+        PreferArrow.planBody(applyTerm, config)
       case defn: Defn.Def if !liftVetoed.contains(defn.name.symbol.value) =>
-        PreferArrow.rewriteSignature(defn, config)
-    }.asPatch
+        PreferArrow.planSignature(defn, config)
+    }
+    (plans.map(_._1).asPatch, plans.flatMap(_._2))
   }
 }
 
@@ -172,8 +180,15 @@ object PreferArrow {
       applyTerm: Term.Apply,
       config: PreferArrowConfig
   )(implicit doc: SemanticDocument): Patch =
+    planBody(applyTerm, config)._1
+
+  /** [[rewriteBody]], plus the tree it replaces wholesale (if any). */
+  private[fix] def planBody(
+      applyTerm: Term.Apply,
+      config: PreferArrowConfig
+  )(implicit doc: SemanticDocument): (Patch, Option[Tree]) =
     kleisliLambda(applyTerm) match {
-      case None => Patch.empty
+      case None => (Patch.empty, None)
       case Some(fn) =>
         val param = fn.paramClause.values.head
         val inputParam = param.name
@@ -190,8 +205,11 @@ object PreferArrow {
           )
         compile(fn.body, inputSymbol, input, config.aggressive) match {
           case Compiled.Emit(rendered, imports) =>
-            Patch.replaceTree(applyTerm, rendered) +
-              imports.map(Patch.addGlobalImport).asPatch
+            (
+              Patch.replaceTree(applyTerm, rendered) +
+                imports.map(Patch.addGlobalImport).asPatch,
+              Some(applyTerm)
+            )
           case Compiled.Warn(reason) =>
             Patch.lint(
               FindingDiagnostic(
@@ -199,7 +217,7 @@ object PreferArrow {
                 applyTerm.pos,
                 budgetText(reason)
               )
-            )
+            ) -> None
           case Compiled.Skip =>
             ArrowParser
               .shadowedInput(fn.body, inputParam.value, inputSymbol)
@@ -212,7 +230,7 @@ object PreferArrow {
                   )
                 )
               )
-              .getOrElse(skipReport(applyTerm.pos, fn.body, config))
+              .getOrElse(skipReport(applyTerm.pos, fn.body, config)) -> None
         }
     }
 
@@ -318,6 +336,13 @@ object PreferArrow {
       defn: Defn.Def,
       config: PreferArrowConfig
   )(implicit doc: SemanticDocument): Patch =
+    planSignature(defn, config)._1
+
+  /** [[rewriteSignature]], plus the tree it replaces wholesale (if any). */
+  private[fix] def planSignature(
+      defn: Defn.Def,
+      config: PreferArrowConfig
+  )(implicit doc: SemanticDocument): (Patch, Option[Tree]) =
     (for {
       param <- singlePlainParameter(defn)
       returnType <- defn.decltpe.collect { case tpe: Type.Apply => tpe }
@@ -330,7 +355,7 @@ object PreferArrow {
         case other => Some(other)
       }
     } yield (param, effect._1, effect._2)) match {
-      case None => Patch.empty
+      case None => (Patch.empty, None)
       case Some((param, effectType, resultType)) =>
         compile(
           defn.body,
@@ -349,9 +374,12 @@ object PreferArrow {
                   defn
                 )}: Kleisli[$effectType, $parameterType, $resultType] =
                  |  $rendered""".stripMargin
-            Patch.replaceTree(defn, signature) +
-              Patch.addGlobalImport(Symbol("cats/data/Kleisli#")) +
-              imports.map(Patch.addGlobalImport).asPatch
+            (
+              Patch.replaceTree(defn, signature) +
+                Patch.addGlobalImport(Symbol("cats/data/Kleisli#")) +
+                imports.map(Patch.addGlobalImport).asPatch,
+              Some(defn)
+            )
           case Compiled.Warn(reason) =>
             Patch.lint(
               FindingDiagnostic(
@@ -359,7 +387,7 @@ object PreferArrow {
                 defn.body.pos,
                 budgetText(reason)
               )
-            )
+            ) -> None
           case Compiled.Skip =>
             ArrowParser
               .shadowedInput(defn.body, param.name.value, param.name.symbol)
@@ -372,7 +400,7 @@ object PreferArrow {
                   )
                 )
               )
-              .getOrElse(Patch.empty)
+              .getOrElse(Patch.empty) -> None
         }
     }
 

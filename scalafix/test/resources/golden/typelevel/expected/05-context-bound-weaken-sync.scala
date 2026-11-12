@@ -1,9 +1,9 @@
 package examples
 
-import cats.Monad
+import cats.FlatMap
 import cats.syntax.all.*
 
-final class UserService[F[_]: Monad](profiles: Profiles[F]) {
+final class UserService[F[_]: FlatMap](profiles: Profiles[F]) {
   def load(seed: F[User]): F[Profile] =
     seed.flatMap(user => profiles.fetch(user.id))
 }
