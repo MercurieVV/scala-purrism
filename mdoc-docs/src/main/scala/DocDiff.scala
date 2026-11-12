@@ -69,7 +69,8 @@ object DocDiff:
         "--rules",
         rule,
         "--classpath",
-        outDir.toString,
+        (outDir.toString +: classpath.split(java.io.File.pathSeparator).toList)
+          .mkString(java.io.File.pathSeparator),
         "--sourceroot",
         tempDir.toString,
         "--tool-classpath",

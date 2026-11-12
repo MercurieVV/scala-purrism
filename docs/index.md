@@ -317,8 +317,18 @@ than individual expressions.
 
 #### TypeclassWeakening
 
-Weakens over-strong effect bounds when the body only needs weaker Cats
-capabilities.
+Weakens a context bound to the single weakest typeclass the body still
+satisfies, intermediate typeclasses included (`flatMap` only gives `FlatMap`,
+not `Monad`). Capabilities are read from the compiler: direct calls, syntax
+conversions such as `toFlatMapOps`, and the evidence the compiler passes on.
+Library typeclass facts (cats and cats-effect) come from the TASTy of the jars
+on the scalac classpath, so the rule needs a semantic classpath to act.
+
+The bound is kept when the rule is unsure: no classpath, evidence it cannot
+explain, an overridable or overriding method, or several equally weak
+candidates (reported as `TypeclassWeakening.ambiguous-weakening`). Two-parameter
+typeclasses render through their aliases (`MonadThrow`, `ApplicativeThrow`,
+`MonadCancelThrow`).
 
 Examples:
 
@@ -342,7 +352,39 @@ def choose[F[_]: Concurrent, A](left: F[A], right: F[A]): F[A] =
 ))
 ```
 
-Configs: none.
+```scala mdoc:passthrough
+print(docs.DocDiff.renderRule(
+  rule = "TypeclassWeakening",
+  before = """
+def orZero[F[_]: Sync](fa: F[Int]): F[Int] =
+  fa.handleError(_ => 0)
+"""
+))
+```
+
+```scala mdoc:passthrough
+print(docs.DocDiff.renderRule(
+  rule = "TypeclassWeakening",
+  before = """
+def twice[F[_]: Sync](fa: F[Int], next: Int => F[Int]): F[Int] =
+  fa.flatMap(next)
+"""
+))
+```
+
+Configs:
+
+```hocon
+TypeclassWeakening {
+  cacheDir = "~/.cache/scala-purrism/tasty-index" # "" disables the disk cache
+  debug = false # log index source, jars scanned and time to stderr
+}
+```
+
+The first run scans library jars and stores one index row per jar in
+`cacheDir`; later runs read it from disk. Cats itself comes from the index
+bundled with the rule. With `debug = true` each jar reports `Bundled`, `Disk`
+or `Scan` and the milliseconds spent.
 
 #### SuspendSideEffects
 
