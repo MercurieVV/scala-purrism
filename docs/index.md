@@ -336,7 +336,24 @@ The bound is kept as written when the rule cannot be sure, in these cases:
 - the typeclass is defined in the project's own sources (only classpath
   typeclasses are indexed);
 - several equally weak typeclasses fit (the choice is ambiguous), which is
-  reported as the lint `TypeclassWeakening.ambiguous-weakening`.
+  reported as the lint `TypeclassWeakening.ambiguous-weakening`;
+- the type parameter holds more than one evidence (`F[_]: Temporal: Sync`, or
+  a bound next to a `using`/`implicit` parameter mentioning `F`): all of its
+  bounds are kept, since weakening each alone could produce two identical or
+  competing instances;
+- a call of the def in the same file runs where two or more in-scope
+  evidences for the type argument descend from the weakened typeclass
+  (`bump(fa)` inside `[F[_]: Temporal: Sync]` would find two `Functor[F]`);
+- the target's simple name already means something else in the file (a local
+  `trait Functor`, another library's `Functor` imported explicitly);
+- under `TypelevelPurrism`, another member (`PreferKleisli`, `PreferArrow`)
+  rewrites the same def or Kleisli body.
+
+Known risk: the rule sees one file at a time. A caller in another file whose
+scope holds two evidences descending from the weakened typeclass (for
+example `[F[_]: Temporal: Sync]` calling a `bump` now bounded by `Functor`)
+gets an "Ambiguous given instances" error there. Pass the evidence explicitly
+or revert that bound.
 
 Two-parameter typeclasses render through their aliases (`MonadThrow`,
 `ApplicativeThrow`, `MonadCancelThrow`). A tagless algebra such as
@@ -394,9 +411,15 @@ TypeclassWeakening {
 ```
 
 The first run scans library jars and stores one index row per jar in
-`cacheDir`; later runs read it from disk. Cats itself comes from the index
-bundled with the rule. With `debug = true` each jar reports `Bundled`, `Disk`
-or `Scan` and the milliseconds spent.
+`cacheDir`; later runs read it from disk. With `debug = true` each jar
+reports `Bundled`, `Disk` or `Scan` and the milliseconds spent.
+
+Supported range: the bundled index covers only cats-core and cats-kernel
+2.13.0. Any other cats version, cats-effect, and every other library are
+scanned from the TASTy on the classpath, so results can differ by library
+version. The rule is built and tested with Scala 3.8 (TASTy 3.8). Newer TASTy
+the bundled reader cannot decode, or an incompatible classpath, makes the
+index unavailable, and then the rule keeps every bound and changes nothing.
 
 #### SuspendSideEffects
 
