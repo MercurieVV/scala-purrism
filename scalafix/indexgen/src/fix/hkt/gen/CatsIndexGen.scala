@@ -282,7 +282,7 @@ object CatsIndexGen {
       generatedHeader: String,
       unsortedRows: List[List[String]]
   ): Unit = {
-    val rows = unsortedRows.distinct.sortWith(compareRows(_, _) < 0)
+    val rows = TypeclassInspector.sortRows(unsortedRows)
     rows.foreach { row =>
       require(
         row.size == header.size,
@@ -306,11 +306,4 @@ object CatsIndexGen {
           .mkString("", "\n", if (rows.isEmpty) "" else "\n")
     Files.writeString(path, text, StandardCharsets.UTF_8)
   }
-
-  private def compareRows(left: List[String], right: List[String]): Int =
-    left.iterator
-      .zip(right.iterator)
-      .map { case (a, b) => a.compareTo(b) }
-      .find(_ != 0)
-      .getOrElse(Integer.compare(left.size, right.size))
 }

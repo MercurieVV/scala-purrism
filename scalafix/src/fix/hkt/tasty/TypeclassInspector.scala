@@ -47,7 +47,6 @@ object TypeclassInspector {
   val AnyScope: Scope = Scope(_ => true, _ => true)
 
   private final case class RawTypeclass(
-      fullName: String,
       symbol: String,
       parents: List[String],
       kind: String,
@@ -57,7 +56,6 @@ object TypeclassInspector {
   )
 
   private final case class RawCapability(
-      typeclassName: String,
       typeclass: String,
       method: String,
       owner: String,
@@ -108,6 +106,20 @@ object TypeclassInspector {
       jars: List[Path],
       dependencies: List[Path],
       scope: Scope
+  ): Either[String, InspectedRows] =
+    scanJars(jars, dependencies, scope).map(finish)
+
+  /** Rows straight out of TASTy, before [[finish]].
+    *
+    * Self-contained per scan: a typeclass row names every typeclass parent
+    * (also one that lives in a jar outside `jars`), its depth column is `0`,
+    * and capability/syntax rows are not yet restricted to known owners. That is
+    * what makes rows of separately scanned jars mergeable.
+    */
+  def scanJars(
+      jars: List[Path],
+      dependencies: List[Path],
+      scope: Scope
   ): Either[String, InspectedRows] = {
     val sink = new AtomicReference[Raw](EmptyRaw)
     catching(
@@ -117,7 +129,7 @@ object TypeclassInspector {
         dependencies.map(_.toString)
       )(new Collector(scope, sink))
     ).flatMap { inspected =>
-      if (inspected) Right(rows(sink.get()))
+      if (inspected) Right(rawRows(sink.get()))
       else Left(s"TASTy inspection failed for $jars")
     }
   }
@@ -134,39 +146,23 @@ object TypeclassInspector {
         )
     }
 
-  private def rows(raw: Raw): InspectedRows = {
-    val uniqueTypeclasses =
-      raw.typeclasses.groupBy(_.symbol).values.flatMap(_.headOption).toList
-    val names = uniqueTypeclasses.iterator.map(tc => tc.fullName -> tc).toMap
-    val symbols = uniqueTypeclasses.iterator.map(tc => tc.symbol -> tc).toMap
-    val parentsBySymbol = uniqueTypeclasses.iterator.map { tc =>
-      tc.symbol -> tc.parents.flatMap(names.get).map(_.symbol).distinct.sorted
-    }.toMap
+  private val TypeclassColumns = 8
 
-    def ancestors(symbol: String, seen: Set[String]): Set[String] =
-      parentsBySymbol.getOrElse(symbol, Nil).foldLeft(Set.empty[String]) {
-        case (acc, parent) if seen(parent) => acc
-        case (acc, parent) =>
-          acc + parent ++ ancestors(parent, seen + parent)
-      }
-
-    val typeclassRows = uniqueTypeclasses.map { tc =>
-      List(
-        tc.symbol,
-        parentsBySymbol.getOrElse(tc.symbol, Nil).mkString(","),
-        tc.kind,
-        tc.typeParams.toString,
-        ancestors(tc.symbol, Set(tc.symbol)).size.toString,
-        tc.renderName,
-        tc.importPath,
-        "true"
-      )
-    }
-
-    val capabilityRows = raw.capabilities
-      .filter(row => names.contains(row.typeclassName))
-      .filter(row => symbols.contains(ownerTypeSymbol(row.owner)))
-      .map { row =>
+  private def rawRows(raw: Raw): InspectedRows =
+    InspectedRows(
+      raw.typeclasses.map { tc =>
+        List(
+          tc.symbol,
+          tc.parents.mkString(","),
+          tc.kind,
+          tc.typeParams.toString,
+          "0",
+          tc.renderName,
+          tc.importPath,
+          "true"
+        )
+      },
+      raw.capabilities.map { row =>
         List(
           row.typeclass,
           row.method,
@@ -176,22 +172,89 @@ object TypeclassInspector {
           row.arity.toString,
           row.exits.toString
         )
+      },
+      raw.syntax.map(row =>
+        List(row.syntaxMethod, row.owner, row.method, row.importPath)
+      ),
+      raw.evidence,
+      raw.aliases
+    )
+
+  /** Post-processing over (possibly merged) [[scanJars]] rows, shared by the
+    * index generator and the runtime loader: one row per typeclass, parents
+    * restricted to typeclasses present in `rows`, depth recomputed over that
+    * hierarchy, capabilities kept only when both typeclass and owner are
+    * present, syntax kept only when it targets a kept capability.
+    *
+    * Idempotent: finished rows pass through unchanged (up to duplicates).
+    */
+  def finish(rows: InspectedRows): InspectedRows = {
+    val uniqueTypeclasses = rows.typeclasses
+      .collect {
+        case row @ (symbol :: _) if row.size == TypeclassColumns =>
+          symbol -> row
       }
+      .groupBy(_._1)
+      .values
+      .flatMap(_.headOption)
+      .toList
+    val symbols = uniqueTypeclasses.iterator.map(_._1).toSet
+    val parentsBySymbol = uniqueTypeclasses.iterator.map { case (symbol, row) =>
+      symbol -> row
+        .lift(1)
+        .toList
+        .flatMap(splitList)
+        .filter(symbols.contains)
+        .distinct
+        .sorted
+    }.toMap
+
+    def ancestors(symbol: String, seen: Set[String]): Set[String] =
+      parentsBySymbol.getOrElse(symbol, Nil).foldLeft(Set.empty[String]) {
+        case (acc, parent) if seen(parent) => acc
+        case (acc, parent) =>
+          acc + parent ++ ancestors(parent, seen + parent)
+      }
+
+    val typeclassRows = uniqueTypeclasses.map { case (symbol, row) =>
+      row
+        .updated(1, parentsBySymbol.getOrElse(symbol, Nil).mkString(","))
+        .updated(4, ancestors(symbol, Set(symbol)).size.toString)
+    }
+
+    val capabilityRows = rows.capabilities.filter { row =>
+      row.headOption.exists(symbols.contains) &&
+      row.lift(2).exists(owner => symbols.contains(ownerTypeSymbol(owner)))
+    }.distinct
 
     val capabilityMethods =
       capabilityRows.iterator.flatMap(row => row.lift(2).zip(row.lift(1))).toSet
-    val syntaxRows = raw.syntax
-      .filter(row => capabilityMethods.contains(row.owner -> row.method))
-      .map(row => List(row.syntaxMethod, row.owner, row.method, row.importPath))
+    val syntaxRows = rows.syntax
+      .filter(row => row.lift(1).zip(row.lift(2)).exists(capabilityMethods))
+      .distinct
 
     InspectedRows(
       typeclassRows,
       capabilityRows,
       syntaxRows,
-      raw.evidence.distinct,
-      raw.aliases.distinct
+      rows.evidence.distinct,
+      rows.aliases.distinct
     )
   }
+
+  /** Distinct rows in the canonical (column-wise lexicographic) order. */
+  def sortRows(rows: List[List[String]]): List[List[String]] =
+    rows.distinct.sortWith(compareRows(_, _) < 0)
+
+  private def compareRows(left: List[String], right: List[String]): Int =
+    left.iterator
+      .zip(right.iterator)
+      .map { case (a, b) => a.compareTo(b) }
+      .find(_ != 0)
+      .getOrElse(Integer.compare(left.size, right.size))
+
+  private def splitList(cell: String): List[String] =
+    if (cell.isEmpty) Nil else cell.split(",", -1).toList
 
   private def ownerTypeSymbol(method: String): String = {
     val methodStart = method.lastIndexOf('#')
@@ -280,15 +343,16 @@ object TypeclassInspector {
             case tree: TypeTree => Some(tree.tpe.dealias.typeSymbol)
             case _              => None
           }
-          .filter(_ != Symbol.noSymbol)
-          .map(_.fullName)
+          // Kept even when the parent lives in a jar outside this scan, so
+          // per-jar rows stay mergeable; `finish` drops unknown parents.
+          .filter(parent => parent != Symbol.noSymbol && isTypeclass(parent))
+          .map(semanticSymbol(_))
           .distinct
         val renderName = tc.name
         val importPath =
           if (tc.fullName.startsWith("cats.kernel.")) s"cats.$renderName"
           else tc.fullName
         val raw = RawTypeclass(
-          tc.fullName,
           semanticSymbol(tc),
           parents,
           kind,
@@ -303,7 +367,6 @@ object TypeclassInspector {
           .map { method =>
             val root = methodRoot(method)
             RawCapability(
-              tc.fullName,
               semanticSymbol(tc),
               semanticSymbol(method),
               semanticSymbol(root),
