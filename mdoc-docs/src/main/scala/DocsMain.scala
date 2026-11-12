@@ -47,7 +47,12 @@ object DocsMain:
       .withClasspath(System.getProperty("java.class.path"))
       .withArgs(args.toList)
     val exitCode = mdoc.Main.process(settings)
-    if exitCode != 0 then sys.exit(exitCode)
+    if exitCode != 0 then
+      // mdoc can fail without printing an error line (CI showed
+      // "Compiled ... (0 errors)" followed by a bare non-zero exit).
+      System.err.println(s"docs.run: mdoc exited with code $exitCode")
+      System.err.flush()
+      sys.exit(exitCode)
 
     Files.createDirectories(siteOut)
     renderSite(mdocOut, siteOut)
