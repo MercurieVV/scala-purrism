@@ -3,6 +3,8 @@ package fix
 import metaconfig.Configured
 import scalafix.v1._
 
+import fix.hkt.Planned
+
 /** The three rules that answer one question -- what in this signature is more
   * general than it says -- run together.
   *
@@ -59,24 +61,30 @@ final class PreferTypeParameters(
   /** Built once, not per document: each sub-rule holds a lazily built index --
     * and, under `crossFile`, a scan of every source in the project.
     */
-  private val rules: List[SemanticRule] =
-    List(
-      new PreferPolymorphicCollections(
-        container,
-        containerCrossFile,
-        classpath
-      ),
-      new PreferPolymorphicCollectionOps(
-        element,
-        elementCrossFile,
-        elementTypes,
-        classpath
-      ),
-      new PreferPolymorphicTypeclasses(hkt, hktCrossFile, classpath)
+  private val containers =
+    new PreferPolymorphicCollections(
+      container,
+      containerCrossFile,
+      classpath
     )
+  private val elements =
+    new PreferPolymorphicCollectionOps(
+      element,
+      elementCrossFile,
+      elementTypes,
+      classpath
+    )
+  private val constructors =
+    new PreferPolymorphicTypeclasses(hkt, hktCrossFile, classpath)
 
-  override def fix(implicit doc: SemanticDocument): Patch =
-    rules.map(_.fix).asPatch
+  override def fix(implicit doc: SemanticDocument): Patch = planned.patch
+
+  /** [[fix]], plus the type parameters its rewrites rely on: the umbrella hands
+    * them to `TypeclassWeakening`, which then keeps their bounds (see
+    * [[fix.hkt.Planned]]).
+    */
+  private[fix] def planned(implicit doc: SemanticDocument): Planned =
+    containers.planned + elements.planned + constructors.planned
 }
 
 object PreferTypeParameters {

@@ -10,6 +10,7 @@ import fix.hkt.CapabilitySolver
 import fix.hkt.CatsIndex
 import fix.hkt.ElementRule
 import fix.hkt.HktRewriter
+import fix.hkt.Planned
 import fix.hkt.UsageAnalyzer
 import fix.hkt.UsageResult
 
@@ -174,23 +175,28 @@ final class PreferPolymorphicCollectionOps(
     */
   private lazy val index: CatsIndex = CatsIndex.load().withElementRules
 
-  override def fix(implicit doc: SemanticDocument): Patch = {
+  override def fix(implicit doc: SemanticDocument): Patch = planned.patch
+
+  /** [[fix]], plus the type parameters its rewrites rely on (see [[Planned]]).
+    */
+  private[fix] def planned(implicit doc: SemanticDocument): Planned = {
     val suppression = Suppression.forDocument
     val handedOver = ContainerCallSites.valueReferences(doc.tree)
 
-    doc.tree.collect {
+    Planned.all(doc.tree.collect {
       case defn: Defn.Def if !suppression.suppresses(defn) =>
-        UsageAnalyzer
-          .analyze(defn, index, config.widenPublic)
-          .collect {
-            case usage: UsageResult.Abstractable
-                if isContainer(usage.constructor) &&
-                  !handedOver.contains(defn.name.value) &&
-                  !scope.vetoes(defn.symbol.value) =>
-              rewrite(usage)
-          }
-          .asPatch
-    }.asPatch + callSiteRepairs
+        Planned.all(
+          UsageAnalyzer
+            .analyze(defn, index, config.widenPublic)
+            .collect {
+              case usage: UsageResult.Abstractable
+                  if isContainer(usage.constructor) &&
+                    !handedOver.contains(defn.name.value) &&
+                    !scope.vetoes(defn.symbol.value) =>
+                rewrite(usage)
+            }
+        )
+    }) + callSiteRepairs
   }
 
   /** The other half of a widening: a call that named its type arguments has to
@@ -208,11 +214,11 @@ final class PreferPolymorphicCollectionOps(
 
   private def rewrite(
       usage: UsageResult.Abstractable
-  )(implicit doc: SemanticDocument): Patch = {
+  )(implicit doc: SemanticDocument): Planned = {
     val renames = elementCalls(usage)
-    if (renames.isEmpty || !config.rewrite) Patch.empty
+    if (renames.isEmpty || !config.rewrite) Planned.empty
     else if (!ContainerFlow.staysAbstract(usage, index.exitsConstructor))
-      Patch.empty
+      Planned.empty
     else
       CapabilitySolver.solve(usage.ops, index, config.maxConstraints) match {
         case Right(solution) if solution.constraints.nonEmpty =>
@@ -221,14 +227,14 @@ final class PreferPolymorphicCollectionOps(
               HktRewriter
                 .freshTypeParamName(usage.defn, TypeParamNames)
                 .map { name =>
-                  HktRewriter.rewrite(usage, solution, index, name) +
+                  HktRewriter.plan(usage, solution, index, name) +
                     renames.map(renameCall).asPatch +
                     boundPatch
                 }
-                .getOrElse(Patch.empty)
-            case None => Patch.empty
+                .getOrElse(Planned.empty)
+            case None => Planned.empty
           }
-        case _ => Patch.empty
+        case _ => Planned.empty
       }
   }
 

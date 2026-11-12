@@ -97,13 +97,19 @@ final class TypelevelPurrism(
     val (kleisliPatch, kleisliTrees) = new PreferKleisli().planned
     val (arrowPatch, arrowTrees) =
       new PreferArrow(preferArrow, classpath).planned
-    Weakening.patch(classpath, weakening, kleisliTrees ++ arrowTrees) +
+    // Held as a field rather than constructed here: it owns the Cats index
+    // and, under `crossFile`, a scan of every source in the project, and
+    // building that per document would redo both for every file.
+    val typeParametersPlan = typeParameters.planned
+    Weakening.patch(
+      classpath,
+      weakening,
+      kleisliTrees ++ arrowTrees,
+      typeParametersPlan.keptParams
+    ) +
       kleisliPatch +
       arrowPatch +
-      // Held as a field rather than constructed here: it owns the Cats index
-      // and, under `crossFile`, a scan of every source in the project, and
-      // building that per document would redo both for every file.
-      typeParameters.fix +
+      typeParametersPlan.patch +
       new PreferCatsExpressions().fix
   }
 }

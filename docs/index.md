@@ -347,7 +347,11 @@ The bound is kept as written when the rule cannot be sure, in these cases:
 - the target's simple name already means something else in the file (a local
   `trait Functor`, another library's `Functor` imported explicitly);
 - under `TypelevelPurrism`, another member (`PreferKleisli`, `PreferArrow`)
-  rewrites the same def or Kleisli body.
+  rewrites the same def or Kleisli body;
+- under `TypelevelPurrism`, `PreferTypeParameters` builds on the type
+  parameter: it reuses it for a widened `List`/`Option` use (relying on its
+  bound as written, e.g. `Traverse` for a moved `foldLeft`), or appends a new
+  type parameter right after it.
 
 Known risk: the rule sees one file at a time. A caller in another file whose
 scope holds two evidences descending from the weakened typeclass (for

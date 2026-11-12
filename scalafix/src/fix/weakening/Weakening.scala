@@ -34,11 +34,16 @@ private[fix] object Weakening {
     *   trees other rules of the same run replace wholesale (the umbrella's
     *   `PreferKleisli` and `PreferArrow` rewrites): a bound inside or around
     *   one is kept, since both patches would edit the same tokens.
+    * @param keptParams
+    *   type parameters another rule of the same run builds on (the umbrella's
+    *   `PreferTypeParameters` reuses one, relying on its bound as written, or
+    *   appends a parameter after it): a bound inside one is kept.
     */
   def patch(
       classpath: List[Path],
       config: TypeclassWeakeningConfig,
-      rewritten: List[Tree] = Nil
+      rewritten: List[Tree] = Nil,
+      keptParams: List[Tree] = Nil
   )(using doc: SemanticDocument): Patch = {
     val seeds = boundSymbols(doc.tree)
     if (seeds.isEmpty) Patch.empty
@@ -50,7 +55,7 @@ private[fix] object Weakening {
         case Left(error) =>
           debug(config, s"index unavailable ($error); every bound is kept")
           Patch.empty
-        case Right(index) => patchWith(index, rewritten)
+        case Right(index) => patchWith(index, rewritten, keptParams)
       }
   }
 
@@ -106,13 +111,16 @@ private[fix] object Weakening {
 
   private def patchWith(
       index: CatsIndex,
-      rewritten: List[Tree]
+      rewritten: List[Tree],
+      keptParams: List[Tree]
   )(using doc: SemanticDocument): Patch = {
     val rewrittenSpans = rewritten.map(_.pos)
+    val keptSpans = keptParams.map(_.pos)
     val candidates = Requirements
       .sites(doc.tree, index)
       .filterNot(overrides)
       .filterNot(site => rewrittenSpans.exists(overlaps(site.owner.pos, _)))
+      .filterNot(site => keptSpans.exists(overlaps(site.bound.pos, _)))
       .filterNot(Evidences.several)
     val decisions = settle(candidates, index)
     val replaced = decisions.collect { case (site, Decision.Replace(target)) =>
@@ -403,6 +411,9 @@ private[fix] object Weakening {
 
   /** Removes the import of each replaced bound's original typeclass when
     * nothing else in the file refers to it and no replacement re-adds it.
+    *
+    * The importee itself is removed: `Patch.removeGlobalImport` leaves an
+    * explicit `import cats.Monad` in place.
     */
   private def removedImports(
       replaced: List[(BoundSite, Rendered)]
@@ -416,18 +427,21 @@ private[fix] object Weakening {
           ) && !insideImport(name) =>
         stem(name.symbol)
     }.toSet
-    replaced
+    val stale = replaced
       .map(_._1.bound.symbol)
       .distinct
       .filterNot(original =>
         references.contains(stem(original)) ||
           added.contains(original.displayName)
       )
-      .map(original =>
-        Patch.removeGlobalImport(original) +
-          Patch.removeGlobalImport(Symbol(stem(original) + "."))
-      )
-      .asPatch
+      .map(stem)
+      .toSet
+    if (stale.isEmpty) Patch.empty
+    else
+      doc.tree.collect {
+        case importee: Importee.Name if stale(stem(importee.name.symbol)) =>
+          Patch.removeImportee(importee)
+      }.asPatch
   }
 
   /** A type and its companion term share a stem: `a/B#` and `a/B.`. */

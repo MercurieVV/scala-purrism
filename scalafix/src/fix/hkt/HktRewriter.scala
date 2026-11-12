@@ -13,14 +13,25 @@ object HktRewriter {
       solution: CapabilitySolver.Solution,
       index: CatsIndex,
       typeParamName: String
-  )(implicit doc: SemanticDocument): Patch = {
+  )(implicit doc: SemanticDocument): Patch =
+    plan(usage, solution, index, typeParamName).patch
+
+  /** [[rewrite]], plus the type parameters whose bounds the patch relies on
+    * (see [[Planned]]).
+    */
+  private[fix] def plan(
+      usage: UsageResult.Abstractable,
+      solution: CapabilitySolver.Solution,
+      index: CatsIndex,
+      typeParamName: String
+  )(implicit doc: SemanticDocument): Planned = {
     val kind = solution.constraints.headOption
       .flatMap(index.typeclasses.get)
       .map(_.kind)
       .getOrElse(kindOf(usage.target))
 
     kind match {
-      case KindShape.Binary => Patch.empty
+      case KindShape.Binary => Planned.empty
       case _ =>
         val reusable = reusableTypeParam(usage, solution, index, kind)
         val selectedName = reusable.map(_.name.value).getOrElse(typeParamName)
@@ -33,7 +44,8 @@ object HktRewriter {
         val importPatch = addMissingImports(usage.defn, imports.distinct.sorted)
 
         reusable match {
-          case Some(_) => replacementPatch + importPatch
+          case Some(reused) =>
+            Planned(replacementPatch + importPatch, List(reused))
           case None =>
             val renderedExtras = renderedExtraArguments(usage, solution)
             val pinnedExtras = renderedExtras != solution.extraTypeParams
@@ -63,7 +75,10 @@ object HktRewriter {
                 )
               else Patch.empty
 
-            typeParamPatch + constraintPatch + replacementPatch + importPatch
+            Planned(
+              typeParamPatch + constraintPatch + replacementPatch + importPatch,
+              defTypeParameters(usage.defn).lastOption.toList
+            )
         }
     }
   }
