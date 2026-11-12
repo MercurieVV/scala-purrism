@@ -22,7 +22,11 @@ object RuntimeIndex {
   private val EmptyRows = InspectedRows(Nil, Nil, Nil, Nil, Nil)
 
   private val jarRows = new ConcurrentHashMap[String, JarRows]()
-  private val indexes = new ConcurrentHashMap[List[Path], CatsIndex]()
+
+  /** Keyed by the closure's sorted [[TastyScanCache.key]]s (path, size, mtime),
+    * so a jar rebuilt at the same path yields a fresh index.
+    */
+  private val indexes = new ConcurrentHashMap[List[String], CatsIndex]()
 
   /** The index over the jars of `seeds` closed over their ancestors' jars.
     *
@@ -40,12 +44,12 @@ object RuntimeIndex {
       .flatMap(JarLocator.jarOf(_, classpath))
       .distinct
     val closure = close(classpath, seedJars, Map.empty, config)
-    val jars = closure.keys.toList.sortBy(_.toString)
-    Option(indexes.get(jars)) match {
+    val memoKey = closure.keys.toList.map(TastyScanCache.key).sorted
+    Option(indexes.get(memoKey)) match {
       case Some(index) => Right(index)
       case None =>
-        build(closure.values.toList).map(index =>
-          Option(indexes.putIfAbsent(jars, index)).getOrElse(index)
+        build(closure.toList).map(index =>
+          Option(indexes.putIfAbsent(memoKey, index)).getOrElse(index)
         )
     }
   }
@@ -95,18 +99,37 @@ object RuntimeIndex {
     }
   }
 
-  private def build(jars: List[JarRows]): Either[String, CatsIndex] = {
-    val merged = TypeclassInspector.finish(
-      jars.map(_.rows).foldLeft(EmptyRows) { (acc, rows) =>
-        InspectedRows(
-          acc.typeclasses ++ rows.typeclasses,
-          acc.capabilities ++ rows.capabilities,
-          acc.syntax ++ rows.syntax,
-          acc.evidence ++ rows.evidence,
-          acc.aliases ++ rows.aliases
-        )
-      }
+  /** Rows of several jars merged in a deterministic order -- bundled sources
+    * first, then by jar path -- and finished. `finish` keeps the first row per
+    * typeclass symbol, so this order decides which source wins a duplicate.
+    */
+  private[tasty] def merge(
+      jars: List[(Path, InspectedRows, Option[IndexSource])]
+  ): InspectedRows =
+    TypeclassInspector.finish(
+      jars
+        .sortBy { case (path, _, source) =>
+          (!source.contains(IndexSource.Bundled), path.toString)
+        }
+        .map(_._2)
+        .foldLeft(EmptyRows) { (acc, rows) =>
+          InspectedRows(
+            acc.typeclasses ++ rows.typeclasses,
+            acc.capabilities ++ rows.capabilities,
+            acc.syntax ++ rows.syntax,
+            acc.evidence ++ rows.evidence,
+            acc.aliases ++ rows.aliases
+          )
+        }
     )
+
+  private def build(
+      closure: List[(Path, JarRows)]
+  ): Either[String, CatsIndex] = {
+    val jars = closure.map(_._2)
+    val merged = merge(closure.map { case (path, jar) =>
+      (path, jar.rows, jar.source)
+    })
     // The hand-written stdlib table names cats capabilities; it only applies
     // when the bundled cats rows are part of the index.
     val stdlib =

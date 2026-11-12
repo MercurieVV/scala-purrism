@@ -124,10 +124,31 @@ object TastyScanCache {
       }
       .flatMap(fromTables)
 
+  /** Scans a private copy of `jar`: the compiler behind `TastyInspector` caches
+    * archive contents by path for the life of the JVM, so a jar rebuilt in
+    * place would otherwise be read with its old contents. The original path is
+    * dropped from `deps` so it cannot shadow the copy.
+    */
   private def scan(jar: Path, deps: List[Path]): Either[String, InspectedRows] =
-    TypeclassInspector
-      .scanJars(List(jar), deps, TypeclassInspector.AnyScope)
-      .map(normalize)
+    Try(Files.createTempDirectory("purrism-tasty-scan")).toEither.left
+      .map(error => s"cannot create scan directory: ${error.getMessage}")
+      .flatMap { scratch =>
+        val copy = scratch.resolve(
+          Option(jar.getFileName).map(_.toString).getOrElse("scan.jar")
+        )
+        val result = Try(Files.copy(jar, copy)).toEither.left
+          .map(error => s"cannot copy $jar: ${error.getMessage}")
+          .flatMap(_ =>
+            TypeclassInspector.scanJars(
+              List(copy),
+              deps.filterNot(_ == jar),
+              TypeclassInspector.AnyScope
+            )
+          )
+          .map(normalize)
+        deleteTree(scratch)
+        result
+      }
 
   private def normalize(rows: InspectedRows): InspectedRows =
     InspectedRows(

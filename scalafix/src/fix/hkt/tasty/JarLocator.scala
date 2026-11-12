@@ -6,6 +6,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.zip.ZipFile
 
 import scala.jdk.CollectionConverters.*
+import scala.util.Try
 import scala.util.Using
 
 import scalafix.v1.Symbol
@@ -13,7 +14,9 @@ import scalafix.v1.Symbol
 /** Finds the classpath jar whose TASTy defines a SemanticDB symbol. */
 object JarLocator {
 
-  private val entries = new ConcurrentHashMap[Path, Set[String]]()
+  /** Keyed by (path, size, mtime): a jar rebuilt in place is re-listed. */
+  private val entries =
+    new ConcurrentHashMap[(Path, Long, Long), Set[String]]()
 
   /** `a/b/C#` (or any member of it) ⇒ the first jar holding `a/b/C.tasty`.
     *
@@ -42,11 +45,16 @@ object JarLocator {
   private def isJar(path: Path): Boolean =
     path.getFileName.toString.endsWith(".jar") && Files.isRegularFile(path)
 
-  private def entriesOf(jar: Path): Set[String] =
-    entries.computeIfAbsent(
+  private def entriesOf(jar: Path): Set[String] = {
+    val stamp = (
       jar,
-      path =>
-        Using(new ZipFile(path.toFile)) { zip =>
+      Try(Files.size(jar)).getOrElse(-1L),
+      Try(Files.getLastModifiedTime(jar).toMillis).getOrElse(-1L)
+    )
+    entries.computeIfAbsent(
+      stamp,
+      _ =>
+        Using(new ZipFile(jar.toFile)) { zip =>
           zip
             .entries()
             .asScala
@@ -55,4 +63,5 @@ object JarLocator {
             .toSet
         }.getOrElse(Set.empty[String])
     )
+  }
 }
