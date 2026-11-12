@@ -10,6 +10,43 @@ final class CatsIndexSuite extends FunSuite {
 
   private lazy val index: CatsIndex = CatsIndex.load()
 
+  test("evidenceOf lists the typeclasses of a method's implicit params") {
+    assert(
+      index
+        .evidenceOf(Symbol("cats/Traverse#traverse()."))
+        .contains(Symbol("cats/Applicative#"))
+    )
+    assertEquals(index.evidenceOf(Symbol("cats/Functor#map().")), Nil)
+  }
+
+  test("aliasesOf finds MonadThrow as MonadError fixed to Throwable") {
+    val alias = index
+      .aliasesOf(Symbol("cats/MonadError#"))
+      .find(_.alias == Symbol("cats/package.MonadThrow#"))
+      .getOrElse(fail("MonadThrow alias missing"))
+    assertEquals(alias.fixedArgs, List("java/lang/Throwable#"))
+    assertEquals(alias.renderName, "MonadThrow")
+    assertEquals(alias.importPath, "cats.MonadThrow")
+    assertEquals(
+      index.aliasTarget(Symbol("cats/package.MonadThrow#")),
+      Some(alias)
+    )
+    assertEquals(index.aliasTarget(Symbol("cats/Functor#")), None)
+  }
+
+  test("withTables parses rows and rejects malformed ones") {
+    val ok = index.withTables(
+      Iterator("x/Y#z().\tcats/Functor#,cats/Monad#"),
+      Iterator("a/A#\tA\ta.A\tcats/MonadError#\tjava/lang/Throwable#")
+    )
+    assertEquals(
+      ok.map(_.evidenceOf(Symbol("x/Y#z()."))),
+      Right(List(Symbol("cats/Functor#"), Symbol("cats/Monad#")))
+    )
+    assert(index.withTables(Iterator("bad"), Iterator.empty).isLeft)
+    assert(index.withTables(Iterator.empty, Iterator("bad")).isLeft)
+  }
+
   test("isAncestor is transitive over the Cats lattice, and not symmetric") {
     assert(index.isAncestor(Symbol("cats/Functor#"), Symbol("cats/Monad#")))
     assert(!index.isAncestor(Symbol("cats/Monad#"), Symbol("cats/Functor#")))

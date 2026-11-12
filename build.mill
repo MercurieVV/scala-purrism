@@ -266,7 +266,9 @@ object scalafix
       "typeclasses.tsv",
       "capabilities.tsv",
       "syntax.tsv",
-      "gaps.tsv"
+      "gaps.tsv",
+      "evidence.tsv",
+      "aliases.tsv"
     ).foreach { fileName =>
       val expected = checkedIn / fileName
       val actual = generated / fileName

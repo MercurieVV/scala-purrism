@@ -45,6 +45,32 @@ final class TypeclassInspectorSuite extends FunSuite {
     assert(rows.typeclasses.map(_.head).contains("cats/effect/kernel/Sync#"))
   }
 
+  test("aliases: MonadCancelThrow is MonadCancel fixed to Throwable") {
+    val rows = TypeclassInspector
+      .inspectJar(
+        jar("cats-effect-kernel_3-"),
+        classpath,
+        TypeclassInspector.AnyScope
+      )
+      .fold(fail(_), identity)
+    val alias = rows.aliases
+      .find(_.headOption.exists(_.endsWith(".MonadCancelThrow#")))
+      .getOrElse(fail(s"no MonadCancelThrow in ${rows.aliases}"))
+    assertEquals(alias(1), "MonadCancelThrow")
+    assertEquals(alias(3), "cats/effect/kernel/MonadCancel#")
+    assertEquals(alias(4), "java/lang/Throwable#")
+  }
+
+  test("evidence: Traverse#traverse needs Applicative (cats)") {
+    val rows = TypeclassInspector
+      .inspectJar(jar("cats-core_3-"), classpath, TypeclassInspector.CatsScope)
+      .fold(fail(_), identity)
+    val row = rows.evidence
+      .find(_.headOption.contains("cats/Traverse#traverse()."))
+      .getOrElse(fail("traverse evidence missing"))
+    assert(row(1).split(",").contains("cats/Applicative#"))
+  }
+
   test("a LinkageError (non-NonFatal) becomes Left naming the class") {
     val result = TypeclassInspector.catching[Int](
       throw new NoClassDefFoundError("missing/Dep")

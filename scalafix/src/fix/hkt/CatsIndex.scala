@@ -4,6 +4,28 @@ import java.nio.charset.StandardCharsets
 
 import scalafix.v1.Symbol
 
+/** A type alias that fixes trailing arguments of a typeclass, e.g.
+  * `type MonadThrow[F[_]] = MonadError[F, Throwable]`.
+  *
+  * @param alias
+  *   SemanticDB symbol of the alias itself
+  * @param renderName
+  *   how the alias is written in source
+  * @param importPath
+  *   fully qualified name to import it from
+  * @param target
+  *   the typeclass the alias stands for
+  * @param fixedArgs
+  *   SemanticDB type symbols of the arguments after the constructor
+  */
+final case class TypeclassAlias(
+    alias: Symbol,
+    renderName: String,
+    importPath: String,
+    target: Symbol,
+    fixedArgs: List[String]
+)
+
 /** In-memory, queryable Cats capability index, loaded from the checked-in TSV
   * artifacts under `scalafix/resources/cats-index/` (see
   * `docs/design/PreferPolymorphicTypeclasses.md`, item 2 and item 7).
@@ -15,8 +37,43 @@ final class CatsIndex private (
     val stdlib: Map[Symbol, List[StdlibEntry]],
     private val syntaxImports: Map[Symbol, String],
     val elementRules: Map[Symbol, ElementRule],
-    private val exitMethods: Set[Symbol]
+    private val exitMethods: Set[Symbol],
+    private val evidence: Map[Symbol, List[Symbol]],
+    private val aliasesByTarget: Map[Symbol, List[TypeclassAlias]]
 ) {
+
+  /** The typeclasses a method demands through `given`/`using` parameters. */
+  def evidenceOf(method: Symbol): List[Symbol] =
+    evidence.getOrElse(method, Nil)
+
+  /** Aliases that stand for `typeclass` (possibly with fixed arguments). */
+  def aliasesOf(typeclass: Symbol): List[TypeclassAlias] =
+    aliasesByTarget.getOrElse(typeclass, Nil)
+
+  /** The alias record for a bound written as an alias, if it is one. */
+  def aliasTarget(alias: Symbol): Option[TypeclassAlias] =
+    aliasesByTarget.valuesIterator.flatten.find(_.alias == alias)
+
+  /** This index with the evidence and alias tables replaced by the given rows.
+    */
+  def withTables(
+      evidenceRows: Iterator[String],
+      aliasRows: Iterator[String]
+  ): Either[String, CatsIndex] =
+    for {
+      evidenceList <- CatsIndex.parseEvidence(evidenceRows)
+      aliasList <- CatsIndex.parseAliases(aliasRows)
+    } yield new CatsIndex(
+      typeclasses,
+      capabilities,
+      syntax,
+      stdlib,
+      syntaxImports,
+      elementRules,
+      exitMethods,
+      evidenceList.toMap,
+      aliasList.groupBy(_.target).view.mapValues(_.sortBy(_.alias.value)).toMap
+    )
 
   /** Whether this capability's result leaves the abstracted type constructor.
     *
@@ -68,7 +125,9 @@ final class CatsIndex private (
       },
       syntaxImports,
       elementRules,
-      exitMethods
+      exitMethods,
+      evidence,
+      aliasesByTarget
     )
 
   private lazy val elementWildcards: List[(String, String, ElementRule)] =
@@ -104,7 +163,9 @@ final class CatsIndex private (
       stdlib,
       Map.empty,
       Map.empty,
-      Set.empty
+      Set.empty,
+      Map.empty,
+      Map.empty
     )
 
   /** Every capability whose method or owner is `method`, across all
@@ -228,18 +289,53 @@ object CatsIndex {
   val syntaxResource: String = "cats-index/syntax.tsv"
   val stdlibResource: String = "cats-index/stdlib.tsv"
   val gapsResource: String = "cats-index/gaps.tsv"
+  val evidenceResource: String = "cats-index/evidence.tsv"
+  val aliasesResource: String = "cats-index/aliases.tsv"
+
+  private[hkt] def parseEvidence(
+      rows: Iterator[String]
+  ): Either[String, List[(Symbol, List[Symbol])]] =
+    parseTable(evidenceResource, rows) {
+      case List(method, typeclasses) if method.nonEmpty =>
+        Right(Symbol(method) -> parseSymbolList(typeclasses))
+      case other => Left(s"expected 2 columns, got ${other.size}")
+    }
+
+  private[hkt] def parseAliases(
+      rows: Iterator[String]
+  ): Either[String, List[TypeclassAlias]] =
+    parseTable(aliasesResource, rows) {
+      case List(alias, renderName, importPath, target, fixedArgs)
+          if alias.nonEmpty && target.nonEmpty =>
+        Right(
+          TypeclassAlias(
+            Symbol(alias),
+            renderName,
+            importPath,
+            Symbol(target),
+            if (fixedArgs.isEmpty) Nil else fixedArgs.split(",", -1).toList
+          )
+        )
+      case other => Left(s"expected 5 columns, got ${other.size}")
+    }
+
+  private def readOptionalResourceLines(resource: String): List[String] =
+    Option(getClass.getClassLoader.getResource(resource))
+      .fold(List.empty[String])(_ => readResourceLines(resource))
 
   def load(): CatsIndex = {
     val typeclassLines = readResourceLines(typeclassesResource)
     val capabilityLines = readResourceLines(capabilitiesResource)
     val syntaxLines = readResourceLines(syntaxResource)
     val stdlibLines = readResourceLines(stdlibResource)
+    val evidenceLines = readOptionalResourceLines(evidenceResource)
+    val aliasLines = readOptionalResourceLines(aliasesResource)
     parse(
       typeclassLines.iterator,
       capabilityLines.iterator,
       syntaxLines.iterator,
       stdlibLines.iterator
-    ) match {
+    ).flatMap(_.withTables(evidenceLines.iterator, aliasLines.iterator)) match {
       case Right(index)  => index
       case Left(message) => throw new IllegalStateException(message)
     }
@@ -339,7 +435,9 @@ object CatsIndex {
       stdlibMap,
       exactSyntaxImports ++ resolvedSyntaxImports,
       elementList.map(rule => rule.concreteMethod -> rule).toMap,
-      exitMethods
+      exitMethods,
+      Map.empty,
+      Map.empty
     )
   }
 

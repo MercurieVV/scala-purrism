@@ -11,7 +11,8 @@ import scala.tasty.inspector.TastyInspector
 /** Rows extracted from library TASTy, in the column order of the Cats index
   * tables (`typeclasses`, `capabilities`, `syntax`).
   *
-  * `evidence` and `aliases` are reserved for later extraction stages.
+  * `evidence` rows are `method, typeclasses(comma)`; `aliases` rows are
+  * `alias, renderName, importPath, target, fixedArgs(comma)`.
   */
 final case class InspectedRows(
     typeclasses: List[List[String]],
@@ -76,17 +77,21 @@ object TypeclassInspector {
   private final case class Raw(
       typeclasses: List[RawTypeclass],
       capabilities: List[RawCapability],
-      syntax: List[RawSyntax]
+      syntax: List[RawSyntax],
+      evidence: List[List[String]],
+      aliases: List[List[String]]
   ) {
     def ++(other: Raw): Raw =
       Raw(
         typeclasses ++ other.typeclasses,
         capabilities ++ other.capabilities,
-        syntax ++ other.syntax
+        syntax ++ other.syntax,
+        evidence ++ other.evidence,
+        aliases ++ other.aliases
       )
   }
 
-  private val EmptyRaw = Raw(Nil, Nil, Nil)
+  private val EmptyRaw = Raw(Nil, Nil, Nil, Nil, Nil)
 
   /** Inspect a single jar. Any failure while reading TASTy becomes `Left`. */
   def inspectJar(
@@ -179,7 +184,13 @@ object TypeclassInspector {
       .filter(row => capabilityMethods.contains(row.owner -> row.method))
       .map(row => List(row.syntaxMethod, row.owner, row.method, row.importPath))
 
-    InspectedRows(typeclassRows, capabilityRows, syntaxRows, Nil, Nil)
+    InspectedRows(
+      typeclassRows,
+      capabilityRows,
+      syntaxRows,
+      raw.evidence.distinct,
+      raw.aliases.distinct
+    )
   }
 
   private def ownerTypeSymbol(method: String): String = {
@@ -215,6 +226,48 @@ object TypeclassInspector {
 
       val candidates = definitions.filter(d => isTypeclass(d.symbol))
       val distinctCandidates = candidates.distinctBy(_.symbol)
+
+      val aliasCollector = new TreeAccumulator[List[TypeDef]] {
+        override def foldTree(definitions: List[TypeDef], tree: Tree)(
+            owner: Symbol
+        ): List[TypeDef] = {
+          val next = tree match {
+            case definition: TypeDef if definition.symbol.isAliasType =>
+              definition :: definitions
+            case _ => definitions
+          }
+          foldOverTree(next, tree)(owner)
+        }
+      }
+      val aliasDefinitions = tastys.foldLeft(List.empty[TypeDef])(
+        (acc, tasty) => aliasCollector.foldTree(acc, tasty.ast)(Symbol.noSymbol)
+      )
+      val aliasRows = aliasDefinitions.flatMap(aliasRow(_).toList)
+
+      val typeclassEvidence = distinctCandidates.flatMap { definition =>
+        definition.symbol.declaredMethods
+          .filter(isPublicMethod)
+          .flatMap(method =>
+            evidenceRow(method, evidenceTypeclasses(method.paramSymss.flatten))
+          )
+      }
+      val syntaxEvidence = definitions
+        .filter(definition => scope.syntaxPackages(definition.symbol.fullName))
+        .flatMap { definition =>
+          val constructorEvidence = evidenceTypeclasses(
+            definition.symbol.primaryConstructor.paramSymss.flatten
+          )
+          definition.symbol.declaredMethods
+            .filter(isPublicMethod)
+            .flatMap(method =>
+              evidenceRow(
+                method,
+                (constructorEvidence ++ evidenceTypeclasses(
+                  method.paramSymss.flatten
+                )).distinct
+              )
+            )
+        }
 
       val perTypeclass = distinctCandidates.map { definition =>
         val tc = definition.symbol
@@ -298,9 +351,77 @@ object TypeclassInspector {
         previous ++ Raw(
           perTypeclass.map(_._1),
           perTypeclass.flatMap(_._2),
-          syntax
+          syntax,
+          typeclassEvidence ++ syntaxEvidence,
+          aliasRows
         )
       )
+    }
+
+    private def evidenceRow(using
+        quotes: Quotes
+    )(
+        method: quotes.reflect.Symbol,
+        typeclasses: List[quotes.reflect.Symbol]
+    ): Option[List[String]] =
+      Option.when(typeclasses.nonEmpty)(
+        List(
+          semanticSymbol(method),
+          typeclasses.map(semanticSymbol(_)).distinct.mkString(",")
+        )
+      )
+
+    /** `type A[F[_]] = Typeclass[F, Concrete...]` as an alias row. */
+    private def aliasRow(using
+        quotes: Quotes
+    )(
+        definition: quotes.reflect.TypeDef
+    ): Option[List[String]] = {
+      import quotes.reflect.*
+
+      def concrete(parameter: String)(tpe: TypeRepr): Boolean =
+        tpe.dealias match {
+          case _: ParamRef    => false
+          case _: AppliedType => false
+          case _: TypeLambda  => false
+          case other =>
+            other.typeSymbol != Symbol.noSymbol &&
+            other.typeSymbol.name != parameter
+        }
+
+      definition.rhs match {
+        case lambda: LambdaTypeTree
+            if lambda.tparams.size == 1 &&
+              (lambda.tparams.head.rhs match {
+                case _: LambdaTypeTree => true
+                case _                 => false
+              }) =>
+          (lambda.body match {
+            case body: TypeTree => Some(body.tpe.dealias)
+            case _              => None
+          }) match {
+            case Some(AppliedType(constructor, first :: rest))
+                if first.typeSymbol.name == lambda.tparams.head.name &&
+                  isTypeclass(constructor.typeSymbol) &&
+                  rest.forall(concrete(lambda.tparams.head.name)) =>
+              val symbol = definition.symbol
+              Some(
+                List(
+                  semanticSymbol(symbol),
+                  symbol.name,
+                  symbol.fullName
+                    .replace(".package$.", ".")
+                    .replace(".package.", "."),
+                  semanticSymbol(constructor.typeSymbol),
+                  rest
+                    .map(arg => semanticSymbol(arg.dealias.typeSymbol))
+                    .mkString(",")
+                )
+              )
+            case _ => None
+          }
+        case _ => None
+      }
     }
 
     /** Whether a capability's result leaves the abstracted type constructor.
@@ -592,6 +713,10 @@ object TypeclassInspector {
             else semanticSymbol(symbol.owner)
           prefix + escapeName(symbol.name) + "/"
         }
+      } else if (symbol.flags.is(Flags.Module) && symbol.isClassDef) {
+        semanticSymbol(symbol.owner) + escapeName(
+          symbol.name.stripSuffix("$")
+        ) + "."
       } else if (symbol.isDefDef) {
         val overloads =
           symbol.owner.declaredMethods.filter(_.name == symbol.name)

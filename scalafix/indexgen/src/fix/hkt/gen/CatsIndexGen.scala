@@ -29,6 +29,9 @@ object CatsIndexGen {
     List("typeclass", "method", "owner", "kind", "derived", "arity", "exits")
   private val SyntaxHeader =
     List("syntaxMethod", "owner", "method", "importPath")
+  private val EvidenceHeader = List("method", "typeclasses")
+  private val AliasHeader =
+    List("alias", "renderName", "importPath", "target", "fixedArgs")
   private val GapsHeader = List("typeclass", "reason", "tracked")
 
   private final case class Options(
@@ -109,6 +112,18 @@ object CatsIndexGen {
       SyntaxHeader,
       generatedHeader,
       syntaxRows
+    )
+    writeTsv(
+      options.output.resolve("evidence.tsv"),
+      EvidenceHeader,
+      generatedHeader,
+      inspected.evidence
+    )
+    writeTsv(
+      options.output.resolve("aliases.tsv"),
+      AliasHeader,
+      generatedHeader,
+      inspected.aliases
     )
     writeTsv(
       options.output.resolve("gaps.tsv"),
