@@ -34,6 +34,10 @@ object HktRewriter {
       case KindShape.Binary => Planned.empty
       case _ =>
         val reusable = reusableTypeParam(usage, solution, index, kind)
+        val typeclassNames = solution.constraints
+          .flatMap(index.typeclasses.get)
+          .map(_.renderName)
+          .toSet
         val selectedName = reusable.map(_.name.value).getOrElse(typeParamName)
         val replacementPatch = replaceSignatureTypes(usage, selectedName, kind)
         val syntaxImports =
@@ -45,7 +49,11 @@ object HktRewriter {
 
         reusable match {
           case Some(reused) =>
-            Planned(replacementPatch + importPatch, List(reused))
+            Planned(
+              replacementPatch + importPatch,
+              List(reused),
+              typeclassNames
+            )
           case None =>
             val renderedExtras = renderedExtraArguments(usage, solution)
             val pinnedExtras = renderedExtras != solution.extraTypeParams
@@ -77,7 +85,8 @@ object HktRewriter {
 
             Planned(
               typeParamPatch + constraintPatch + replacementPatch + importPatch,
-              defTypeParameters(usage.defn).lastOption.toList
+              defTypeParameters(usage.defn).lastOption.toList,
+              typeclassNames
             )
         }
     }

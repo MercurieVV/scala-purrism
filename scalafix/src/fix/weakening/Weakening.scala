@@ -38,12 +38,17 @@ private[fix] object Weakening {
     *   type parameters another rule of the same run builds on (the umbrella's
     *   `PreferTypeParameters` reuses one, relying on its bound as written, or
     *   appends a parameter after it): a bound inside one is kept.
+    * @param reservedNames
+    *   typeclass simple names another rule of the same run writes into the
+    *   file, possibly relying on an import already there: such an import is
+    *   never removed.
     */
   def patch(
       classpath: List[Path],
       config: TypeclassWeakeningConfig,
       rewritten: List[Tree] = Nil,
-      keptParams: List[Tree] = Nil
+      keptParams: List[Tree] = Nil,
+      reservedNames: Set[String] = Set.empty
   )(using doc: SemanticDocument): Patch = {
     val seeds = boundSymbols(doc.tree)
     if (seeds.isEmpty) Patch.empty
@@ -55,7 +60,8 @@ private[fix] object Weakening {
         case Left(error) =>
           debug(config, s"index unavailable ($error); every bound is kept")
           Patch.empty
-        case Right(index) => patchWith(index, rewritten, keptParams)
+        case Right(index) =>
+          patchWith(index, rewritten, keptParams, reservedNames)
       }
   }
 
@@ -112,7 +118,8 @@ private[fix] object Weakening {
   private def patchWith(
       index: CatsIndex,
       rewritten: List[Tree],
-      keptParams: List[Tree]
+      keptParams: List[Tree],
+      reservedNames: Set[String]
   )(using doc: SemanticDocument): Patch = {
     val rewrittenSpans = rewritten.map(_.pos)
     val keptSpans = keptParams.map(_.pos)
@@ -140,7 +147,7 @@ private[fix] object Weakening {
       Patch.replaceTree(site.bound, target.renderName) +
         (if (imported.contains(target.importPath)) Patch.empty
          else addImport(target))
-    }.asPatch + lints.asPatch + removedImports(replaced)
+    }.asPatch + lints.asPatch + removedImports(replaced, reservedNames)
   }
 
   private def overlaps(a: Position, b: Position): Boolean =
@@ -416,15 +423,18 @@ private[fix] object Weakening {
     * explicit `import cats.Monad` in place.
     */
   private def removedImports(
-      replaced: List[(BoundSite, Rendered)]
+      replaced: List[(BoundSite, Rendered)],
+      reservedNames: Set[String]
   )(using doc: SemanticDocument): Patch = {
     val spans = replaced.map(_._1.bound.pos)
-    val added = replaced.map(_._2.renderName).toSet
+    val added = replaced.map(_._2.renderName).toSet ++ reservedNames
+    // An importee's own name is not a reference; a name elsewhere in an
+    // import (`import Monad.ops`) is.
     val references = doc.tree.collect {
       case name: Name
           if !spans.exists(span =>
             span.start <= name.pos.start && name.pos.end <= span.end
-          ) && !insideImport(name) =>
+          ) && !isImportee(name) =>
         stem(name.symbol)
     }.toSet
     val stale = replaced
@@ -447,11 +457,8 @@ private[fix] object Weakening {
   /** A type and its companion term share a stem: `a/B#` and `a/B.`. */
   private def stem(symbol: Symbol): String = symbol.value.dropRight(1)
 
-  private def insideImport(tree: Tree): Boolean =
-    tree.parent.exists {
-      case _: Import => true
-      case other     => insideImport(other)
-    }
+  private def isImportee(name: Name): Boolean =
+    name.parent.exists(_.is[Importee])
 
   private def debug(config: TypeclassWeakeningConfig, message: String): Unit =
     if (config.debug) System.err.println(s"[TypeclassWeakening] $message")

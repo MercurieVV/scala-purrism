@@ -105,7 +105,8 @@ final class TypelevelPurrism(
       classpath,
       weakening,
       kleisliTrees ++ arrowTrees,
-      typeParametersPlan.keptParams
+      typeParametersPlan.keptParams,
+      typeParametersPlan.typeclassNames
     ) +
       kleisliPatch +
       arrowPatch +
