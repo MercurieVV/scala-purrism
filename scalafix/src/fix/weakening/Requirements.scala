@@ -137,7 +137,7 @@ object Requirements {
         .collect { case name: Term.Name => name }
         .filterNot(name => within(name.pos, site.tparam.pos))
         .filterNot(isDefinitionName)
-        .filter(name => name.symbol.info.exists(isEvidence(_, effect)))
+        .filter(name => name.symbol.info.exists(isEvidence(_, effect, index)))
         .forall(name =>
           name.parent.exists {
             case select: Term.Select if select.qual eq name =>
@@ -154,7 +154,7 @@ object Requirements {
 
     val explained =
       synthetics
-        .flatMap(evidenceCalls(_, effect))
+        .flatMap(evidenceCalls(_, effect, index))
         .map { case (function, original) =>
           val conversion = original.flatMap(conversions.get)
           val targets =
@@ -325,48 +325,73 @@ object Requirements {
     * `Symbol.None` when it cannot be named -- with the span of the source
     * expression when that function is one.
     */
-  private def evidenceCalls(tree: SemanticTree, effect: Symbol)(using
+  private def evidenceCalls(
+      tree: SemanticTree,
+      effect: Symbol,
+      index: CatsIndex
+  )(using
       SemanticDocument
   ): List[(Symbol, Option[(Int, Int)])] =
     tree match {
       case ApplyTree(function, arguments) =>
         val here =
-          if (arguments.exists(passesEvidence(_, effect)))
+          if (arguments.exists(passesEvidence(_, effect, index)))
             List(functionSymbol(function) -> originalSpan(function))
           else Nil
-        here ++ (function :: arguments).flatMap(evidenceCalls(_, effect))
-      case SelectTree(qualifier, _)      => evidenceCalls(qualifier, effect)
-      case TypeApplyTree(function, _)    => evidenceCalls(function, effect)
-      case FunctionTree(_, body)         => evidenceCalls(body, effect)
-      case MacroExpansionTree(before, _) => evidenceCalls(before, effect)
+        here ++ (function :: arguments).flatMap(
+          evidenceCalls(_, effect, index)
+        )
+      case SelectTree(qualifier, _)   => evidenceCalls(qualifier, effect, index)
+      case TypeApplyTree(function, _) => evidenceCalls(function, effect, index)
+      case FunctionTree(_, body)      => evidenceCalls(body, effect, index)
+      case MacroExpansionTree(before, _) => evidenceCalls(before, effect, index)
       case _                             => Nil
     }
 
-  private def passesEvidence(tree: SemanticTree, effect: Symbol): Boolean =
+  private def passesEvidence(
+      tree: SemanticTree,
+      effect: Symbol,
+      index: CatsIndex
+  ): Boolean =
     tree match {
-      case IdTree(info) => isEvidence(info, effect)
+      case IdTree(info) => isEvidence(info, effect, index)
       case ApplyTree(function, arguments) =>
-        (function :: arguments).exists(passesEvidence(_, effect))
+        (function :: arguments).exists(passesEvidence(_, effect, index))
       case SelectTree(qualifier, id) =>
-        passesEvidence(qualifier, effect) || passesEvidence(id, effect)
-      case TypeApplyTree(function, _) => passesEvidence(function, effect)
-      case _                          => false
+        passesEvidence(qualifier, effect, index) ||
+        passesEvidence(id, effect, index)
+      case TypeApplyTree(function, _) =>
+        passesEvidence(function, effect, index)
+      case _ => false
     }
 
   /** A value of shape `TC[F, ...]` for exactly this type parameter `F` -- the
     * context-bound evidence or anything derived from it.
     */
-  private def isEvidence(info: SymbolInformation, effect: Symbol): Boolean =
+  private def isEvidence(
+      info: SymbolInformation,
+      effect: Symbol,
+      index: CatsIndex
+  ): Boolean =
     info.signature match {
-      case ValueSignature(tpe)            => appliedTo(tpe, effect)
-      case MethodSignature(Nil, Nil, tpe) => appliedTo(tpe, effect)
+      case ValueSignature(tpe)            => appliedTo(tpe, effect, index)
+      case MethodSignature(Nil, Nil, tpe) => appliedTo(tpe, effect, index)
       case _                              => false
     }
 
-  private def appliedTo(tpe: SemanticType, effect: Symbol): Boolean =
+  /** Only a typeclass the index knows (or an alias of one) is evidence; a
+    * tagless algebra `Profiles[F]` is an ordinary value.
+    */
+  private def appliedTo(
+      tpe: SemanticType,
+      effect: Symbol,
+      index: CatsIndex
+  ): Boolean =
     tpe match {
-      case TypeRef(_, _, TypeRef(_, first, Nil) :: _) => first == effect
-      case _                                          => false
+      case TypeRef(_, head, TypeRef(_, first, Nil) :: _) =>
+        first == effect &&
+        (index.typeclasses.contains(head) || index.aliasTarget(head).isDefined)
+      case _ => false
     }
 
   private def functionSymbol(tree: SemanticTree)(using

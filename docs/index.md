@@ -324,11 +324,23 @@ conversions such as `toFlatMapOps`, and the evidence the compiler passes on.
 Library typeclass facts (cats and cats-effect) come from the TASTy of the jars
 on the scalac classpath, so the rule needs a semantic classpath to act.
 
-The bound is kept when the rule is unsure: no classpath, evidence it cannot
-explain, an overridable or overriding method, or several equally weak
-candidates (reported as `TypeclassWeakening.ambiguous-weakening`). Two-parameter
-typeclasses render through their aliases (`MonadThrow`, `ApplicativeThrow`,
-`MonadCancelThrow`).
+The bound is kept as written when the rule cannot be sure, in these cases:
+
+- no classpath or no typeclass index is available (nothing to read the
+  library typeclasses from);
+- the def is overridable or overrides another def, so its signature is a
+  contract;
+- the body uses a summoner such as `Sync[F]`, or uses named evidence
+  (`[F[_]: Sync as S]`) other than as the qualifier of a capability call;
+- the body passes implicit evidence to a method whose signature is unknown;
+- the typeclass is defined in the project's own sources (only classpath
+  typeclasses are indexed);
+- several equally weak typeclasses fit (the choice is ambiguous), which is
+  reported as the lint `TypeclassWeakening.ambiguous-weakening`.
+
+Two-parameter typeclasses render through their aliases (`MonadThrow`,
+`ApplicativeThrow`, `MonadCancelThrow`). A tagless algebra such as
+`profiles: Profiles[F]` is an ordinary value and does not block weakening.
 
 Examples:
 

@@ -83,6 +83,23 @@ private object RequirementsFixture {
     fa.map(_ + 1)
   }
 
+  trait Profiles[F[_]] {
+    def fetch(id: String): F[Int]
+  }
+
+  final class Tagless[F[_]: Sync](profiles: Profiles[F]) {
+    def load(seed: F[String]): F[Int] =
+      seed.flatMap(id => profiles.fetch(id))
+  }
+
+  def useFunctor[G[_]](fa: G[Int])(functor: Functor[G]): G[Int] =
+    functor.map(fa)(_ + 1)
+
+  def derivedPassed[F[_]: Sync as S](fa: F[Int]): F[Int] = {
+    val derived: Functor[F] = S
+    useFunctor(fa)(derived)
+  }
+
   final class Shadow[F[_]: Sync](outer: F[Int]) {
     def outerMap: F[Int] = outer.map(_ + 1)
 

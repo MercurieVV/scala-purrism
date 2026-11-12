@@ -193,6 +193,14 @@ final class RequirementsSuite extends FunSuite {
     assertEquals(collect("namedMap"), Some(Set(s("Functor"))))
   }
 
+  test("a tagless algebra Profiles[F] is a value, not evidence") {
+    assertEquals(collect("Tagless"), Some(Set(s("FlatMap"))))
+  }
+
+  test("a Functor[F] derived from the evidence and passed on keeps the bound") {
+    assertEquals(collect("derivedPassed"), None)
+  }
+
   test("isMethod distinguishes methods from values") {
     assert(Requirements.isMethod(Symbol("cats/Traverse.Ops#traverse().")))
     assert(!Requirements.isMethod(Symbol("weakening/X.f().(fa)")))

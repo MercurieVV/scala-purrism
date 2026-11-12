@@ -3,9 +3,13 @@ package examples
 import cats.effect.Sync
 import cats.syntax.all.*
 
-final class UserService[F[_]: Sync](fetch: String => F[Profile]) {
+final class UserService[F[_]: Sync](profiles: Profiles[F]) {
   def load(seed: F[User]): F[Profile] =
-    seed.flatMap(user => fetch(user.id))
+    seed.flatMap(user => profiles.fetch(user.id))
+}
+
+trait Profiles[F[_]] {
+  def fetch(id: String): F[Profile]
 }
 
 final case class User(id: String)
