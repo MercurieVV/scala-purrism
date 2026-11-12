@@ -27,4 +27,25 @@ object WeakenKeep {
     def run[F[_]: Sync](fa: F[Int]): F[Int] =
       fa.map(_ * 2)
   }
+
+  trait Base {
+    def run[F[_]: Sync](fa: F[Int]): F[Int] =
+      fa.map(_ + 1)
+
+    final def twice[F[_]: Functor](fa: F[Int]): F[Int] =
+      fa.map(_ * 2)
+  }
+
+  object Impl extends Base {
+    override def run[F[_]: Sync](fa: F[Int]): F[Int] =
+      fa.map(_ + 2)
+  }
+
+  class Holder {
+    private def inc[F[_]: Functor](fa: F[Int]): F[Int] =
+      fa.map(_ + 1)
+
+    final def use[F[_]: Functor](fa: F[Int]): F[Int] =
+      inc(fa)
+  }
 }

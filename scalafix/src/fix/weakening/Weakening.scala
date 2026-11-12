@@ -218,9 +218,46 @@ object Weakening {
         defn.mods.exists {
           case _: Mod.Override => true
           case _               => false
-        } || defn.name.symbol.info.exists(_.overriddenSymbols.nonEmpty)
+        } || defn.name.symbol.info.exists(_.overriddenSymbols.nonEmpty) ||
+        overridable(defn)
       case _ => false
     }
+
+  /** A non-`private`, non-`final` member of a trait or of a non-final class (or
+    * enum) can be overridden, possibly in another file, so its signature is
+    * shared with overriders the rule cannot see. Members of objects, final
+    * classes, givens and anonymous classes, and local defs, cannot be.
+    */
+  private def overridable(defn: Defn.Def): Boolean = {
+    val closed = defn.mods.exists {
+      case _: Mod.Final                                  => true
+      case Mod.Private(_: Name.Anonymous | _: Term.This) => true
+      case _                                             => false
+    }
+    !closed && enclosingTemplateOwner(defn).exists {
+      case _: Defn.Trait => true
+      case cls: Defn.Class =>
+        !cls.mods.exists {
+          case _: Mod.Final => true
+          case _            => false
+        }
+      case _: Defn.Enum => true
+      case _            => false
+    }
+  }
+
+  /** The definition whose template directly holds `defn`; `None` for a local
+    * def, whose parent is a block or another def's body.
+    */
+  private def enclosingTemplateOwner(defn: Defn.Def): Option[Tree] = {
+    def up(tree: Tree): Option[Tree] =
+      tree.parent.flatMap {
+        case template: Template  => template.parent
+        case body: Template.Body => up(body)
+        case _                   => None
+      }
+    up(defn)
+  }
 
   private def hasExplicitEvidence(defn: Defn.Def): Boolean =
     defn.paramClauseGroups.exists(
