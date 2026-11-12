@@ -1,13 +1,13 @@
 package examples
 
-import cats.Monad
+import cats.{Functor, Monad}
 import cats.syntax.all.*
 
 final class UserService[F[_]: Monad](profiles: Profiles[F]) {
   def load(seed: F[Profile]): F[Profile] =
     seed.flatMap(profile => normalize(profile.pure[F]))
 
-  private def normalize[F[_]: Monad](profile: F[Profile]): F[Profile] =
+  private def normalize[F[_]: Functor](profile: F[Profile]): F[Profile] =
     profile.map(identity)
 }
 

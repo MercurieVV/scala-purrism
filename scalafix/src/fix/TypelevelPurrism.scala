@@ -97,7 +97,7 @@ final class TypeclassWeakening extends SemanticRule("TypeclassWeakening") {
       weakening: TypelevelPurrism.TypeclassWeakening,
       removeOriginalImport: Boolean
   )(implicit doc: SemanticDocument): Patch =
-    Patch.addGlobalImport(Symbol("cats/Monad#")) +
+    Patch.addGlobalImport(Symbol(s"cats/${weakening.replacement}#")) +
       (if (removeOriginalImport)
          Patch.removeGlobalImport(weakening.originalSymbol)
        else Patch.empty) +
@@ -1127,7 +1127,17 @@ private[fix] object TypelevelPurrism {
                     helperRequirements,
                     semanticDocument
                   ) =>
-              Some(TypeclassWeakening(bound, name, "Monad"))
+              Some(
+                TypeclassWeakening(
+                  bound,
+                  name,
+                  WeakeningTarget.select(
+                    owner,
+                    effectTypeName,
+                    semanticDocument
+                  )
+                )
+              )
             case _ =>
               None
           }
