@@ -88,14 +88,24 @@ final class TypelevelPurrism(
         )
       }
 
-  override def fix(implicit doc: SemanticDocument): Patch =
-    new TypeclassWeakening(weakening, classpath).fix + new PreferKleisli().fix +
-      new PreferArrow(preferArrow, classpath).fix +
+  /** `PreferKleisli` and `PreferArrow` replace whole defs and Kleisli bodies,
+    * copying type parameters verbatim; a weakening patch on a bound inside such
+    * a tree would edit tokens the replacement already removed. So the weakening
+    * is told which trees they rewrite and keeps those bounds.
+    */
+  override def fix(implicit doc: SemanticDocument): Patch = {
+    val (kleisliPatch, kleisliTrees) = new PreferKleisli().planned
+    val (arrowPatch, arrowTrees) =
+      new PreferArrow(preferArrow, classpath).planned
+    Weakening.patch(classpath, weakening, kleisliTrees ++ arrowTrees) +
+      kleisliPatch +
+      arrowPatch +
       // Held as a field rather than constructed here: it owns the Cats index
       // and, under `crossFile`, a scan of every source in the project, and
       // building that per document would redo both for every file.
       typeParameters.fix +
       new PreferCatsExpressions().fix
+  }
 }
 
 /** Replaces an over-strong context bound with the single weakest ancestor
@@ -195,7 +205,15 @@ final class PreferKleisli(
       KleisliLiftScope.build(root, index)
     }
 
-  override def fix(implicit doc: SemanticDocument): Patch = {
+  override def fix(implicit doc: SemanticDocument): Patch = planned._1
+
+  /** This rule's patch, with the trees it replaces wholesale: each rewritten
+    * def and each `.local` composition. Call-site re-splits only touch argument
+    * lists and are left out.
+    */
+  private[fix] def planned(implicit
+      doc: SemanticDocument
+  ): (Patch, List[Tree]) = {
     val knownKleislies = PreferKleisli.collectKleisliNames(doc.tree)
     val rewrites = PreferKleisli.rewritePlan(
       doc.tree,
@@ -203,18 +221,23 @@ final class PreferKleisli(
       config.fileLocalOnly,
       scope
     )
+    val compositions =
+      TypelevelPurrism.sequencedLocalCompositionRewrites(
+        doc.tree,
+        knownKleislies
+      )
 
-    rewrites.map { case (defn, rewritten) =>
+    val patch = rewrites.map { case (defn, rewritten) =>
       kleisliPatch(defn, rewritten)
     }.asPatch +
       // With a scope, *every* call site -- this file's own included -- is
       // re-split from the project-wide shape, so the per-def path would double
       // up on the local ones.
       PreferKleisli.scopedCallPatches(doc.tree, scope) +
-      PreferKleisli.sequencedLocalCompositionPatches(
-        doc.tree,
-        knownKleislies
-      )
+      compositions.map { rewrite =>
+        Patch.replaceTree(rewrite.term, rewrite.replacement)
+      }.asPatch
+    (patch, rewrites.map(_._1) ++ compositions.map(_.term))
   }
 
   private def kleisliPatch(
