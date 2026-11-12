@@ -125,9 +125,9 @@ final class PreferArrow(
     KleisliScope.install(scope)
     val plans = doc.tree.collect {
       case applyTerm: Term.Apply if KleisliType.isKleisliApply(applyTerm) =>
-        PreferArrow.rewriteBody(applyTerm, config)
+        PreferArrow.planBody(applyTerm, config)
       case defn: Defn.Def if !liftVetoed.contains(defn.name.symbol.value) =>
-        PreferArrow.rewriteSignature(defn, config)
+        PreferArrow.planSignature(defn, config)
     }
     (plans.map(_._1).asPatch, plans.flatMap(_._2))
   }
@@ -177,6 +177,13 @@ object PreferArrow {
   // ---- body-only entry ----------------------------------------------------
 
   def rewriteBody(
+      applyTerm: Term.Apply,
+      config: PreferArrowConfig
+  )(implicit doc: SemanticDocument): Patch =
+    planBody(applyTerm, config)._1
+
+  /** [[rewriteBody]], plus the tree it replaces wholesale (if any). */
+  private[fix] def planBody(
       applyTerm: Term.Apply,
       config: PreferArrowConfig
   )(implicit doc: SemanticDocument): (Patch, Option[Tree]) =
@@ -326,6 +333,13 @@ object PreferArrow {
   // ---- signature-lifting entry --------------------------------------------
 
   def rewriteSignature(
+      defn: Defn.Def,
+      config: PreferArrowConfig
+  )(implicit doc: SemanticDocument): Patch =
+    planSignature(defn, config)._1
+
+  /** [[rewriteSignature]], plus the tree it replaces wholesale (if any). */
+  private[fix] def planSignature(
       defn: Defn.Def,
       config: PreferArrowConfig
   )(implicit doc: SemanticDocument): (Patch, Option[Tree]) =

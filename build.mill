@@ -97,7 +97,13 @@ object scalafix
     ProblemFilter.exclude[MissingClassProblem]("fix.HKTDeclineDiagnostic*"),
     ProblemFilter
       .exclude[MissingClassProblem]("fix.DeclineHKTAbstractionDiagnostic*"),
-    ProblemFilter.exclude[MissingClassProblem]("fix.MergePointDiagnostic*")
+    ProblemFilter.exclude[MissingClassProblem]("fix.MergePointDiagnostic*"),
+    // `AppliedCallee` belonged to the name-based weakening gate inside
+    // `private[fix] object TypelevelPurrism`, removed when TypeclassWeakening
+    // moved to `fix.weakening`. `private[fix]` is public in bytecode, so MiMa
+    // sees it, but no consumer outside `fix` could ever name it.
+    ProblemFilter
+      .exclude[MissingClassProblem]("fix.TypelevelPurrism$AppliedCallee*")
   )
 
   def mimaPreviousArtifacts = Task {
