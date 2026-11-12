@@ -3,6 +3,8 @@ rules = [DisableSyntax]
  */
 package weakening
 
+import cats.Functor
+import cats.Monad
 import cats.MonadThrow
 import cats.effect.Sync
 import cats.effect.std.Random
@@ -38,6 +40,40 @@ private object RequirementsFixture {
 
   def aliasBound[F[_]: MonadThrow](fa: F[Int]): F[Int] =
     fa.map(_ + 1)
+
+  def monadHelper[F[_]: Monad](fa: F[Int]): F[Int] =
+    fa.map(_ + 1)
+
+  def generatorPure[F[_]: Monad](fb: F[Int]): F[Int] =
+    for {
+      x <- 1.pure[F]
+      y <- fb
+    } yield x + y
+
+  def generatorMap[F[_]: Monad](fa: F[Int], fb: F[Int]): F[Int] =
+    for {
+      x <- fa.map(_ + 1)
+      y <- fb
+    } yield x + y
+
+  def generatorHelper[F[_]: Monad](fa: F[Int], fb: F[Int]): F[Int] =
+    for {
+      x <- monadHelper(fa)
+      y <- fb
+    } yield x + y
+
+  def useEvidence[G[_]](g: Sync[G], ga: G[Int]): G[Int] = ga
+
+  def namedPassed[F[_]: Sync as S](fa: F[Int]): F[Int] =
+    useEvidence(S, fa)
+
+  def namedMap[F[_]: Sync as S](fa: F[Int]): F[Int] =
+    S.map(fa)(_ + 1)
+
+  def namedGiven[F[_]: Sync as S](fa: F[Int]): F[Int] = {
+    given Functor[F] = S
+    fa.map(_ + 1)
+  }
 
   final class Shadow[F[_]: Sync](outer: F[Int]) {
     def outerMap: F[Int] = outer.map(_ + 1)

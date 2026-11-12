@@ -33,6 +33,15 @@ final case class BoundSite(
   *     library `evidence` table or the SemanticDB signature of a local method.
   *     One that cannot be explained makes the answer `None`: keep the bound.
   *
+  * Scala 3 records one evidence application per span. When a method call's span
+  * also carries a syntax conversion (`x <- 1.pure[F]` converts `1.pure[F]` with
+  * `toFlatMapOps`), the single recorded `(using ev)` may belong to either, so
+  * both must be explained and both contribute.
+  *
+  * Evidence named in source (`[F[_]: Sync as S]`, or any value of type `TC[F]`)
+  * may only be the qualifier of a call resolving to a capability (`S.map`); any
+  * other reference (`foo(S)`, `given X = S`) is unexplained.
+  *
   * Evidence is recognised by the type parameter's *symbol*, never its name: an
   * inner `def h[F[_]: Sync]` inside `class S[F[_]: Sync]` declares a different
   * `F`, and neither its evidence nor its body's direct calls count for the
@@ -70,12 +79,21 @@ object Requirements {
     tparams
       .filter(_.tparamClause.values.size == 1)
       .flatMap(tparam =>
-        tparam.bounds.context.flatMap(bound =>
-          resolveBound(bound.symbol, index).map { case (symbol, fixedArgs) =>
-            BoundSite(owner, tparam, bound, symbol, fixedArgs)
-          }
-        )
+        tparam.bounds.context
+          .map(unaliased)
+          .flatMap(bound =>
+            resolveBound(bound.symbol, index).map { case (symbol, fixedArgs) =>
+              BoundSite(owner, tparam, bound, symbol, fixedArgs)
+            }
+          )
       )
+
+  /** `Sync as S` names its evidence; the bound itself is `Sync`. */
+  private def unaliased(bound: Type): Type =
+    bound match {
+      case Type.BoundsAlias(_, inner) => inner
+      case other                      => other
+    }
 
   private def resolveBound(
       symbol: Symbol,
@@ -93,13 +111,14 @@ object Requirements {
     * explained.
     *
     * @param helpers
-    *   the weakened bound of a local method, when it has one; it then replaces
-    *   that method's signature evidence.
+    *   for a local method being weakened, the post-decision bounds of all its
+    *   type parameters that receive this parameter's evidence; they replace
+    *   that method's signature evidence and all join the result.
     */
   def collect(
       site: BoundSite,
       index: CatsIndex,
-      helpers: Symbol => Option[Symbol]
+      helpers: Symbol => Option[Set[Symbol]]
   )(using doc: SemanticDocument): Option[Set[Symbol]] = {
     val effect = site.tparam.name.symbol
     val inLineage = (typeclass: Symbol) =>
@@ -113,6 +132,20 @@ object Requirements {
         .filterNot(name => shadowed.exists(within(name.pos, _)))
         .flatMap(name => resolvedTypeclass(name.symbol, index).toList)
 
+    val explicitEvidenceExplained =
+      site.owner
+        .collect { case name: Term.Name => name }
+        .filterNot(name => within(name.pos, site.tparam.pos))
+        .filterNot(isDefinitionName)
+        .filter(name => name.symbol.info.exists(isEvidence(_, effect)))
+        .forall(name =>
+          name.parent.exists {
+            case select: Term.Select if select.qual eq name =>
+              resolvedTypeclass(select.name.symbol, index).exists(inLineage)
+            case _ => false
+          }
+        )
+
     val synthetics =
       doc.synthetics.toList.filter(synthetic =>
         anchoredIn(synthetic, site.owner)
@@ -123,17 +156,34 @@ object Requirements {
       synthetics
         .flatMap(evidenceCalls(_, effect))
         .map { case (function, original) =>
-          val target = original
-            .filterNot(_ => isMethod(function))
-            .flatMap(conversions.get)
-            .getOrElse(function)
-          explain(target, index, helpers).filter(inLineage)
+          val conversion = original.flatMap(conversions.get)
+          val targets =
+            conversion match {
+              case Some(converted) if isMethod(function) =>
+                List(function, converted)
+              case Some(converted) => List(converted)
+              case None            => List(function)
+            }
+          val explanations =
+            targets.map(explain(_, index, helpers).filter(inLineage))
+          Option.when(explanations.forall(_.nonEmpty))(explanations.flatten)
         }
 
     Option
-      .when(explained.forall(_.nonEmpty))(direct ++ explained.flatten)
+      .when(explicitEvidenceExplained && explained.forall(_.isDefined))(
+        direct ++ explained.flatten.flatten
+      )
       .map(_.filter(inLineage).toSet)
   }
+
+  /** The name a definition introduces, not a reference to a value. */
+  private def isDefinitionName(name: Term.Name): Boolean =
+    name.parent.exists {
+      case _: Pat.Var | _: Term.Param => true
+      case defn: Defn.Def             => defn.name eq name
+      case defn: Defn.Given           => defn.name eq name
+      case _                          => false
+    }
 
   /** A method's own `using` clause, as opposed to the evidence of a conversion
     * applied to a value: `xs.traverse(f)(using ev)` belongs to `traverse` even
@@ -169,10 +219,10 @@ object Requirements {
   private def explain(
       function: Symbol,
       index: CatsIndex,
-      helpers: Symbol => Option[Symbol]
+      helpers: Symbol => Option[Set[Symbol]]
   )(using SemanticDocument): List[Symbol] =
     helpers(function) match {
-      case Some(weakened) => List(weakened)
+      case Some(weakened) => weakened.toList
       case None =>
         resolvedTypeclass(function, index).toList ++
           conversion(function, index).toList ++

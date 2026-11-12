@@ -65,11 +65,11 @@ final class RequirementsSuite extends FunSuite {
     case _             => None
   }
 
-  private def noHelpers(symbol: Symbol): Option[Symbol] = None
+  private def noHelpers(symbol: Symbol): Option[Set[Symbol]] = None
 
   private def collect(
       owner: String,
-      helpers: Symbol => Option[Symbol] = noHelpers
+      helpers: Symbol => Option[Set[Symbol]] = noHelpers
   ): Option[Set[Symbol]] =
     Requirements.collect(site(owner), index, helpers)
 
@@ -121,7 +121,10 @@ final class RequirementsSuite extends FunSuite {
   test("local helper contributes its weakened bound") {
     val helper = site("helper").owner.symbol
     assertEquals(
-      collect("usesHelper", sym => Option.when(sym == helper)(s("Functor"))),
+      collect(
+        "usesHelper",
+        sym => Option.when(sym == helper)(Set(s("Functor")))
+      ),
       Some(Set(s("Functor")))
     )
   }
@@ -141,6 +144,47 @@ final class RequirementsSuite extends FunSuite {
   test("shadowed type parameter: inner evidence never counts for outer") {
     assertEquals(collect("Shadow"), Some(Set(s("Functor"))))
     assertEquals(collect("inner"), None)
+  }
+
+  test("local helper with several weakened bounds contributes all of them") {
+    val helper = site("helper").owner.symbol
+    assertEquals(
+      collect(
+        "usesHelper",
+        sym => Option.when(sym == helper)(Set(s("Functor"), s("Semigroupal")))
+      ),
+      Some(Set(s("Functor"), s("Semigroupal")))
+    )
+  }
+
+  test("generator over a method call keeps the conversion: x <- 1.pure[F]") {
+    assert(collect("generatorPure").exists(_.contains(s("FlatMap"))))
+  }
+
+  test("generator over a method call keeps the conversion: x <- fa.map(f)") {
+    assert(collect("generatorMap").exists(_.contains(s("FlatMap"))))
+  }
+
+  test("generator over a helper call keeps the conversion: x <- helper(fa)") {
+    val helper = site("monadHelper").owner.symbol
+    val required = collect(
+      "generatorHelper",
+      sym => Option.when(sym == helper)(Set(s("Functor")))
+    )
+    assert(required.exists(_.contains(s("FlatMap"))), clue(required))
+    assert(required.exists(_.contains(s("Functor"))), clue(required))
+  }
+
+  test("named evidence passed to a method keeps the bound") {
+    assertEquals(collect("namedPassed"), None)
+  }
+
+  test("named evidence bound to a given keeps the bound") {
+    assertEquals(collect("namedGiven"), None)
+  }
+
+  test("named evidence as the qualifier of a capability contributes it") {
+    assertEquals(collect("namedMap"), Some(Set(s("Functor"))))
   }
 
   test("isMethod distinguishes methods from values") {
