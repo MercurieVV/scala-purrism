@@ -45,6 +45,18 @@ final class TypeclassInspectorSuite extends FunSuite {
     assert(rows.typeclasses.map(_.head).contains("cats/effect/kernel/Sync#"))
   }
 
+  test("a LinkageError (non-NonFatal) becomes Left naming the class") {
+    val result = TypeclassInspector.catching[Int](
+      throw new NoClassDefFoundError("missing/Dep")
+    )
+    assertEquals(
+      result,
+      Left(
+        "TASTy inspection failed: java.lang.NoClassDefFoundError: missing/Dep"
+      )
+    )
+  }
+
   test("an unreadable jar is a Left, not an exception") {
     val result = TypeclassInspector.inspectJar(
       Paths.get("/nonexistent/none.jar"),

@@ -7,7 +7,6 @@ import scala.quoted.Quotes
 import scala.tasty.inspector.Inspector
 import scala.tasty.inspector.Tasty
 import scala.tasty.inspector.TastyInspector
-import scala.util.Try
 
 /** Rows extracted from library TASTy, in the column order of the Cats index
   * tables (`typeclasses`, `capabilities`, `syntax`).
@@ -106,19 +105,29 @@ object TypeclassInspector {
       scope: Scope
   ): Either[String, InspectedRows] = {
     val sink = new AtomicReference[Raw](EmptyRaw)
-    Try(
+    catching(
       TastyInspector.inspectAllTastyFiles(
         Nil,
         jars.map(_.toString),
         dependencies.map(_.toString)
       )(new Collector(scope, sink))
-    ).toEither.left
-      .map(error => s"TASTy inspection failed for $jars: $error")
-      .flatMap { inspected =>
-        if (inspected) Right(rows(sink.get()))
-        else Left(s"TASTy inspection failed for $jars")
-      }
+    ).flatMap { inspected =>
+      if (inspected) Right(rows(sink.get()))
+      else Left(s"TASTy inspection failed for $jars")
+    }
   }
+
+  /** Run `body`, turning any throwable (including `LinkageError`, which is not
+    * NonFatal and is what a missing TASTy dependency produces) into Left.
+    */
+  private[tasty] def catching[A](body: => A): Either[String, A] =
+    try Right(body)
+    catch {
+      case error: Throwable =>
+        Left(
+          s"TASTy inspection failed: ${error.getClass.getName}: ${error.getMessage}"
+        )
+    }
 
   private def rows(raw: Raw): InspectedRows = {
     val uniqueTypeclasses =
