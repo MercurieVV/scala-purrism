@@ -20,9 +20,9 @@ import scala.util.Using
   * @param debug
   *   print one `TypeclassWeakening index:` line per lookup to stderr
   */
-final case class CacheConfig(dir: Option[Path], debug: Boolean)
+private[fix] final case class CacheConfig(dir: Option[Path], debug: Boolean)
 
-object CacheConfig {
+private[fix] object CacheConfig {
 
   /** `~/.cache/scala-purrism/tasty-index`, debug off. */
   val default: CacheConfig =
@@ -34,7 +34,7 @@ object CacheConfig {
 }
 
 /** Where a jar's rows came from. */
-enum IndexSource {
+private[fix] enum IndexSource {
   case Bundled, Disk, Scan
 }
 
@@ -43,7 +43,7 @@ enum IndexSource {
   * Rows are the unfinished, self-contained per-jar form; callers merge the rows
   * of several jars and run [[TypeclassInspector.finish]] over the union.
   */
-object TastyScanCache {
+private[fix] object TastyScanCache {
 
   /** Bump when the cached row format or the inspector's output changes. */
   val FormatVersion: String = "1"

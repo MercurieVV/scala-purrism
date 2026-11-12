@@ -12,7 +12,7 @@ import scala.util.Using
 import scalafix.v1.Symbol
 
 /** Finds the classpath jar whose TASTy defines a SemanticDB symbol. */
-object JarLocator {
+private[fix] object JarLocator {
 
   /** Keyed by (path, size, mtime): a jar rebuilt in place is re-listed. */
   private val entries =

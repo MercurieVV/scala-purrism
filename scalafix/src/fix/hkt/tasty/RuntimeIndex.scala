@@ -11,7 +11,7 @@ import scalafix.v1.Symbol
 /** Builds a [[CatsIndex]] from the TASTy of the jars a set of typeclass symbols
   * (and their ancestors) live in, at rule runtime.
   */
-object RuntimeIndex {
+private[fix] object RuntimeIndex {
 
   /** A jar's rows; `source` is `None` when its scan failed (no rows). */
   private final case class JarRows(

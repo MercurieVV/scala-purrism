@@ -7,19 +7,19 @@ import scalafix.v1.Symbol
 /** A typeclass as it is written in source: `symbol` is the typeclass itself,
   * `renderName`/`importPath` are the (possibly alias) name to emit.
   */
-final case class Rendered(
+private[fix] final case class Rendered(
     symbol: Symbol,
     renderName: String,
     importPath: String
 )
 
-enum Decision {
+private[fix] enum Decision {
   case Keep
   case Replace(target: Rendered)
   case Ambiguous(options: List[Rendered])
 }
 
-object BoundSolver {
+private[fix] object BoundSolver {
 
   /** Picks the weakest typeclass that still covers `required`.
     *

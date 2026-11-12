@@ -14,7 +14,7 @@ import scala.tasty.inspector.TastyInspector
   * `evidence` rows are `method, typeclasses(comma)`; `aliases` rows are
   * `alias, renderName, importPath, target, fixedArgs(comma)`.
   */
-final case class InspectedRows(
+private[fix] final case class InspectedRows(
     typeclasses: List[List[String]],
     capabilities: List[List[String]],
     syntax: List[List[String]],
@@ -23,7 +23,7 @@ final case class InspectedRows(
 )
 
 /** Reads typeclass facts (hierarchy, method owners, syntax) out of TASTy. */
-object TypeclassInspector {
+private[fix] object TypeclassInspector {
 
   /** Which packages count as typeclass homes and as syntax homes.
     *

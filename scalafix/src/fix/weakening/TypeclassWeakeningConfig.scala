@@ -17,7 +17,7 @@ final case class TypeclassWeakeningConfig(
     debug: Boolean = false
 ) {
 
-  def cacheConfig: CacheConfig =
+  private[fix] def cacheConfig: CacheConfig =
     CacheConfig(TypeclassWeakeningConfig.resolve(cacheDir), debug)
 }
 
