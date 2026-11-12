@@ -50,5 +50,13 @@ jobs:
       - name: Render docs
         run: ./mill docs.run
 
+      # `docs.run` has died silently on CI (no exception, no message); the
+      # kernel log tells an OOM kill apart from a JVM exit.
+      - name: Diagnose a failed step
+        if: failure()
+        run: |
+          free -m
+          sudo dmesg -T | grep -iE "killed process|out of memory|oom" || echo "no OOM kill in kernel log"
+
       - name: Check binary compatibility
         run: ./mill scalafix.mimaReportBinaryIssues
