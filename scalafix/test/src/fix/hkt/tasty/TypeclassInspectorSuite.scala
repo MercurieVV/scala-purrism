@@ -3,9 +3,15 @@ package fix.hkt.tasty
 import java.nio.file.Path
 import java.nio.file.Paths
 
+import scala.concurrent.duration.*
+
 import munit.FunSuite
 
 final class TypeclassInspectorSuite extends FunSuite {
+
+  // A cold TASTy scan of cats-core takes ~2s locally but over 40s on a CI
+  // runner; MUnit's 30s default is a wall-clock guard, not a performance spec.
+  override val munitTimeout: Duration = 10.minutes
 
   private lazy val classpath: List[Path] =
     System
