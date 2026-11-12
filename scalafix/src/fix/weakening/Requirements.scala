@@ -188,9 +188,20 @@ object Requirements {
   /** A method's own `using` clause, as opposed to the evidence of a conversion
     * applied to a value: `xs.traverse(f)(using ev)` belongs to `traverse` even
     * when `toFunctorOps(xs.traverse(f))` sits on the same span.
+    *
+    * Decided from the symbol's SemanticDB signature when the document has it
+    * (local defs are `localN`, with no `).` suffix); the suffix is only the
+    * fallback for TASTy-only globals without `info`.
     */
-  def isMethod(symbol: Symbol): Boolean =
-    symbol.value.endsWith(").")
+  def isMethod(symbol: Symbol)(using SemanticDocument): Boolean =
+    symbol.info match {
+      case Some(info) =>
+        info.signature match {
+          case MethodSignature(_, parameterLists, _) => parameterLists.nonEmpty
+          case _                                     => false
+        }
+      case None => symbol.value.endsWith(").")
+    }
 
   /** Nested definitions that declare a type parameter of the same name: the
     * site's parameter is not nameable there, so their direct calls are for

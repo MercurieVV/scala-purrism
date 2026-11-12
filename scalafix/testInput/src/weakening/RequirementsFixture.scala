@@ -62,6 +62,14 @@ private object RequirementsFixture {
       y <- fb
     } yield x + y
 
+  def localGenerator[F[_]: Sync](fa: F[Int]): F[Int] = {
+    def loc[G[_]: Sync](g: G[Int]): G[Int] = g
+    for {
+      x <- loc(fa)
+      y <- fa
+    } yield x + y
+  }
+
   def useEvidence[G[_]](g: Sync[G], ga: G[Int]): G[Int] = ga
 
   def namedPassed[F[_]: Sync as S](fa: F[Int]): F[Int] =

@@ -175,6 +175,12 @@ final class RequirementsSuite extends FunSuite {
     assert(required.exists(_.contains(s("Functor"))), clue(required))
   }
 
+  test("generator over a local def keeps the def's own evidence") {
+    val required = collect("localGenerator")
+    assert(required.forall(_.contains(Sync)), clue(required))
+    assert(required.forall(_.contains(s("FlatMap"))), clue(required))
+  }
+
   test("named evidence passed to a method keeps the bound") {
     assertEquals(collect("namedPassed"), None)
   }
